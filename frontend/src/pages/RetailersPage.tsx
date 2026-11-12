@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Pencil, Plus, Search } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -7,20 +8,44 @@ import { api, ApiError } from "../api/client";
 import type { PackingQuality, Retailer, ShippingSpeed, WouldOrderAgain } from "../api/types";
 import { PACKING_QUALITIES, SHIPPING_SPEEDS, WOULD_ORDER_AGAIN } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
+import { FoldToFit } from "../components/FoldToFit";
+import { Measured, TableRuler } from "../components/Measured";
 import { Modal } from "../components/Modal";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
+import {
+  Button,
+  CardList,
+  CardMeta,
+  CardRow,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  IconButton,
+  Input,
+  PAGE_ACTION_FOCUS,
+  PageHeader,
+  Pager,
+  RatingStars,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+  Textarea,
+} from "../components/ui";
 import {
   packingQualityLabel,
   ratingTooltip,
   shippingSpeedLabel,
   wouldOrderAgainLabel,
 } from "../lib/labels";
+import { usePaging, useSearchParam } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
+import { useShell } from "../lib/shell";
 
-const AGAIN_STYLES: Record<WouldOrderAgain, string> = {
-  yes: "bg-green-100 text-green-700",
-  maybe: "bg-amber-100 text-amber-700",
-  no: "bg-red-100 text-red-700",
+/** Would order again, in the pipeline's own vocabulary (§13.1): complete's
+ * green, in-transit's amber, and danger for no. */
+const AGAIN_TONES: Record<WouldOrderAgain, string> = {
+  yes: "text-status-complete",
+  maybe: "text-status-in-transit",
+  no: "text-danger",
 };
 
 interface RetailerFormValues {
@@ -36,13 +61,19 @@ interface RetailerFormValues {
 function RetailerFormModal({
   retailer,
   onClose,
+  onDelete,
 }: {
   retailer?: Retailer;
   onClose: () => void;
+  /** Delete lives in the dialog, not on the row (§13.4). */
+  onDelete?: (retailer: Retailer) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // The submit stands outside the <form>, in the dialog's frame (§13.7, #259).
+  const formId = useId();
   const {
     register,
     handleSubmit,
@@ -82,8 +113,37 @@ function RetailerFormModal({
     <Modal
       title={retailer ? t("retailers.editTitle", { name: retailer.name }) : t("retailers.addTitle")}
       onClose={onClose}
+      actions={{
+        secondary: { label: t("common.cancel"), onClick: onClose },
+        primary: {
+          label: retailer ? t("common.save") : t("common.add"),
+          form: formId,
+          disabled: isSubmitting || deleting,
+        },
+      }}
+      destructive={
+        retailer && onDelete
+          ? {
+              label: t("common.delete"),
+              disabled: isSubmitting || deleting,
+              onClick: async () => {
+                if (!window.confirm(t("common.confirmDelete", { name: retailer.name }))) return;
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(retailer);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              },
+            }
+          : undefined
+      }
     >
-      <form onSubmit={onSubmit} className="space-y-3">
+      <form id={formId} onSubmit={onSubmit} className="space-y-3">
         <ErrorBanner message={error} />
         <Field label={t("common.name")} required error={errors.name?.message}>
           <Input {...register("name", { required: t("validation.nameRequired") })} />
@@ -91,12 +151,13 @@ function RetailerFormModal({
         <Field label={t("retailers.url")}>
           <Input {...register("url")} placeholder={t("common.urlPlaceholder")} />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
           <Field label={t("retailers.overallRating")} error={errors.rating?.message}>
             <Input
               type="number"
               min={1}
               max={5}
+              inputMode="numeric"
               placeholder="—"
               {...register("rating", {
                 validate: (value) =>
@@ -140,14 +201,6 @@ function RetailerFormModal({
         <Field label={t("retailers.notes")}>
           <Textarea {...register("notes")} placeholder={t("retailers.notesPlaceholder")} />
         </Field>
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting}>
-            {retailer ? t("common.save") : t("common.add")}
-          </Button>
-        </div>
       </form>
     </Modal>
   );
@@ -155,11 +208,15 @@ function RetailerFormModal({
 
 export function RetailersPage() {
   const { t } = useTranslation();
-  // Rating tooltips are locale-formatted; see the note on `BoardPage`.
+  // Rating tooltips are locale-formatted; see the note on `HomePage`.
   usePresentationVersion();
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ retailer?: Retailer } | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // The search and the page are the URL (§13.4, #232).
+  const [search, setSearch] = useSearchParam("q");
+  const paging = usePaging();
+  // Card rows are the phone's (§13.7).
+  const phone = useShell() === "phone";
   const {
     data: retailers,
     isLoading,
@@ -170,68 +227,186 @@ export function RetailersPage() {
     queryFn: api.listRetailers,
   });
 
-  const remove = async (retailer: Retailer) => {
-    if (!window.confirm(t("common.confirmDelete", { name: retailer.name }))) return;
-    setActionError(null);
-    try {
-      await api.deleteRetailer(retailer.id);
-      await queryClient.invalidateQueries({ queryKey: ["retailers"] });
-    } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
-    }
+  const removeRetailer = async (retailer: Retailer) => {
+    await api.deleteRetailer(retailer.id);
+    await queryClient.invalidateQueries({ queryKey: ["retailers"] });
   };
+
+  const visible = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return retailers ?? [];
+    return (retailers ?? []).filter((retailer) =>
+      [retailer.name, retailer.url, retailer.notes]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLowerCase().includes(needle)),
+    );
+  }, [retailers, search]);
+  const paged = paging.slice(visible);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("retailers.title")}</h1>
-        <div className="flex gap-2">
-          <ExportCsvButton table="retailers" />
-          <Button onClick={() => setModal({})}>{t("retailers.addButton")}</Button>
-        </div>
-      </div>
+      <PageHeader
+        title={t("retailers.title")}
+        count={retailers === undefined ? undefined : visible.length}
+        secondary={<ExportCsvButton table="retailers" />}
+        actions={
+          <Button icon={Plus} onClick={() => setModal({})} data-focus-key={PAGE_ACTION_FOCUS}>
+            {t("retailers.addButton")}
+          </Button>
+        }
+      />
 
-      <ErrorBanner message={actionError} />
+      <div className="relative w-full max-w-xs max-md:max-w-none">
+        <Search
+          size={15}
+          aria-hidden
+          className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-faint"
+        />
+        <Input
+          type="search"
+          aria-label={t("common.search")}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={t("retailers.searchPlaceholder")}
+          className="ps-8"
+        />
+      </div>
 
       {isError ? (
         <ErrorBanner message={t("retailers.loadFailed", { message: (error as Error).message })} />
-      ) : retailers?.length ? (
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+      ) : paged.total > 0 && phone ? (
+        <CardList footer={<Pager paged={paged} onPage={paging.setPage} />}>
+          {paged.rows.map((retailer) => (
+            <CardRow
+              key={retailer.id}
+              title={retailer.name}
+              action={
+                <IconButton
+                  label={t("common.editNamed", { name: retailer.name })}
+                  onClick={() => setModal({ retailer })}
+                  data-focus-key={`retailer:${retailer.id}`}
+                >
+                  <Pencil size={16} aria-hidden />
+                </IconButton>
+              }
+            >
+              {(retailer.rating || retailer.would_order_again) && (
+                <CardMeta>
+                  {retailer.rating && (
+                    <RatingStars rating={retailer.rating} title={ratingTooltip(retailer.rating)} />
+                  )}
+                  {/* A column header says what a bare "Yes" answers; a card has
+                      none, so the chip says it. */}
+                  {retailer.would_order_again && (
+                    <Chip tone={AGAIN_TONES[retailer.would_order_again]}>
+                      {t("list.labelled", {
+                        label: t("retailers.wouldOrderAgain"),
+                        value: wouldOrderAgainLabel(retailer.would_order_again),
+                      })}
+                    </Chip>
+                  )}
+                </CardMeta>
+              )}
+              {(retailer.packing_quality || retailer.shipping_speed) && (
+                <CardMeta>
+                  <span className="min-w-0 truncate">
+                    {[
+                      retailer.packing_quality &&
+                        t("list.labelled", {
+                          label: t("retailers.headerPacking"),
+                          value: packingQualityLabel(retailer.packing_quality),
+                        }),
+                      retailer.shipping_speed &&
+                        t("list.labelled", {
+                          label: t("retailers.headerShipping"),
+                          value: shippingSpeedLabel(retailer.shipping_speed),
+                        }),
+                    ]
+                      .filter(Boolean)
+                      .join(t("common.dotSeparator"))}
+                  </span>
+                </CardMeta>
+              )}
+              {retailer.url && (
+                <CardMeta>
+                  {/* The padding is the link's target: a line of 12.5 px text is
+                      a thin thing to tap. The margin takes it back. */}
+                  <a
+                    href={retailer.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-focus-key={`retailer-url:${retailer.id}`}
+                    className="-my-2 min-w-0 truncate py-2 text-accent hover:underline"
+                  >
+                    {retailer.url.replace(/^https?:\/\//, "")}
+                  </a>
+                </CardMeta>
+              )}
+              {retailer.notes && (
+                <CardMeta>
+                  <span className="min-w-0 truncate">{retailer.notes}</span>
+                </CardMeta>
+              )}
+            </CardRow>
+          ))}
+        </CardList>
+      ) : paged.total > 0 ? (
+        // Folds to fit its box (§13.7, #329): when the whole table is wider
+        // than the box, Notes leaves its column for a second, truncated line
+        // under the name — with ordinary rows, every iPad in portrait beside
+        // the rail, never the desktop.
+        <FoldToFit stages={1} className="overflow-x-auto rounded-md border border-border bg-surface">
+          <TableRuler>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                <th className="px-3 py-2">{t("common.name")}</th>
-                <th className="px-3 py-2">{t("retailers.headerRating")}</th>
-                <th className="px-3 py-2">{t("retailers.headerPacking")}</th>
-                <th className="px-3 py-2">{t("retailers.headerShipping")}</th>
-                <th className="px-3 py-2">{t("retailers.headerAgain")}</th>
-                <th className="px-3 py-2">{t("retailers.notes")}</th>
-                <th className="px-3 py-2" />
+              <tr className={TABLE_HEAD_ROW_CLASS}>
+                <th className="px-3 py-2.5">{t("common.name")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerRating")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerPacking")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerShipping")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerAgain")}</th>
+                <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">
+                  {t("retailers.notes")}
+                </th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
             <tbody>
-              {retailers.map((retailer) => (
-                <tr key={retailer.id} className="border-b border-zinc-100 last:border-0">
+              {paged.rows.map((retailer) => (
+                <tr key={retailer.id} className="border-b border-rule last:border-0">
                   <td className="px-3 py-2">
-                    <div className="font-medium">{retailer.name}</div>
+                    <div className="font-medium">
+                      <Measured text={retailer.name} kind="name" />
+                    </div>
                     {retailer.url && (
                       <a
                         href={retailer.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-xs text-indigo-600 hover:underline"
+                        data-focus-key={`retailer-url:${retailer.id}`}
+                        className="text-xs text-accent hover:underline"
                       >
-                        {retailer.url.replace(/^https?:\/\//, "")}
+                        <Measured text={retailer.url.replace(/^https?:\/\//, "")} kind="text" />
                       </a>
                     )}
+                    {/* `w-0 min-w-full`: as wide as the cell turns out, without a
+                        say in how wide that is — a truncating line otherwise
+                        props its column open at the full length of the note. */}
+                    {retailer.notes && (
+                      <div
+                        className="hidden w-0 min-w-full truncate text-xs text-muted group-data-fold-1/fold:block"
+                        title={retailer.notes}
+                      >
+                        {retailer.notes}
+                      </div>
+                    )}
                   </td>
-                  <td
-                    className="px-3 py-2"
-                    title={retailer.rating ? ratingTooltip(retailer.rating) : ""}
-                  >
-                    {retailer.rating
-                      ? "★".repeat(retailer.rating) + "☆".repeat(5 - retailer.rating)
-                      : "—"}
+                  <td className="px-3 py-2">
+                    {retailer.rating ? (
+                      <RatingStars rating={retailer.rating} title={ratingTooltip(retailer.rating)} />
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     {retailer.packing_quality ? packingQualityLabel(retailer.packing_quality) : "—"}
@@ -241,38 +416,55 @@ export function RetailersPage() {
                   </td>
                   <td className="px-3 py-2">
                     {retailer.would_order_again ? (
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${AGAIN_STYLES[retailer.would_order_again]}`}
-                      >
+                      <Chip tone={AGAIN_TONES[retailer.would_order_again]}>
                         {wouldOrderAgainLabel(retailer.would_order_again)}
-                      </span>
+                      </Chip>
                     ) : (
                       "—"
                     )}
                   </td>
-                  <td className="max-w-48 truncate px-3 py-2 text-zinc-500" title={retailer.notes ?? ""}>
+                  <td
+                    className="max-w-48 truncate px-3 py-2 text-muted group-data-fold-1/fold:hidden"
+                    title={retailer.notes ?? ""}
+                  >
                     {retailer.notes ?? "—"}
                   </td>
-                  <td className="px-3 py-2 text-end">
-                    <div className="flex justify-end gap-1">
-                      <Button variant="secondary" onClick={() => setModal({ retailer })}>
-                        {t("common.edit")}
-                      </Button>
-                      <Button variant="danger" onClick={() => remove(retailer)}>
-                        {t("common.delete")}
-                      </Button>
-                    </div>
+                  {/* `touch:px-0`: the 44 px target carries its own margin around
+                      the icon, so a touch table needs no more width than a
+                      mouse's and folds where a mouse's does. */}
+                  <td className="px-2 py-2 text-end touch:px-0">
+                    <IconButton
+                      label={t("common.editNamed", { name: retailer.name })}
+                      onClick={() => setModal({ retailer })}
+                      data-focus-key={`retailer:${retailer.id}`}
+                    >
+                      <Pencil size={15} aria-hidden />
+                    </IconButton>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+          </TableRuler>
+          <Pager paged={paged} onPage={paging.setPage} />
+        </FoldToFit>
       ) : (
-        <EmptyState>{isLoading ? t("common.loading") : t("retailers.empty")}</EmptyState>
+        <EmptyState>
+          {isLoading
+            ? t("common.loading")
+            : retailers?.length
+              ? t("retailers.emptyFiltered")
+              : t("retailers.empty")}
+        </EmptyState>
       )}
 
-      {modal && <RetailerFormModal retailer={modal.retailer} onClose={() => setModal(null)} />}
+      {modal && (
+        <RetailerFormModal
+          retailer={modal.retailer}
+          onClose={() => setModal(null)}
+          onDelete={removeRetailer}
+        />
+      )}
     </div>
   );
 }

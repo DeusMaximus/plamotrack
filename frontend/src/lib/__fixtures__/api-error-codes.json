@@ -1,6 +1,63 @@
 {
   "note": "The stable wire codes (#25, #26), shared by both sides the way money-cases.json is: backend/tests/test_error_envelope.py pins backend/app/error_codes.py to exactly this list, and src/i18n/catalogue.test.ts pins the en-AU catalogue to it (every code has an api.* entry, and no entry interpolates a placeholder outside that code's declared params). A code reaches the wire as a raised error envelope or as an import-preview Diagnostic — same contract either way. `params` lists the keys GUARANTEED present on every emission of the code. An import-preview Diagnostic construction sends EXACTLY this set (#178 — a param emitted beyond the declaration is one no catalogue entry may name, so whatever it says is silently dropped in rendering; the exact-params audit refuses it at the emitter, and the two named bridge helpers that forward a raise's params are pinned by a runtime matrix instead). A DomainError raise site may still send more, never less; a translation may use less. Adding a code touches all three files; renaming one is a breaking API change.",
   "codes": {
+    "auth.bearer_invalid": {
+      "params": []
+    },
+    "auth.csrf_failed": {
+      "params": []
+    },
+    "auth.forbidden": {
+      "params": []
+    },
+    "auth.login_failed": {
+      "params": []
+    },
+    "auth.mcp_registrations_full": {
+      "params": []
+    },
+    "auth.not_in_this_mode": {
+      "params": []
+    },
+    "auth.oidc_provider_unavailable": {
+      "params": []
+    },
+    "auth.origin_required": {
+      "params": []
+    },
+    "auth.password_too_long": {
+      "params": [
+        "max"
+      ]
+    },
+    "auth.password_too_short": {
+      "params": [
+        "min"
+      ]
+    },
+    "auth.setup_claimed": {
+      "params": []
+    },
+    "auth.setup_token_invalid": {
+      "params": []
+    },
+    "auth.token_expiry_in_past": {
+      "params": []
+    },
+    "auth.token_not_found": {
+      "params": []
+    },
+    "auth.token_scope_invalid": {
+      "params": []
+    },
+    "auth.too_many_attempts": {
+      "params": [
+        "retry_after"
+      ]
+    },
+    "auth.unauthenticated": {
+      "params": []
+    },
     "catalog_item.category_required": {
       "params": [
         "item_type"
@@ -79,6 +136,20 @@
         "stored"
       ]
     },
+    "import.cell_above_maximum": {
+      "params": [
+        "field",
+        "maximum",
+        "value"
+      ]
+    },
+    "import.cell_below_minimum": {
+      "params": [
+        "field",
+        "minimum",
+        "value"
+      ]
+    },
     "import.cell_invalid": {
       "params": [
         "field"
@@ -97,6 +168,12 @@
     },
     "import.confirm_required": {
       "params": []
+    },
+    "import.csv_unreadable": {
+      "params": [
+        "source",
+        "line"
+      ]
     },
     "import.currency_unknown": {
       "params": [
@@ -198,6 +275,14 @@
       "params": [
         "count"
       ]
+    },
+    "import.line_description_misplaced": {
+      "params": [
+        "item_type"
+      ]
+    },
+    "import.line_description_required": {
+      "params": []
     },
     "import.line_joins_received": {
       "params": [
@@ -324,6 +409,11 @@
         "field"
       ]
     },
+    "import.ref_ignored_other_line": {
+      "params": [
+        "field"
+      ]
+    },
     "import.ref_not_in_upload": {
       "params": [
         "field",
@@ -415,6 +505,22 @@
         "supported_version"
       ]
     },
+    "ingress.body_too_large": {
+      "params": []
+    },
+    "ingress.host_not_allowed": {
+      "params": [
+        "setting"
+      ]
+    },
+    "ingress.origin_not_allowed": {
+      "params": [
+        "setting"
+      ]
+    },
+    "ingress.rate_limited": {
+      "params": []
+    },
     "kit.has_applications": {
       "params": [
         "name",
@@ -431,6 +537,12 @@
         "name"
       ]
     },
+    "list.limit_invalid": {
+      "params": []
+    },
+    "list.sort_unknown": {
+      "params": []
+    },
     "name.blank": {
       "params": []
     },
@@ -439,6 +551,18 @@
         "kind",
         "name",
         "existing_id"
+      ]
+    },
+    "name.is_id": {
+      "params": [
+        "name"
+      ]
+    },
+    "order.adjustments_exceed_total": {
+      "params": [
+        "currency_code",
+        "adjustments_minor",
+        "ceiling_minor"
       ]
     },
     "order.already_received": {
@@ -535,6 +659,11 @@
     },
     "request.body_invalid": {
       "params": []
+    },
+    "request.text_unstorable": {
+      "params": [
+        "field"
+      ]
     },
     "request.validation": {
       "params": [

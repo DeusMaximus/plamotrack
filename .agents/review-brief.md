@@ -1,16 +1,21 @@
 # Briefing an external reviewer — the envelope
 
-A review round here is a prompt pasted into Cursor or Codex by the owner, and the
-prompt has been rewritten from memory every time. The parts that recur are the parts
-that have cost time when forgotten: `--body-file` not `--body`, the phrase *mutation
-testing*, a fresh chat per Cursor round, a worktree rather than `git checkout --` for
-the negative control, the attribution line. This file holds them once. The agent
-opening the PR fills the `‹slots›` and **prints the finished brief directly in the
-chat, in full, inside a fenced block the owner can copy** — a four-backtick fence,
-because the brief itself contains three-backtick blocks. Never hand over only a path
-to a file in a temp directory: the owner's next step is paste, not `cat` (owner's
-call, 2026-08-24). Saving a scratchpad copy alongside is fine as a backup for later
-rounds; it is not the deliverable. The reasons behind the fixed parts are in
+A review round here starts from a brief, and briefs were once rewritten from memory
+every time. The parts that recur are the parts that have cost time when forgotten:
+`--body-file` not `--body`, the phrase *mutation testing*, a worktree rather than `git
+checkout --` for the negative control, the attribution line. This file holds them once.
+The agent
+opening the PR fills the `‹slots›`, **saves the finished brief as
+`.dev/<issue>/review-brief-<round>.md`** (gitignored, in the main checkout) and, when
+the owner asks for a round, starts it through T3 Code with **one line** as the task —
+*"Follow the review brief at `<absolute path>`"* (`testing-and-review.md` → "Starting a
+round"). Outside T3 Code the owner pastes that line into the Codex app. Either way, a few
+lines in chat say what it asks. **The whole brief is not printed in chat** (owner's call,
+2026-10-03): the reviewer reads the file, so a chat copy only duplicated it. History:
+until 2026-10-03 the brief was printed in full as well; before 2026-09-17 the printed
+copy *was* the paste; until 2026-11-04 the one line was the owner's to paste; and on
+2026-08-24 the owner ruled out handing over a bare path into a temp directory. A `.dev/`
+file plus the one-liner is neither. The reasons behind the fixed parts are in
 `testing-and-review.md` → "External review" and `lessons.md` → "Review"; this file
 is the shape, not the why.
 
@@ -25,6 +30,7 @@ sections. The ones the template below assumes — the shape #108 and #109 settle
 | **What** | the change, by file; which rule it serves; what it deliberately does not touch |
 | **Deliberate calls a reviewer may disagree with** | numbered, each with the reason — the list the reviewer judges |
 | **Tests** | the new file and count; value axis, state axis, surfaces, controls |
+| **Coverage record** | the whole feature, surface by surface: what was checked, by what, at which head; what is unresolved; what is **explicitly untested** — updated every round, because findings alone are not continuity (#212 rounds 4–5: discovery metadata and an optional field's value space sat unchecked for four rounds of briefs that only said how to verify the fixes) |
 | negative control (in Tests) | *N red / M green on unfixed `main`*, what the greens are, sampled reds on the intended assertion |
 | mutation pass (in Tests) | a table — mutant → killed by — and, when the tracked harness doesn't carry the cases, the tuples in a `<details>` block |
 | closing line | suite counts, lint, migration yes/no, sign-off |
@@ -45,21 +51,42 @@ in play) and `.agents/testing-and-review.md` ("Writing a regression test", "Exte
 review → Responding to a review") before the diff.
 
 **Context, one paragraph.** plamotrack is a single-owner, self-hosted model-kit
-collection tracker, pre-adoption alpha, no authentication yet (milestone 6), on a
-trusted network. ‹Two or three sentences: the defect or feature in the issue's terms,
+collection tracker, pre-adoption alpha: owner login (password or OIDC), personal
+access tokens, MCP OAuth and tested TLS deployment paths since v0.3.0-alpha; the
+owner's own instance is public behind a Cloudflare Tunnel. ‹Two or three sentences: the defect or feature in the issue's terms,
 and what this branch does about it — file names, not adjectives.› No migration /
 ‹one migration, additive›. Inventory counts and purchase records, not access control.
 
-**Environment is ready.** Repo at `/Users/tlgja/Code/plamotrack`; backend deps
-installed (`cd backend && uv sync` already run); the dev Postgres is up
-(`docker compose -f docker-compose.yml -f docker-compose.dev.yml ps db`). Run the
-suite from `backend/` with `uv run pytest`; **one pytest session at a time** — two
-overlapping runs deadlock on `TRUNCATE`. ‹Frontend: "untouched; don't start Vite" /
+**Environment is ready.** You're in a worktree at this head; the main checkout is
+`/Users/tlgja/Code/plamotrack`. Symlink its `.env`, `backend/.venv` (with
+`UV_NO_SYNC=1`) and `frontend/node_modules`, and don't stage them. The dev Postgres is up
+(`docker compose -f docker-compose.yml -f docker-compose.dev.yml ps db`), but don't
+migrate the dev database or run reproductions against it: HTTP reproductions go through
+the test suite's fixtures. Keep scratch files in a temp directory of your own and delete
+it before you finish; the one thing to leave in `.dev/‹issue›/` is your review, as
+`review-‹round›.md`. Run the suite from `backend/` with `uv run pytest`; **one pytest
+session at a time** — two overlapping runs deadlock on `TRUNCATE`. ‹Frontend: "untouched; don't start Vite" /
 "`npm install` done; `npm run build`, `npm test`, e2e needs chromium installed".›
 
-**Check the test claim first — it is the claim most worth checking, and re-measure
-the numbers rather than reading them: the author's counts are the first thing to
-get wrong.** The PR body's *Tests* section says ‹N red / M green› on unfixed `main`,
+**Two jobs, in this order.** *First,* examine the complete feature contract on your
+own: before you read the author's test plan or the "where I'd push" list below, write
+down the surfaces the feature has and the value space of every field the protocol (or
+the spec, or the issue) defines on each — from the documents a client reads first to
+the last request it sends — then compare your list with the PR body's *Coverage
+record*, which says what the author checked, by what and at which head, what is
+unresolved, and what is explicitly untested. Anything on your list and not in that
+record is yours to probe before anything else; an "explicitly untested" entry is a
+question, not a pass. *Second,* verify the previous fixes — the negative control, the
+mutants, the deliberate calls — as below. Killing every listed mutant proves those tests
+detect those defects; it says nothing about completeness, and a brief that only says how
+to verify the fixes steered four rounds of #212 past discovery metadata and an optional
+field's value space. ‹If this is a later round in the same PR: the coverage record is
+the continuity between rounds — the thread holds the findings, not the tentative
+concerns or the paths nobody walked; read it before the newest reply.›
+
+**Check the test claim — it is the claim most worth checking, and re-measure the
+numbers rather than reading them: the author's counts are the first thing to get
+wrong.** The PR body's *Tests* section says ‹N red / M green› on unfixed `main`,
 and names what the greens are. Verify that in a **git worktree** of `main`
 (`git worktree add /private/tmp/plamotrack-‹N›-main main`), copying the new test
 file(s) in — not `git checkout <branch> -- <path>`, which has discarded work on this
@@ -79,13 +106,25 @@ prefix›`". If not, say why not — e.g. "mid-rewrite on #86; deliberate."›
 numbered as on the PR, so the reviewer answers in the same numbering.› Say if you'd
 overrule any.
 
-**Where I'd push, because these are assumptions rather than proofs:**
+**Where I'd push, because these are assumptions rather than proofs** — the author's
+list, which comes after your own coverage list above, not instead of it:
 
 - ‹Each bullet: one assumption, what would falsify it, where to look. Three to six.
   See "Filling this section" below.›
 
 **Severity by real exposure, not shape**: pre-adoption alpha on a trusted network is
 a legitimate input to a P-level.
+
+**A P3 alone isn't a NO-GO.** If your verdict would be NO-GO and every finding is a P3,
+justify in each finding why it can't merge and be fixed later in a separate issue. A
+reason that holds is specific to this merge: for example, something a later fix couldn't
+recover, or a contract that's hard to change once shipped. "It's a real defect" or "this
+PR introduced it" isn't enough alone. Without that justification the verdict is GO, and
+you list the P3s as follow-ups to file. Rate severity first, and don't raise a P-level to
+reach a verdict.
+
+**If something can't run,** say so at the top and list every claim that depended on it as
+not re-measured. That isn't a NO-GO, and it's never verified by reading.
 
 **Output.** A verdict (GO / NO-GO), then findings numbered with P1–P3, each with the
 reproduction at `‹sha›` and the remedy — say both halves if the defect is right and
@@ -113,8 +152,8 @@ Pick one; it supplies the two `‹reviewer …›` slots and adds its own last p
 The reviewer names itself and its version — the lines below are what previous rounds
 wrote, given so the slots in the template read as one house style.
 
-**GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter).** The default reviewer —
-any size (1M context); see the roster in `testing-and-review.md` for its measured
+**GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter).** An option for a big round
+(1M context); see the roster in `testing-and-review.md` for its measured
 traits and the remedies caveat.
 
 ```
@@ -133,20 +172,59 @@ Add to the brief:
 > under you mid-round, re-run in a detached worktree at the reviewed head and say
 > so (the #173 round's precedent).
 
-**Codex (GPT 5.6 Sol).** Any size, or multi-round. Capacity stopped being the
+**Codex (GPT 6.1 Sol on high since 2026-10-31; earlier GPT-6, GPT 5.6 Sol and Daybreak Blue).** The default reviewer: any size, or multi-round. Capacity stopped being the
 constraint with the 2026-08-28 subscription bump — no meter check needed for a
 routine round.
 
 ```
-**Codex (OpenAI, GPT 5.6 Sol) — independent review of PR #‹N›, replayed at head `‹sha›`.**
-— **Codex (OpenAI, GPT 5.6 Sol)**
+**Codex (OpenAI, ‹your model›) — independent review of PR #‹N›, replayed at head `‹sha›`.**
+— **Codex (OpenAI, ‹your model›)**
 ```
 
 (*independent re-review* / *third independent review* on later rounds.) Add:
 
 > Replay, don't read: for each finding, a focused reproduction at the head, and
 > which final-state assertion it fails on. If rounds keep landing in the same
-> function, say so — that is a signal about the invariant, not the patch.
+> function, say so — that is a signal about the invariant, not the patch. End with
+> the coverage you added this round — surfaces and fields you examined that the PR
+> body's record did not list, and what you left unexamined — so the next round
+> starts from it rather than from the brief alone.
+
+**Codex through the Claude Code plugin (the `codex:codex-rescue` task route).** Only
+for a round with **no browser and no Docker leg** — its sandbox cannot launch
+Chromium (`testing-and-review.md` → the roster). Same attribution lines as Codex
+above. The channel is different (owner's call, 2026-09-17): a plugin round **returns
+its review in the task output and does not post on GitHub**, so replace the template's
+last paragraph ("Post it with `gh pr comment`…") with:
+
+> Return the full review as your final message. **Do not post to GitHub and do not
+> run `gh pr comment`** — this round's output goes back to the author's session. You
+> are in a `workspace-write` sandbox with no approval prompts: if something the brief
+> asks for cannot run there (a browser, the Docker socket, a write to `.git`), say so
+> at the top of your verdict and list every claim that depended on it as **not
+> re-measured** — never mark it verified by reading. Leave the tree exactly as you
+> found it: `git status --short` empty, on the same branch and head, no servers on
+> :8000 / :5173, any database or clone you made removed.
+
+Hand it over with `--prompt-file <path>` (never as a shell string — the brief is full
+of backticks and `$`), `--write` if it must run the suites, and the model and effort
+the owner names. Afterwards check what an unattended write-capable run left behind:
+branch and head, `git status`, stashes, worktrees, ports, databases, `/private/tmp`.
+If the round finds something real, the record still has to reach the PR: fix it, and
+note the pre-review and its finding in the PR body's coverage record.
+
+**Cursor (Grok 4.6, SpaceXAI).** Available until 2026-09-15 only, then gone — kept
+here for that window (it reviewed #219 on 2026-09-07, picked by mistake instead of
+GLM, from a detached worktree at the head and a second at the base without being
+told to). Its 256K ceiling is why it left the roster: fix rounds it can hold whole.
+
+```
+**Cursor Grok 4.6 (SpaceXAI / Cursor) — review of PR #‹N›, at head `‹sha›`.**
+— **Cursor Grok 4.6 (SpaceXAI)**, via Cursor
+```
+
+Add the same paragraph as for GLM (one round per fresh chat; say so if the diff does
+not fit; re-run in a detached worktree if the checkout moves).
 
 **Claude Code (Opus / Fable).** An option when Cursor and Codex are both spoken for,
 with one caveat to write into the brief: most PRs here are authored by a Claude
@@ -174,7 +252,9 @@ these about the branch; each answer that is "I reasoned, I did not prove" is a b
   normalisations are supposed to agree, say in which direction you believe any
   disagreement falls, and ask for the counter-example.
 - **What would a client notice changed** — a status code, a stored value, a message —
-  that the release notes will have to say?
+  that the release notes will have to say? It belongs in this PR's
+  `.agents/next-release.md` entry; ask the reviewer to check the entry against the
+  diff.
 - **Which test is least deterministic** (a race, a timing pin, a repeat count) and
   what is the evidence it is enough?
 - **What did you decide rather than derive** — and would you mind being overruled?

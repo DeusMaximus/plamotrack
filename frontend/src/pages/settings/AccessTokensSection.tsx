@@ -1,0 +1,491 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
+
+import { api, ApiError, tokensQuery } from "../../api/client";
+import type { AccessToken, AccessTokenMinted, TokenScope } from "../../api/types";
+import { FoldToFit } from "../../components/FoldToFit";
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  Input,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+} from "../../components/ui";
+import { dateInDigits, formatDate, formatDateTime, formatNumber } from "../../lib/format";
+import { usePresentationVersion } from "../../lib/presentation";
+import { useShell } from "../../lib/shell";
+import { SectionHeader } from "./SectionHeader";
+
+/** Settings → Access tokens (§5.5 family 6; #189): mint, list and revoke the
+ *  owner's personal access tokens. The secret is shown exactly once, in the
+ *  mint response, and never again — the list carries the public prefix so a
+ *  row can be matched to whichever client holds it. Every route here wants the
+ *  owner's session (a token cannot manage tokens), which the AuthGate has
+ *  already established by the time this renders. */
+export function AccessTokensSection() {
+  // Re-render when the instance's presentation settings arrive or change: the
+  // list's dates and the expiry choices read them per call, and a Settings
+  // section is behind an Outlet that a re-render above it cannot reach. The
+  // tokens can arrive before the settings row, and nothing else re-draws
+  // them (#331).
+  usePresentationVersion();
+  const { t } = useTranslation();
+  const [minted, setMinted] = useState<AccessTokenMinted | null>(null);
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader
+        title={t("settings.sections.tokens")}
+        description={t("settings.tokens.description")}
+      />
+      {minted ? (
+        <MintedCard minted={minted} onDone={() => setMinted(null)} />
+      ) : (
+        <CreateCard onMinted={setMinted} />
+      )}
+      <TokenList />
+    </div>
+  );
+}
+
+type Access = "read" | "write";
+const SCOPES: Record<Access, TokenScope[]> = {
+  read: ["collection:read"],
+  write: ["collection:read", "collection:write"],
+};
+
+/** Expiry choices, in days; "" is never. The instant is computed here at submit
+ *  time so the server receives an offset-bearing ISO 8601 value. */
+const EXPIRY_DAYS = [30, 90, 365] as const;
+
+/** Focus keys (`lib/focusKey.ts`) for the controls that take the keyboard when
+ *  the one it was on is replaced or revoked (#268). */
+const TOKEN_NAME_FOCUS = "token-name";
+const TOKEN_COPY_FOCUS = "token-copy";
+
+function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => void }) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<{ name: string; access: Access; expiry: string }>({
+    defaultValues: { name: "", access: "read", expiry: "" },
+  });
+
+  const onSubmit = handleSubmit(async (values) => {
+    setError(null);
+    try {
+      const days = values.expiry ? Number(values.expiry) : null;
+      const minted = await api.createToken({
+        name: values.name.trim(),
+        scopes: SCOPES[values.access],
+        ...(days ? { expires_at: new Date(Date.now() + days * 86_400_000).toISOString() } : {}),
+      });
+      await queryClient.invalidateQueries({ queryKey: tokensQuery.queryKey });
+      reset();
+      onMinted(minted);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("common.requestFailed"));
+    }
+  });
+
+  return (
+    <Card title={t("settings.tokens.createTitle")} description={t("settings.tokens.createDescription")}>
+      <form onSubmit={onSubmit} className="space-y-3">
+        <Field label={t("settings.tokens.nameLabel")} required error={errors.name?.message}>
+          <Input
+            maxLength={100}
+            data-focus-key={TOKEN_NAME_FOCUS}
+            // Enter here creates the token too, and the card that replaces
+            // this form has the keyboard next (Greptile #336).
+            data-focus-stand-in={TOKEN_COPY_FOCUS}
+            placeholder={t("settings.tokens.namePlaceholder")}
+            autoComplete="off"
+            {...register("name", {
+              required: t("validation.nameRequired"),
+              validate: (value) => value.trim().length > 0 || t("validation.nameRequired"),
+            })}
+          />
+        </Field>
+        <Field label={t("settings.tokens.scopeLabel")} required>
+          <Select {...register("access")}>
+            <option value="read">{t("settings.tokens.scopeRead")}</option>
+            <option value="write">{t("settings.tokens.scopeWrite")}</option>
+          </Select>
+        </Field>
+        <p className="text-xs text-muted">{t("settings.tokens.scopeNote")}</p>
+        <Field label={t("settings.tokens.expiryLabel")} className="max-w-48 max-md:max-w-none">
+          <Select {...register("expiry")}>
+            <option value="">{t("settings.tokens.expiryNever")}</option>
+            {EXPIRY_DAYS.map((days) => (
+              <option key={days} value={String(days)}>
+                {t("settings.tokens.expiryDays", { count: days, countDisplay: formatNumber(days) })}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {/* Beside Create, as every Settings form says its failure (#316). */}
+        <ErrorBanner message={error} />
+        {/* The new token's card takes this form's place: the keyboard goes to
+            its Copy (#268). */}
+        <Button
+          type="submit"
+          pending={isSubmitting}
+          data-focus-key="token-create"
+          data-focus-stand-in={TOKEN_COPY_FOCUS}
+        >
+          {isSubmitting ? t("settings.tokens.creating") : t("settings.tokens.createButton")}
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+function MintedCard({ minted, onDone }: { minted: AccessTokenMinted; onDone: () => void }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(minted.token);
+      setCopied(true);
+    } catch {
+      // No clipboard (insecure context, permissions): the token is selectable
+      // below, so the fallback is a manual copy.
+      setCopied(false);
+    }
+  }
+
+  return (
+    <Card title={t("settings.tokens.mintedTitle")} description={t("settings.tokens.mintedDescription")}>
+      <div className="space-y-3">
+        <p className="text-sm text-text">{minted.name}</p>
+        <div className="flex items-start gap-2">
+          <code
+            data-testid="minted-token"
+            className="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-surface-alt px-2.5 py-1.5 font-mono text-sm"
+          >
+            {minted.token}
+          </code>
+          <Button type="button" variant="secondary" onClick={copy} data-focus-key={TOKEN_COPY_FOCUS}>
+            {copied ? t("settings.tokens.copied") : t("settings.tokens.copy")}
+          </Button>
+        </div>
+        <p className="text-xs text-muted">{t("settings.tokens.usageHint")}</p>
+        {/* The form comes back in this card's place, and the keyboard to its
+            name (#268). */}
+        <Button type="button" onClick={onDone} data-focus-key="token-done" data-focus-stand-in={TOKEN_NAME_FOCUS}>
+          {t("settings.tokens.done")}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function TokenList() {
+  const phone = useShell() === "phone";
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: tokens, error } = useQuery(tokensQuery);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const revoke = useMutation({
+    mutationFn: (token: AccessToken) => api.revokeToken(token.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: tokensQuery.queryKey }),
+    onError: (err) => setActionError(err instanceof ApiError ? err.message : t("common.requestFailed")),
+  });
+
+  function onRevoke(token: AccessToken) {
+    setActionError(null);
+    if (!window.confirm(t("settings.tokens.confirmRevoke", { name: token.name }))) return;
+    revoke.mutate(token);
+  }
+
+  return (
+    <Card title={t("settings.tokens.listTitle")} description={t("settings.tokens.listDescription")}>
+      {/* At the list's head, and a refused Revoke's brought into view when it
+          appears: a Revoke can be any row of a long list, a screen and more
+          below (#316). A list that fails to load is said here too, but nothing
+          was pressed, so the page stays where it is (PR #334 review). */}
+      <ErrorBanner
+        reveal={actionError !== null}
+        message={
+          actionError ?? (error ? (error instanceof ApiError ? error.message : t("common.requestFailed")) : null)
+        }
+      />
+      {tokens === undefined ? (
+        <p className="text-sm text-muted">{t("common.loading")}</p>
+      ) : tokens.length === 0 ? (
+        <EmptyState>{t("settings.tokens.empty")}</EmptyState>
+      ) : (
+        // The list pages' table shape (§13.4): micro-label head row on the
+        // alternate surface, hairlines between rows. Five columns, because the
+        // Settings pane is capped — max-w-4xl less the section nav leaves the box
+        // about 650 px wide from 1210 px up, whatever the window — and seven
+        // (prefix and access as columns, three date-times in the instance's
+        // locale rendering, with seconds) pushed a populated row to 979 px, the
+        // Revoke control clipped off the box's right edge and reachable only by
+        // scrolling the box sideways. The prefix and the access level ride under
+        // the name, the way a kit's number and series do; the dates are dates,
+        // the exact instant on hover. Cell padding is a step under the list
+        // pages' px-3: five columns at px-3 miss the 652 px box by a few pixels
+        // for a populated row, and the miss lands as a wrapped second line.
+        //
+        // Card rows where the table does not fit its box (§13.7, #258, #329) —
+        // a populated row needs about 553 px, and this box is the viewport less
+        // 372 px beside the rail, so every iPad in portrait — and on a phone
+        // always, as every list there is cards. Chosen by measuring, not by the
+        // 768 px shell line, so an iPad gets them inside the two-column Settings
+        // page; from 1210 px up the box is its 652 px cap and a populated row
+        // fits. Both are in the tree and one is drawn. The two Revokes of a
+        // token carry one focus key, and when the shape changes under a focused
+        // one the keyboard goes to the one that is drawn (`lib/focusKey.ts`;
+        // Codex #266, finding 4 — an iPad Air turning is the rail both ways, so
+        // no shell change is there to notice it).
+        <FoldToFit stages={1} floor={phone ? 1 : 0} overflows={tableOverflows}>
+          <ul
+            data-testid="token-cards"
+            className="hidden divide-y divide-rule rounded-md border border-border group-data-fold-1/fold:block"
+          >
+            {tokens.map((token) => (
+              <TokenCard
+                key={token.id}
+                token={token}
+                busy={revoke.isPending && revoke.variables?.id === token.id}
+                standIns={revokeStandIns(tokens, token.id)}
+                onRevoke={() => onRevoke(token)}
+              />
+            ))}
+          </ul>
+          <div
+            data-testid="token-table"
+            className="overflow-x-auto rounded-md border border-border group-data-fold-1/fold:hidden"
+          >
+          <table className="w-full text-sm">
+            <thead>
+              <tr className={TABLE_HEAD_ROW_CLASS}>
+                <th className="px-2.5 py-2.5">{t("settings.tokens.colName")}</th>
+                <th className="px-2.5 py-2.5">{t("settings.tokens.colCreated")}</th>
+                <th className="px-2.5 py-2.5">{t("settings.tokens.colLastUsed")}</th>
+                <th className="px-2.5 py-2.5">{t("settings.tokens.colExpires")}</th>
+                <th className="px-2.5 py-2.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {tokens.map((token) => (
+                <TokenRow
+                  key={token.id}
+                  token={token}
+                  busy={revoke.isPending && revoke.variables?.id === token.id}
+                  standIns={revokeStandIns(tokens, token.id)}
+                  onRevoke={() => onRevoke(token)}
+                />
+              ))}
+            </tbody>
+          </table>
+          </div>
+        </FoldToFit>
+      )}
+    </Card>
+  );
+}
+
+/** What has to fit: the table's own scrolling box, not the cards beside it. */
+const tableOverflows = (box: HTMLElement): boolean => {
+  const table = box.querySelector<HTMLElement>('[data-testid="token-table"]');
+  return table !== null && table.scrollWidth > table.clientWidth;
+};
+
+/** A stored instant as a date in the table, the full date-time on hover. */
+function Instant({ iso }: { iso: string }) {
+  return <span title={formatDateTime(iso)}>{formatDate(iso)}</span>;
+}
+
+/** What a row and a card both say about a token's state. */
+function tokenState(token: AccessToken) {
+  const revoked = token.revoked_at !== null;
+  const expired =
+    !revoked && token.expires_at !== null && new Date(token.expires_at).getTime() <= Date.now();
+  return { revoked, expired, inactive: revoked || expired };
+}
+
+/** Where the keyboard goes when a revoked token's Revoke is gone (#268): the
+ *  next token with a Revoke, else the one before it, else the new token's
+ *  name — so revoking several in turn is Enter, Enter, Enter. "With a Revoke"
+ *  is the rule that draws one: not revoked, expired or not (Codex #336). */
+function revokeStandIns(tokens: AccessToken[], id: string): string {
+  const revocable = tokens.filter((token) => !tokenState(token).revoked).map((token) => token.id);
+  const at = revocable.indexOf(id);
+  const neighbours = [revocable[at + 1], revocable[at - 1]].filter((other) => other !== undefined);
+  return [...neighbours.map((other) => `token:${other}`), TOKEN_NAME_FOCUS].join(" ");
+}
+
+/** A token as a card row, where the box is too narrow for the table (§13.7).
+ *  The same facts, with the instants in full — the table's dates keep the time
+ *  in a tooltip, and a finger has no hover (#263's note). */
+function TokenCard({
+  token,
+  busy,
+  standIns,
+  onRevoke,
+}: {
+  token: AccessToken;
+  busy: boolean;
+  standIns: string;
+  onRevoke: () => void;
+}) {
+  const { t } = useTranslation();
+  const { revoked, expired, inactive } = tokenState(token);
+  const writes = token.scopes.includes("collection:write");
+  const fact = (label: string, value: string) => t("list.labelled", { label, value });
+  return (
+    <li
+      data-testid="token-card"
+      // The facts keep 10rem beside Revoke and Revoke takes the next line when
+      // they cannot — under a large browser font both are in rem and the card
+      // is not (#260, the family of #269–#271).
+      className={`flex flex-wrap items-start gap-x-3 gap-y-2 px-3.5 py-3 ${inactive ? "text-faint" : ""}`}
+    >
+      <div
+        className={`min-w-0 flex-[1_1_min(10rem,100%)] space-y-1 text-xs ${inactive ? "" : "text-muted"}`}
+      >
+        <div className={`text-sm font-medium wrap-anywhere ${inactive ? "" : "text-text"}`}>
+          {token.name}
+        </div>
+        <div>
+          <span className="font-mono">ptk_{token.token_prefix}_…</span>
+          {t("common.dotSeparator")}
+          {writes ? t("settings.tokens.accessWrite") : t("settings.tokens.accessRead")}
+        </div>
+        <div>{fact(t("settings.tokens.colCreated"), formatDateTime(token.created_at))}</div>
+        <div>
+          {fact(
+            t("settings.tokens.colLastUsed"),
+            token.last_used_at ? formatDateTime(token.last_used_at) : t("settings.tokens.neverUsed"),
+          )}
+        </div>
+        <div>
+          {fact(
+            t("settings.tokens.colExpires"),
+            expired
+              ? t("settings.tokens.expired")
+              : token.expires_at
+                ? formatDateTime(token.expires_at)
+                : t("settings.tokens.noExpiry"),
+          )}
+        </div>
+        {revoked && (
+          <div>
+            {t("settings.tokens.revoked", { when: formatDateTime(token.revoked_at as string) })}
+          </div>
+        )}
+      </div>
+      {!revoked && (
+        <Button
+          type="button"
+          variant="danger"
+          className="shrink-0"
+          pending={busy}
+          onClick={onRevoke}
+          data-focus-stand-in={standIns}
+          data-focus-key={`token:${token.id}`}
+        >
+          {busy ? t("settings.tokens.revoking") : t("settings.tokens.revoke")}
+        </Button>
+      )}
+    </li>
+  );
+}
+
+function TokenRow({
+  token,
+  busy,
+  standIns,
+  onRevoke,
+}: {
+  token: AccessToken;
+  busy: boolean;
+  standIns: string;
+  onRevoke: () => void;
+}) {
+  const { t } = useTranslation();
+  const { revoked, expired, inactive } = tokenState(token);
+  const writes = token.scopes.includes("collection:write");
+  const dot = t("common.dotSeparator");
+  return (
+    <tr
+      data-testid="token-row"
+      className={`border-b border-rule last:border-0 ${inactive ? "text-faint" : ""}`}
+    >
+      <td className="px-2.5 py-2">
+        {/* A name is free text up to 100 characters: it wraps, and one long word
+            breaks rather than widening the column past the box. The facts under
+            it break only between themselves (the <wbr>s), each carrying its own
+            separator so a line never ends on a dangling dot. */}
+        <div className="font-medium wrap-anywhere">{token.name}</div>
+        <div className={`text-xs ${inactive ? "" : "text-muted"}`}>
+          <span className="whitespace-nowrap font-mono">ptk_{token.token_prefix}_…</span>
+          <wbr />
+          <span className="whitespace-nowrap">
+            {dot}
+            {writes ? t("settings.tokens.accessWrite") : t("settings.tokens.accessRead")}
+          </span>
+          {revoked && (
+            <>
+              <wbr />
+              {/* …unless the date is in words (`dateInDigits`): "revoked Thursday,
+                  17 September 2026" on one line made the table 42 px wider than
+                  the 576 px box that first shows it. */}
+              <span
+                className={dateInDigits(token.revoked_at as string) ? "whitespace-nowrap" : ""}
+                title={formatDateTime(token.revoked_at as string)}
+              >
+                {dot}
+                {t("settings.tokens.revoked", { when: formatDate(token.revoked_at as string) })}
+              </span>
+            </>
+          )}
+        </div>
+      </td>
+      <td className="px-2.5 py-2">
+        <Instant iso={token.created_at} />
+      </td>
+      <td className="px-2.5 py-2">
+        {token.last_used_at ? <Instant iso={token.last_used_at} /> : t("settings.tokens.neverUsed")}
+      </td>
+      <td className="px-2.5 py-2">
+        {expired ? (
+          t("settings.tokens.expired")
+        ) : token.expires_at ? (
+          <Instant iso={token.expires_at} />
+        ) : (
+          t("settings.tokens.noExpiry")
+        )}
+      </td>
+      {/* Empty once revoked: the record of when sits under the name, so the
+          action column keeps the button's width and never the sentence's. */}
+      <td className="px-2.5 py-2 text-end whitespace-nowrap">
+        {!revoked && (
+          <Button
+            type="button"
+            variant="danger"
+            pending={busy}
+            onClick={onRevoke}
+            data-focus-stand-in={standIns}
+            data-focus-key={`token:${token.id}`}
+          >
+            {busy ? t("settings.tokens.revoking") : t("settings.tokens.revoke")}
+          </Button>
+        )}
+      </td>
+    </tr>
+  );
+}

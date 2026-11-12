@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+import { STORAGE_STATE } from "./e2e/api";
+
 // E2E runs against the dev stack (backend :8000 + Vite :5173), reusing servers
 // that are already up. The spec creates uniquely-named records and cleans up
 // after itself via the API, so the dev database is left as it was found.
@@ -29,19 +31,74 @@ export default defineConfig({
     // difference between reading that a button stayed visible and seeing why.
     trace: "on-first-retry",
   },
+  // `setup` signs in as the owner once (e2e/auth.setup.ts) — since the
+  // default-deny flip (#188) every collection route wants one — and the other
+  // projects reuse its session: browser contexts through storageState, the
+  // specs' own API calls through e2e/api.ts.
+  //
   // settings.spec.ts flips the instance-settings singleton (the reference
   // currency) — the one piece of state every spec shares. order-snapshot and
   // order-lossless read that value in a beforeAll and assert stamps against
   // it, so the flip must never overlap them; a project dependency is the only
   // cross-file ordering Playwright offers. The trade: a failure in `app`
-  // skips `settings` for that run.
+  // skips `settings` for that run. lists.settings.spec.ts (#258) flips the
+  // formatting locale and the date style, which every date on every page is
+  // written with, so the project waits for `phone` and `tablet` too — their
+  // lists.spec.ts measures tables whose widths those dates set.
   projects: [
-    { name: "app", testIgnore: /settings\.spec\.ts/ },
-    { name: "settings", testMatch: /settings\.spec\.ts/, dependencies: ["app"] },
+    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "app",
+      testIgnore: /(settings|phone)\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { storageState: STORAGE_STATE },
+    },
+    {
+      name: "settings",
+      testMatch: /settings\.spec\.ts/,
+      dependencies: ["app", "phone", "tablet"],
+      use: { storageState: STORAGE_STATE },
+    },
+    // The phone and tablet shells (design §13.7, #257). Chromium at those sizes
+    // with a touch screen — `hasTouch` with `isMobile` is what makes
+    // `(pointer: coarse)` match, which the touch sizes key on — not a device
+    // preset, which would want WebKit installed. `tablet` is the portrait size;
+    // a spec that wants landscape (1180 × 820) sets it. They run the specs
+    // written for them — shell.spec.ts and lists.spec.ts (#258), dialogs.spec.ts
+    // and dialog-keyboard.spec.ts (#259: the sheet frame, and the keyboard rules
+    // it must keep at every width), pages.spec.ts (#260: Settings, Home and the
+    // sign-in screens) and keyboard-place.spec.ts (#268: the phone's stepper and
+    // token cards are other elements), which `app` runs too, at the desktop size — and
+    // phone.spec.ts, the happy path by thumb, which is the phone's alone. lists.spec.ts and dialogs.spec.ts
+    // seed rows of their own and delete them, and nothing they run touches the
+    // settings singleton — but they read dates the singleton formats, so
+    // `settings` waits for them (above).
+    {
+      name: "phone",
+      testMatch: /(shell|lists|dialogs|dialog-keyboard|pages|keyboard-place|phone)\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        storageState: STORAGE_STATE,
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        isMobile: true,
+      },
+    },
+    {
+      name: "tablet",
+      testMatch: /(shell|lists|dialogs|dialog-keyboard|pages|keyboard-place)\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        storageState: STORAGE_STATE,
+        viewport: { width: 820, height: 1180 },
+        hasTouch: true,
+        isMobile: true,
+      },
+    },
   ],
   webServer: [
     {
-      command: "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000",
+      command: "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers",
       cwd: "../backend",
       url: "http://127.0.0.1:8000/healthz",
       reuseExistingServer: true,

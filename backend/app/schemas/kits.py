@@ -4,10 +4,11 @@ from datetime import datetime
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.models.enums import KitStatus
+from app.schemas.base import RequestModel
 from app.schemas.numeric import Rating
 
 
-class KitCreate(BaseModel):
+class KitCreate(RequestModel):
     name: str = Field(min_length=1)
     grade: str = Field(min_length=1)
     scale: str | None = None  # derived from grade when omitted (§3.1)
@@ -26,7 +27,7 @@ class KitCreate(BaseModel):
     build_notes: str | None = None
 
 
-class KitUpdate(BaseModel):
+class KitUpdate(RequestModel):
     """PATCH payload — only fields actually sent are applied (exclude_unset)."""
 
     model_config = ConfigDict(extra="forbid")

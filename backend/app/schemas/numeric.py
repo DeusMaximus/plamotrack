@@ -22,7 +22,7 @@ from typing import Annotated, Any
 
 from pydantic import BeforeValidator, Field
 
-from app.services.numeric import INT4_MAX, INT4_MIN
+from app.services.numeric import INT4_MAX, INT4_MIN, RATING_MAX, RATING_MIN
 
 
 def _reject_bool(value: Any) -> Any:
@@ -75,4 +75,4 @@ Int4 = Annotated[int, Field(ge=INT4_MIN, le=INT4_MAX), _NotBool]
 #: exactly how it came to be the one write integer that took a boolean. `true`
 #: was a rating of 1 on kits and retailers through both doors, on fields whose
 #: own `ge=1` made `false` look correctly refused (#102 review, Cursor Grok 4.6).
-Rating = Annotated[int, Field(ge=1, le=5), _NotBool]
+Rating = Annotated[int, Field(ge=RATING_MIN, le=RATING_MAX), _NotBool]

@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { Minus, Pencil, Plus } from "lucide-react";
+import { type ReactNode, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -15,11 +16,31 @@ import type {
   UpgradeUpdate,
 } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
+import { FoldToFit } from "../components/FoldToFit";
+import { Measured, TableRuler } from "../components/Measured";
 import { Modal } from "../components/Modal";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
+import {
+  Button,
+  CardList,
+  CardMeta,
+  CardRow,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  IconButton,
+  Input,
+  PAGE_ACTION_FOCUS,
+  PageHeader,
+  Pager,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+} from "../components/ui";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
+import { useEnumParam, usePaging, useTextParam, useWriteParams } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
+import { useShell } from "../lib/shell";
 
 type Tab = "tools" | "consumables" | "upgrades" | "display-items";
 type InventoryItem = Tool | Consumable | Upgrade | DisplayItem;
@@ -118,10 +139,12 @@ function ItemFormModal({
   tab,
   item,
   onClose,
+  onDelete,
 }: {
   tab: Tab;
   item?: InventoryItem;
   onClose: () => void;
+  onDelete?: (item: InventoryItem) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const { data: meta } = useQuery(metaQuery);
@@ -141,7 +164,13 @@ function ItemFormModal({
     );
   }
   return (
-    <ItemForm tab={tab} item={item} onClose={onClose} referenceCurrency={meta.reference_currency} />
+    <ItemForm
+      tab={tab}
+      item={item}
+      onClose={onClose}
+      onDelete={onDelete}
+      referenceCurrency={meta.reference_currency}
+    />
   );
 }
 
@@ -149,16 +178,22 @@ function ItemForm({
   tab,
   item,
   onClose,
+  onDelete,
   referenceCurrency,
 }: {
   tab: Tab;
   item?: InventoryItem;
   onClose: () => void;
+  /** Delete lives in the dialog, not on the row (§13.4). */
+  onDelete?: (item: InventoryItem) => Promise<void>;
   referenceCurrency: string;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // The submit stands outside the <form>, in the dialog's frame (§13.7, #259).
+  const formId = useId();
   // The typeahead half of the category vocabulary (#127) — the same device the kit
   // form gives series. The server folds a case-insensitive match onto the stored
   // spelling either way; this is what makes picking the stored spelling easy.
@@ -268,8 +303,37 @@ function ItemForm({
           : t("inventory.addTitle", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })
       }
       onClose={onClose}
+      actions={{
+        secondary: { label: t("common.cancel"), onClick: onClose },
+        primary: {
+          label: item ? t("common.save") : t("common.add"),
+          form: formId,
+          disabled: isSubmitting || deleting,
+        },
+      }}
+      destructive={
+        item && onDelete
+          ? {
+              label: t("common.delete"),
+              disabled: isSubmitting || deleting,
+              onClick: async () => {
+                if (!window.confirm(t("common.confirmDelete", { name: item.name }))) return;
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(item);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              },
+            }
+          : undefined
+      }
     >
-      <form onSubmit={onSubmit} className="space-y-3">
+      <form id={formId} onSubmit={onSubmit} className="space-y-3">
         <ErrorBanner message={error} />
         <Field label={t("common.name")} required error={errors.name?.message}>
           <Input {...register("name", { required: t("validation.nameRequired") })} />
@@ -295,7 +359,7 @@ function ItemForm({
         {/* Display items take a manufacturer too, but optional — the required one
             above belongs to upgrades, where the column is NOT NULL. */}
         {tab === "display-items" && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
             <Field label={t("inventory.manufacturer")}>
               <Input {...register("manufacturer")} placeholder={t("inventory.manufacturerPlaceholder")} />
             </Field>
@@ -304,13 +368,13 @@ function ItemForm({
             </Field>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
           <Field label={t("inventory.quantityOnHand")}>
-            <Input type="number" min={0} {...register("quantity_on_hand", { min: 0 })} />
+            <Input type="number" min={0} inputMode="numeric" {...register("quantity_on_hand", { min: 0 })} />
           </Field>
           {tab === "consumables" && (
             <Field label={t("inventory.lowStockThreshold")}>
-              <Input type="number" min={0} {...register("low_stock_threshold")} placeholder="—" />
+              <Input type="number" min={0} inputMode="numeric" {...register("low_stock_threshold")} placeholder="—" />
             </Field>
           )}
           {tab === "tools" && (
@@ -322,6 +386,7 @@ function ItemForm({
                   // with cents and a dinar can reach its third decimal place.
                   step={stepFor(watch("unit_cost_reference_currency"))}
                   min={0}
+                  inputMode="decimal"
                   {...register("unit_cost_reference")}
                   placeholder={t("inventory.referenceCostPlaceholder")}
                 />
@@ -348,14 +413,6 @@ function ItemForm({
             <Input {...register("notes")} placeholder={t("inventory.notesPlaceholder")} />
           </Field>
         )}
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting}>
-            {t("common.add")}
-          </Button>
-        </div>
       </form>
     </Modal>
   );
@@ -387,10 +444,17 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
   };
 
   return (
-    <Modal title={t("inventory.applyTitle", { name: upgrade.name })} onClose={onClose}>
+    <Modal
+      title={t("inventory.applyTitle", { name: upgrade.name })}
+      onClose={onClose}
+      actions={{
+        secondary: { label: t("common.cancel"), onClick: onClose },
+        primary: { label: t("inventory.apply"), onClick: apply, disabled: submitting },
+      }}
+    >
       <div className="space-y-3">
         <ErrorBanner message={error} />
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-muted">
           {t("inventory.applyOnHand", counted({}, upgrade.quantity_on_hand))}
         </p>
         <Field label={t("inventory.kit")} required>
@@ -407,20 +471,143 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
           <Input
             type="number"
             min={1}
+            inputMode="numeric"
             value={quantity}
             onChange={(event) => setQuantity(Number(event.target.value))}
           />
         </Field>
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="secondary" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button onClick={apply} disabled={submitting}>
-            {t("inventory.apply")}
-          </Button>
-        </div>
       </div>
     </Modal>
+  );
+}
+
+/** `disabled`: it cannot act (− at zero), and the keyboard goes to `standIn`.
+ *  `pending`: the row's request is in flight — it keeps the keyboard (#268). */
+type StepperTarget = {
+  label: string;
+  focusKey: string;
+  standIn?: string;
+  disabled: boolean;
+  pending: boolean;
+  onClick: () => void;
+};
+
+/** The floor of a stepper's target and the gap between its parts, in px: the
+ *  target is a physical thing, a finger's, not a typographic one. */
+const FINGER = 44;
+const STEPPER_GAP = 4;
+
+/** The phone's stepper (§13.7): two 44 px targets with the count between them.
+ *
+ *  Two squares of 2.75rem — they follow the browser's font size, as every size
+ *  here does — and never under 44 px. On a 320 px phone under a 32 px font the
+ *  two at 88 px and the count are wider than the card's row, so the stepper
+ *  takes the row's width (`max-w-full`; the wrapper's `min-w-0` lets it) and
+ *  the squares give way to the floor rather than past the card (Codex #266,
+ *  finding 7). The count is not a target and never gives way: it is read in
+ *  full.
+ *
+ *  And where even the floor is too much — the count in full and two fingers
+ *  are wider than the row: 1,234 at 40 px on a 320 px phone, 12 at 56 px — the
+ *  **second arrangement** (#271): the count on a line of its own above the two
+ *  squares. Which one is *measured*, never counted in digits (the lesson of
+ *  the Orders table's references): the count's drawn width and two fingers
+ *  against the row's, again whenever either changes — a new count, the web
+ *  font arriving, a turned phone. Neither side of the question depends on
+ *  the answer, so it cannot oscillate: the row's width is the card's, and the
+ *  count is measured on a hidden copy that never wraps — the drawn one does,
+ *  stacked, and measured there ten digits were narrower stacked than the line
+ *  needed, fitted the line, and were too wide for it again, every frame (the
+ *  font-size test's ten-digit tool found it). One line wherever it fits, which
+ *  at the default size is every count the column can store but the last few
+ *  digits' worth, on any phone.
+ *
+ *  The same two buttons in both arrangements — a grid re-places them, nothing
+ *  is remounted. That does not keep the keyboard on the pressed button: a press
+ *  disables both while the request is out, and the browser drops focus from a
+ *  disabled control whatever the arrangement (#268, older than this). */
+function LargeStepper({
+  count,
+  low,
+  remove,
+  add,
+}: {
+  count: string;
+  low: boolean;
+  remove: StepperTarget;
+  add: StepperTarget;
+}) {
+  const box = useRef<HTMLSpanElement>(null);
+  const said = useRef<HTMLSpanElement>(null);
+  const [stacked, setStacked] = useState(false);
+  useLayoutEffect(() => {
+    const line = box.current?.closest<HTMLElement>("[data-stepper-line]");
+    const text = said.current;
+    if (!line || !text) return;
+    const measure = () => {
+      const style = getComputedStyle(line);
+      const room = line.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const needs = Math.max(40, text.getBoundingClientRect().width) + 2 * FINGER + 2 * STEPPER_GAP;
+      setStacked(needs > room + 0.5);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(line);
+    observer.observe(text);
+    return () => observer.disconnect();
+  }, [count]);
+
+  const square =
+    "inline-flex aspect-square min-w-[44px] items-center justify-center rounded-sm border border-border-strong text-text " +
+    "hover:bg-chip focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:text-faint disabled:opacity-50 " +
+    "aria-disabled:cursor-not-allowed aria-disabled:text-faint aria-disabled:opacity-50 " +
+    (stacked ? "w-full" : "w-11");
+  const target = (at: StepperTarget, Icon: typeof Minus, place: string) => (
+    <button
+      type="button"
+      className={`${square} ${place}`}
+      aria-label={at.label}
+      data-focus-key={at.focusKey}
+      data-focus-stand-in={at.standIn}
+      disabled={at.disabled}
+      aria-disabled={at.pending || undefined}
+      onClick={at.pending ? undefined : at.onClick}
+    >
+      <Icon size={18} aria-hidden />
+    </button>
+  );
+  return (
+    <span
+      ref={box}
+      data-arrangement={stacked ? "stacked" : "line"}
+      className={
+        stacked
+          ? "inline-grid max-w-full grid-cols-[repeat(2,minmax(44px,2.75rem))] items-center justify-end gap-[4px]"
+          : "inline-flex max-w-full items-center gap-[4px]"
+      }
+    >
+      {target(remove, Minus, stacked ? "row-start-2" : "")}
+      <span
+        className={`text-center text-lg font-semibold tabular-nums ${low ? "text-danger" : "text-text"} ${
+          // Stacked, the count has the two squares' width to itself; one that
+          // still cannot hold it — ten digits under a 40 px font — breaks where
+          // its box ends, as every word in the phone shell's `main` does.
+          stacked ? "col-span-2 row-start-1" : "min-w-[40px] shrink-0"
+        }`}
+        data-testid="stock-count"
+      >
+        {count}
+      </span>
+      {/* The ruler: the count on one line at the count's own font, clipped to
+          nothing so it can never widen the page — and beside the count, not in
+          it: the count's text is what a test and a screen reader read. */}
+      <span aria-hidden className="absolute block h-0 w-0 overflow-hidden text-lg font-semibold tabular-nums">
+        <span ref={said} className="inline-block whitespace-nowrap">
+          {count}
+        </span>
+      </span>
+      {target(add, Plus, stacked ? "row-start-2" : "")}
+    </span>
   );
 }
 
@@ -435,15 +622,35 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
  * intents, and the server would apply both. Disabling at zero is cosmetic — the
  * service refuses a negative result either way — but it puts the refusal where the
  * user can see it coming instead of in an error banner.
+ *
+ * `large` is the phone's (§13.7): adjusting stock at the bench is what this page
+ * is for there, so the two buttons are full 44 px targets with the count between
+ * them — the count the table shows in its own cell. Same names, same delta.
  */
+/** A table row's On hand cell: the count, the stepper and what follows them —
+ *  one line where the column has room, wrapped where it has not (#327). As
+ *  inline boxes they were one line in WebKit whatever the column, the engine
+ *  finding no break between a word and an `inline-flex` box where Chromium
+ *  breaks: a ten-digit count made the column 208 px there against Chromium's
+ *  136, and held every Inventory table past its box beside the rail even fully
+ *  folded. A flex row that wraps breaks the same in both. */
+function StockCell({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap items-center gap-x-2 gap-y-1">{children}</div>;
+}
+
 function StockStepper({
   item,
   queryKey,
   onError,
+  large = false,
+  low = false,
 }: {
   item: InventoryItem;
   queryKey: Tab;
   onError: (message: string | null) => void;
+  large?: boolean;
+  /** At or under its low-stock threshold: the count says so in colour. */
+  low?: boolean;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -466,13 +673,40 @@ function StockStepper({
     }
   };
 
+  if (large) {
+    return (
+      <LargeStepper
+        count={formatNumber(item.quantity_on_hand)}
+        low={low}
+        remove={{
+          label: t("inventory.removeOne", { name: item.name }),
+          focusKey: `stock-remove:${item.id}`,
+          standIn: `stock-add:${item.id}`,
+          disabled: item.quantity_on_hand === 0,
+          pending,
+          onClick: () => void adjust(-1),
+        }}
+        add={{
+          label: t("inventory.addOne", { name: item.name }),
+          focusKey: `stock-add:${item.id}`,
+          disabled: false,
+          pending,
+          onClick: () => void adjust(1),
+        }}
+      />
+    );
+  }
+
   return (
     <span className="inline-flex items-center gap-1">
       <Button
         variant="secondary"
         className="px-2 py-0.5 leading-none"
         aria-label={t("inventory.removeOne", { name: item.name })}
-        disabled={pending || item.quantity_on_hand === 0}
+        data-focus-key={`stock-remove:${item.id}`}
+        data-focus-stand-in={`stock-add:${item.id}`}
+        disabled={item.quantity_on_hand === 0}
+        pending={pending}
         onClick={() => void adjust(-1)}
       >
         −
@@ -481,7 +715,8 @@ function StockStepper({
         variant="secondary"
         className="px-2 py-0.5 leading-none"
         aria-label={t("inventory.addOne", { name: item.name })}
-        disabled={pending}
+        data-focus-key={`stock-add:${item.id}`}
+        pending={pending}
         onClick={() => void adjust(1)}
       >
         +
@@ -490,23 +725,97 @@ function StockStepper({
   );
 }
 
+/** A stock row on a phone (§13.7): the name and its edit control; then what it
+ *  is — `facts` — beside the full-size stepper. `children` are any lines under
+ *  the name, `action` a labelled button ahead of the facts (*Apply to kit*). */
+function StockCard({
+  item,
+  tab,
+  onEdit,
+  onError,
+  facts,
+  low = false,
+  action,
+  children,
+}: {
+  item: InventoryItem;
+  tab: Tab;
+  onEdit: () => void;
+  onError: (message: string | null) => void;
+  facts?: ReactNode;
+  low?: boolean;
+  action?: ReactNode;
+  children?: ReactNode;
+}) {
+  const { t } = useTranslation();
+  return (
+    <CardRow
+      title={item.name}
+      action={
+        <IconButton
+          label={t("common.editNamed", { name: item.name })}
+          onClick={onEdit}
+          data-focus-key={`${tab}:${item.id}`}
+        >
+          <Pencil size={16} aria-hidden />
+        </IconButton>
+      }
+      below={
+        // `flex-wrap`, `ms-auto`: the stepper is two 44 px targets and a count
+        // in rem, and under a large browser font size (32 px: twice everything)
+        // it is wider than the card's line beside the facts — so it takes the
+        // next line, still at the end (the class of Codex #266, finding 6).
+        // `min-w-0`: and where that line is narrower than the stepper, the
+        // stepper takes the line's width and gives way inside it (finding 7).
+        <div data-stepper-line className="flex flex-wrap items-center justify-between gap-2 pb-3 pe-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {action}
+            <CardMeta>{facts}</CardMeta>
+          </div>
+          <div className="ms-auto min-w-0">
+            <StockStepper item={item} queryKey={tab} onError={onError} large low={low} />
+          </div>
+        </div>
+      }
+    >
+      {children}
+    </CardRow>
+  );
+}
+
+/** A card's facts, the dot between them; absent ones drop out. They wrap, and a
+ *  word no line holds breaks (`main` is `break-words`): a card is the only place
+ *  a phone says them (§13.7). An ellipsis cut a real category, "Workstation
+ *  (Portable)", at a 40 px font on a 320 px phone (#323). */
+function Facts({ values }: { values: (string | null | undefined)[] }) {
+  const { t } = useTranslation();
+  const present = values.filter((value): value is string => Boolean(value));
+  if (present.length === 0) return null;
+  return <span className="min-w-0">{present.join(t("common.dotSeparator"))}</span>;
+}
+
 export function InventoryPage() {
   // Re-render when the instance's presentation settings arrive or change —
   // the plain format helpers below read them per call (#174 review, P3-1).
   usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<Tab>("tools");
+  // The tab, the category and the page are the URL (§13.4, #232).
+  const [tab] = useEnumParam<Tab>("tab", TABS, "tools");
+  const [categoryFilter, setCategoryFilter] = useTextParam("category");
+  const paging = usePaging();
+  const writeParams = useWriteParams();
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<InventoryItem | null>(null);
   const [applying, setApplying] = useState<Upgrade | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState("");
+  // Card rows are the phone's (§13.7); the four tabs stay tabs, and the one
+  // filter stays on the page — a sheet for a single select would be a detour.
+  const phone = useShell() === "phone";
 
+  // The dialog confirms and reports; this is the deletion itself (§13.4).
   const removeItem = async (item: InventoryItem) => {
-    if (!window.confirm(t("common.confirmDelete", { name: item.name }))) return;
-    setActionError(null);
-    try {
+    {
       if (tab === "tools") {
         await api.deleteTool(item.id);
       } else if (tab === "consumables") {
@@ -517,8 +826,6 @@ export function InventoryPage() {
         await api.deleteDisplayItem(item.id);
       }
       await queryClient.invalidateQueries({ queryKey: [tab] });
-    } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
     }
   };
 
@@ -562,44 +869,82 @@ export function InventoryPage() {
   const filteredTools = inCategory(tools.data);
   const filteredConsumables = inCategory(consumables.data);
   const filteredDisplayItems = inCategory(displayItems.data);
+  const filteredUpgrades = upgrades.data ?? [];
+  // The tab on screen alone: the others' rows can still be in the query cache,
+  // and a record id one table shares with another (an import may choose ids)
+  // would otherwise pick the page a turn lands on (#321, Codex P2 on #322).
+  const pagedTools = paging.slice(tab === "tools" ? filteredTools : []);
+  const pagedConsumables = paging.slice(tab === "consumables" ? filteredConsumables : []);
+  const pagedUpgrades = paging.slice(tab === "upgrades" ? filteredUpgrades : []);
+  const pagedDisplayItems = paging.slice(tab === "display-items" ? filteredDisplayItems : []);
+  const shownCount =
+    tab === "tools"
+      ? pagedTools.total
+      : tab === "consumables"
+        ? pagedConsumables.total
+        : tab === "upgrades"
+          ? pagedUpgrades.total
+          : pagedDisplayItems.total;
+  const loaded =
+    tab === "tools"
+      ? tools.data
+      : tab === "consumables"
+        ? consumables.data
+        : tab === "upgrades"
+          ? upgrades.data
+          : displayItems.data;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("inventory.title")}</h1>
-        <div className="flex gap-2">
-          <ExportCsvButton table={EXPORT_TABLE[tab]} />
-          <Button onClick={() => setAddOpen(true)}>
+      <PageHeader
+        title={t("inventory.title")}
+        count={loaded === undefined ? undefined : shownCount}
+        secondary={<ExportCsvButton table={EXPORT_TABLE[tab]} />}
+        actions={
+          <Button icon={Plus} onClick={() => setAddOpen(true)} data-focus-key={PAGE_ACTION_FOCUS}>
             {t("inventory.addButton", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })}
           </Button>
+        }
+      />
+
+      {/* On a phone the four tabs are 27 px wider than the page: the row scrolls
+          inside this box rather than taking the document sideways with it
+          (§13.7). The box is the outer element so it clips nothing of the row —
+          the active tab's underline sits on the row's own border. */}
+      <div className="max-md:-mx-4 max-md:overflow-x-auto max-md:px-4">
+        <div className="flex gap-1 border-b border-border max-md:w-max max-md:min-w-full">
+          {TABS.map((tabOption) => (
+            <button
+              key={tabOption}
+              onClick={() =>
+                // Vocabularies are per-table — a tool category filter is
+                // meaningless on the consumables tab — and the page was a
+                // position in the previous table. One navigation for all three.
+                writeParams({
+                  tab: tabOption === "tools" ? null : tabOption,
+                  category: null,
+                  page: null,
+                })
+              }
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                tab === tabOption
+                  ? "border-accent text-accent"
+                  : "border-transparent text-muted hover:text-text"
+              }`}
+            >
+              {t(`inventory.tabs.${tabOption}`)}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-zinc-200">
-        {TABS.map((tabOption) => (
-          <button
-            key={tabOption}
-            onClick={() => {
-              setTab(tabOption);
-              // Vocabularies are per-table — a tool category filter is
-              // meaningless on the consumables tab.
-              setCategoryFilter("");
-            }}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-              tab === tabOption
-                ? "border-indigo-600 text-indigo-700"
-                : "border-transparent text-zinc-500 hover:text-zinc-800"
-            }`}
-          >
-            {t(`inventory.tabs.${tabOption}`)}
-          </button>
-        ))}
-      </div>
-
       {tab !== "upgrades" && categoryOptions.length > 0 && (
+        // `max-w-52`, as the Kits series and Orders retailer filters: a select is
+        // as wide as its widest option, and a category is free text — one word
+        // no line can hold widened the whole page (#323).
         <Select
           aria-label={t("inventory.filterByCategory")}
-          className="w-auto"
+          className="!w-auto max-w-52 max-md:!w-full max-md:max-w-none"
           value={categoryFilter}
           onChange={(event) => setCategoryFilter(event.target.value)}
         >
@@ -617,29 +962,77 @@ export function InventoryPage() {
       {tab === "tools" &&
         (tools.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.tools", { message: (tools.error as Error).message })} />
-        ) : filteredTools.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        ) : pagedTools.total && phone ? (
+          <CardList footer={<Pager paged={pagedTools} onPage={paging.setPage} />}>
+            {pagedTools.rows.map((tool) => (
+              <StockCard
+                key={tool.id}
+                item={tool}
+                tab="tools"
+                onEdit={() => setEditing(tool)}
+                onError={setActionError}
+                facts={
+                  <Facts
+                    values={[
+                      tool.category,
+                      tool.unit_cost_reference_minor === null ||
+                      tool.unit_cost_reference_currency === null
+                        ? null
+                        : formatMoney(
+                            tool.unit_cost_reference_minor,
+                            tool.unit_cost_reference_currency,
+                          ),
+                    ]}
+                  />
+                }
+              >
+                {tool.condition_notes && (
+                  <CardMeta>
+                    <Facts values={[tool.condition_notes]} />
+                  </CardMeta>
+                )}
+              </StockCard>
+            ))}
+          </CardList>
+        ) : pagedTools.total ? (
+          // Folds to fit its box (§13.7, #323, #329): when the whole table is
+          // wider than the box, Condition leaves its column for the name's second
+          // line. Words just under their budgets in every free-text column need
+          // about 690 px whole, so every iPad in portrait beside the rail.
+          <FoldToFit stages={1} className="overflow-x-auto rounded-md border border-border bg-surface">
+            <TableRuler>
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerRefCost")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerCondition")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerRefCost")}</th>
+                  <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">{t("inventory.headerCondition")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {filteredTools.map((tool) => (
-                  <tr key={tool.id} className="border-b border-zinc-100 last:border-0">
-                    <td className="px-3 py-2 font-medium">{tool.name}</td>
-                    <td className="px-3 py-2">{tool.category}</td>
+                {pagedTools.rows.map((tool) => (
+                  <tr key={tool.id} className="border-b border-rule last:border-0">
+                    <td className="px-3 py-2 font-medium">
+                      <Measured text={tool.name} kind="name" />
+                      {tool.condition_notes && (
+                        <div className="hidden text-xs font-normal text-muted group-data-fold-1/fold:block">
+                          <Measured text={tool.condition_notes} kind="text" />
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
-                      <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {formatNumber(tool.quantity_on_hand)}
-                      </span>
-                      <StockStepper item={tool} queryKey="tools" onError={setActionError} />
+                      <Measured text={tool.category} kind="text" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <StockCell>
+                        <span className="tabular-nums" data-testid="stock-count">
+                          {formatNumber(tool.quantity_on_hand)}
+                        </span>
+                        <StockStepper item={tool} queryKey="tools" onError={setActionError} />
+                      </StockCell>
                     </td>
                     <td className="px-3 py-2">
                       {tool.unit_cost_reference_minor === null ||
@@ -650,22 +1043,27 @@ export function InventoryPage() {
                             tool.unit_cost_reference_currency,
                           )}
                     </td>
-                    <td className="px-3 py-2 text-zinc-500">{tool.condition_notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted group-data-fold-1/fold:hidden">
+                      {tool.condition_notes ? <Measured text={tool.condition_notes} kind="text" /> : "—"}
+                    </td>
                     <td className="px-3 py-2 text-end">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="secondary" onClick={() => setEditing(tool)}>
-                          {t("common.edit")}
-                        </Button>
-                        <Button variant="danger" onClick={() => removeItem(tool)}>
-                          {t("common.delete")}
-                        </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <IconButton
+                          label={t("common.editNamed", { name: tool.name })}
+                          onClick={() => setEditing(tool)}
+                          data-focus-key={`tools:${tool.id}`}
+                        >
+                          <Pencil size={15} aria-hidden />
+                        </IconButton>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+            </TableRuler>
+            <Pager paged={pagedTools} onPage={paging.setPage} />
+          </FoldToFit>
         ) : (
           <EmptyState>
             {tools.isLoading
@@ -686,40 +1084,76 @@ export function InventoryPage() {
               message: (consumables.error as Error).message,
             })}
           />
-        ) : filteredConsumables.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        ) : pagedConsumables.total && phone ? (
+          <CardList footer={<Pager paged={pagedConsumables} onPage={paging.setPage} />}>
+            {pagedConsumables.rows.map((item) => {
+              const low =
+                item.low_stock_threshold !== null &&
+                item.quantity_on_hand <= item.low_stock_threshold;
+              return (
+                <StockCard
+                  key={item.id}
+                  item={item}
+                  tab="consumables"
+                  onEdit={() => setEditing(item)}
+                  onError={setActionError}
+                  low={low}
+                  facts={
+                    <>
+                      <Facts
+                        values={[
+                          item.category,
+                          item.low_stock_threshold === null
+                            ? null
+                            : t("inventory.lowAt", {
+                                threshold: formatNumber(item.low_stock_threshold),
+                              }),
+                        ]}
+                      />
+                      {low && <Chip tone="text-danger">{t("inventory.restock")}</Chip>}
+                    </>
+                  }
+                />
+              );
+            })}
+          </CardList>
+        ) : pagedConsumables.total ? (
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
+            <TableRuler>
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerLowStockAt")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerLowStockAt")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {filteredConsumables.map((item) => {
+                {pagedConsumables.rows.map((item) => {
                   const low =
                     item.low_stock_threshold !== null &&
                     item.quantity_on_hand <= item.low_stock_threshold;
                   return (
-                    <tr key={item.id} className="border-b border-zinc-100 last:border-0">
-                      <td className="px-3 py-2 font-medium">{item.name}</td>
-                      <td className="px-3 py-2">{item.category}</td>
+                    <tr key={item.id} className="border-b border-rule last:border-0">
+                      <td className="px-3 py-2 font-medium">
+                        <Measured text={item.name} kind="name" />
+                      </td>
                       <td className="px-3 py-2">
-                        <span
-                          className={`me-2 tabular-nums ${low ? "font-semibold text-red-600" : ""}`}
-                          data-testid="stock-count"
-                        >
-                          {formatNumber(item.quantity_on_hand)}
-                        </span>
-                        <StockStepper item={item} queryKey="consumables" onError={setActionError} />
-                        {low && (
-                          <span className="ms-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                            {t("inventory.restock")}
+                        <Measured text={item.category} kind="text" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <StockCell>
+                          <span
+                            className={`tabular-nums ${low ? "font-semibold text-danger" : ""}`}
+                            data-testid="stock-count"
+                          >
+                            {formatNumber(item.quantity_on_hand)}
                           </span>
-                        )}
+                          <StockStepper item={item} queryKey="consumables" onError={setActionError} />
+                          {low && <Chip tone="text-danger">{t("inventory.restock")}</Chip>}
+                        </StockCell>
                       </td>
                       <td className="px-3 py-2">
                         {item.low_stock_threshold === null
@@ -727,13 +1161,14 @@ export function InventoryPage() {
                           : formatNumber(item.low_stock_threshold)}
                       </td>
                       <td className="px-3 py-2 text-end">
-                        <div className="flex justify-end gap-1">
-                          <Button variant="secondary" onClick={() => setEditing(item)}>
-                            {t("common.edit")}
-                          </Button>
-                          <Button variant="danger" onClick={() => removeItem(item)}>
-                            {t("common.delete")}
-                          </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <IconButton
+                          label={t("common.editNamed", { name: item.name })}
+                          onClick={() => setEditing(item)}
+                          data-focus-key={`consumables:${item.id}`}
+                        >
+                          <Pencil size={15} aria-hidden />
+                        </IconButton>
                         </div>
                       </td>
                     </tr>
@@ -741,6 +1176,8 @@ export function InventoryPage() {
                 })}
               </tbody>
             </table>
+            </TableRuler>
+            <Pager paged={pagedConsumables} onPage={paging.setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -758,49 +1195,86 @@ export function InventoryPage() {
       {tab === "upgrades" &&
         (upgrades.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.upgrades", { message: (upgrades.error as Error).message })} />
-        ) : upgrades.data?.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        ) : pagedUpgrades.total && phone ? (
+          <CardList footer={<Pager paged={pagedUpgrades} onPage={paging.setPage} />}>
+            {pagedUpgrades.rows.map((upgrade) => (
+              <StockCard
+                key={upgrade.id}
+                item={upgrade}
+                tab="upgrades"
+                onEdit={() => setEditing(upgrade)}
+                onError={setActionError}
+                action={
+                  <Button
+                    variant="secondary"
+                    onClick={() => setApplying(upgrade)}
+                    disabled={upgrade.quantity_on_hand === 0}
+                    data-focus-key={`apply:${upgrade.id}`}
+                  >
+                    {t("inventory.applyToKit")}
+                  </Button>
+                }
+              >
+                <CardMeta>
+                  <Facts values={[upgrade.manufacturer]} />
+                </CardMeta>
+              </StockCard>
+            ))}
+          </CardList>
+        ) : pagedUpgrades.total ? (
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
+            <TableRuler>
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {upgrades.data.map((upgrade) => (
-                  <tr key={upgrade.id} className="border-b border-zinc-100 last:border-0">
-                    <td className="px-3 py-2 font-medium">{upgrade.name}</td>
-                    <td className="px-3 py-2">{upgrade.manufacturer}</td>
+                {pagedUpgrades.rows.map((upgrade) => (
+                  <tr key={upgrade.id} className="border-b border-rule last:border-0">
+                    <td className="px-3 py-2 font-medium">
+                      <Measured text={upgrade.name} kind="name" />
+                    </td>
                     <td className="px-3 py-2">
-                      <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {formatNumber(upgrade.quantity_on_hand)}
-                      </span>
-                      <StockStepper item={upgrade} queryKey="upgrades" onError={setActionError} />
+                      <Measured text={upgrade.manufacturer} kind="text" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <StockCell>
+                        <span className="tabular-nums" data-testid="stock-count">
+                          {formatNumber(upgrade.quantity_on_hand)}
+                        </span>
+                        <StockStepper item={upgrade} queryKey="upgrades" onError={setActionError} />
+                      </StockCell>
                     </td>
                     <td className="px-3 py-2 text-end">
-                      <div className="flex justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="secondary"
                           onClick={() => setApplying(upgrade)}
                           disabled={upgrade.quantity_on_hand === 0}
+                          data-focus-key={`apply:${upgrade.id}`}
                         >
                           {t("inventory.applyToKit")}
                         </Button>
-                        <Button variant="secondary" onClick={() => setEditing(upgrade)}>
-                          {t("common.edit")}
-                        </Button>
-                        <Button variant="danger" onClick={() => removeItem(upgrade)}>
-                          {t("common.delete")}
-                        </Button>
+                        <IconButton
+                          label={t("common.editNamed", { name: upgrade.name })}
+                          onClick={() => setEditing(upgrade)}
+                          data-focus-key={`upgrades:${upgrade.id}`}
+                        >
+                          <Pencil size={15} aria-hidden />
+                        </IconButton>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </TableRuler>
+            <Pager paged={pagedUpgrades} onPage={paging.setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -815,49 +1289,97 @@ export function InventoryPage() {
               message: (displayItems.error as Error).message,
             })}
           />
-        ) : filteredDisplayItems.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        ) : pagedDisplayItems.total && phone ? (
+          <CardList footer={<Pager paged={pagedDisplayItems} onPage={paging.setPage} />}>
+            {pagedDisplayItems.rows.map((row) => (
+              <StockCard
+                key={row.id}
+                item={row}
+                tab="display-items"
+                onEdit={() => setEditing(row)}
+                onError={setActionError}
+                facts={<Facts values={[row.category, row.scale]} />}
+              >
+                {(row.manufacturer || row.notes) && (
+                  <CardMeta>
+                    <Facts values={[row.manufacturer, row.notes]} />
+                  </CardMeta>
+                )}
+              </StockCard>
+            ))}
+          </CardList>
+        ) : pagedDisplayItems.total ? (
+          // Folds to fit, as Tools (#323, #329): Manufacturer and Notes leave
+          // their columns for the name's second line. Words just under their
+          // budgets in every free-text column need about 873 px whole, so with
+          // those it is whole beside the rail from 1024 px, beside the sidebar
+          // from 1280.
+          <FoldToFit stages={1} className="overflow-x-auto rounded-md border border-border bg-surface">
+            <TableRuler>
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.scale")}</th>
-                  <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.notes")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.scale")}</th>
+                  <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">{t("inventory.notes")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {filteredDisplayItems.map((row) => (
-                  <tr key={row.id} className="border-b border-zinc-100 last:border-0">
-                    <td className="px-3 py-2 font-medium">{row.name}</td>
-                    <td className="px-3 py-2">{row.category}</td>
-                    <td className="px-3 py-2">{row.scale ?? "—"}</td>
-                    <td className="px-3 py-2">{row.manufacturer ?? "—"}</td>
-                    <td className="px-3 py-2">
-                      <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {formatNumber(row.quantity_on_hand)}
-                      </span>
-                      <StockStepper item={row} queryKey="display-items" onError={setActionError} />
+                {pagedDisplayItems.rows.map((row) => (
+                  <tr key={row.id} className="border-b border-rule last:border-0">
+                    <td className="px-3 py-2 font-medium">
+                      <Measured text={row.name} kind="name" />
+                      {(row.manufacturer || row.notes) && (
+                        <div className="hidden text-xs font-normal text-muted group-data-fold-1/fold:block">
+                          <Measured
+                            text={[row.manufacturer, row.notes].filter(Boolean).join(t("common.dotSeparator"))}
+                            kind="text"
+                          />
+                        </div>
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-zinc-500">{row.notes ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      <Measured text={row.category} kind="text" />
+                    </td>
+                    <td className="px-3 py-2">
+                      {row.scale ? <Measured text={row.scale} kind="text" /> : "—"}
+                    </td>
+                    <td className="px-3 py-2 group-data-fold-1/fold:hidden">
+                      {row.manufacturer ? <Measured text={row.manufacturer} kind="text" /> : "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <StockCell>
+                        <span className="tabular-nums" data-testid="stock-count">
+                          {formatNumber(row.quantity_on_hand)}
+                        </span>
+                        <StockStepper item={row} queryKey="display-items" onError={setActionError} />
+                      </StockCell>
+                    </td>
+                    <td className="px-3 py-2 text-muted group-data-fold-1/fold:hidden">
+                      {row.notes ? <Measured text={row.notes} kind="text" /> : "—"}
+                    </td>
                     <td className="px-3 py-2 text-end">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="secondary" onClick={() => setEditing(row)}>
-                          {t("common.edit")}
-                        </Button>
-                        <Button variant="danger" onClick={() => removeItem(row)}>
-                          {t("common.delete")}
-                        </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <IconButton
+                          label={t("common.editNamed", { name: row.name })}
+                          onClick={() => setEditing(row)}
+                          data-focus-key={`display-items:${row.id}`}
+                        >
+                          <Pencil size={15} aria-hidden />
+                        </IconButton>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+            </TableRuler>
+            <Pager paged={pagedDisplayItems} onPage={paging.setPage} />
+          </FoldToFit>
         ) : (
           <EmptyState>
             {displayItems.isLoading
@@ -872,7 +1394,14 @@ export function InventoryPage() {
         ))}
 
       {addOpen && <ItemFormModal tab={tab} onClose={() => setAddOpen(false)} />}
-      {editing && <ItemFormModal tab={tab} item={editing} onClose={() => setEditing(null)} />}
+      {editing && (
+        <ItemFormModal
+          tab={tab}
+          item={editing}
+          onClose={() => setEditing(null)}
+          onDelete={removeItem}
+        />
+      )}
       {applying && <ApplyUpgradeModal upgrade={applying} onClose={() => setApplying(null)} />}
     </div>
   );

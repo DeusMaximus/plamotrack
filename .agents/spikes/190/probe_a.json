@@ -1,0 +1,842 @@
+{
+  "fastmcp_home_default": "/Users/tlgja/Library/Application Support/fastmcp",
+  "store_collections": [],
+  "jwt_key_str_derivation_seconds": 0.27,
+  "jwt_key_bytes_seconds": 0.003,
+  "kv_postgresql_importable": true,
+  "default_store": {
+    "wrapper": "FernetEncryptionWrapper",
+    "inner": "FileTreeStore",
+    "data_directory": "/Users/tlgja/Library/Application Support/fastmcp/oauth-proxy/6a7de2df88f2"
+  },
+  "child_routes_raw": [
+    [
+      "/.well-known/oauth-authorization-server",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ],
+    [
+      "/authorize",
+      [
+        "GET",
+        "HEAD",
+        "POST"
+      ]
+    ],
+    [
+      "/token",
+      [
+        "OPTIONS",
+        "POST"
+      ]
+    ],
+    [
+      "/register",
+      [
+        "OPTIONS",
+        "POST"
+      ]
+    ],
+    [
+      "/revoke",
+      [
+        "OPTIONS",
+        "POST"
+      ]
+    ],
+    [
+      "/.well-known/oauth-protected-resource/mcp/",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ],
+    [
+      "/auth/callback",
+      [
+        "GET",
+        "HEAD"
+      ]
+    ],
+    [
+      "/consent",
+      [
+        "GET",
+        "HEAD",
+        "POST"
+      ]
+    ],
+    [
+      "/",
+      [
+        "DELETE",
+        "POST"
+      ]
+    ]
+  ],
+  "child_routes_after_prune": [
+    [
+      "/authorize",
+      [
+        "GET",
+        "HEAD",
+        "POST"
+      ]
+    ],
+    [
+      "/token",
+      [
+        "OPTIONS",
+        "POST"
+      ]
+    ],
+    [
+      "/register",
+      [
+        "OPTIONS",
+        "POST"
+      ]
+    ],
+    [
+      "/revoke",
+      [
+        "OPTIONS",
+        "POST"
+      ]
+    ],
+    [
+      "/auth/callback",
+      [
+        "GET",
+        "HEAD"
+      ]
+    ],
+    [
+      "/consent",
+      [
+        "GET",
+        "HEAD",
+        "POST"
+      ]
+    ],
+    [
+      "/",
+      [
+        "DELETE",
+        "POST"
+      ]
+    ]
+  ],
+  "well_known_routes_raw": [
+    [
+      "/.well-known/oauth-authorization-server/mcp",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ],
+    [
+      "/.well-known/openid-configuration/mcp",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ],
+    [
+      "/.well-known/openid-configuration",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ],
+    [
+      "/.well-known/oauth-protected-resource/mcp/",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ]
+  ],
+  "parent_routes_installed": [
+    [
+      "/.well-known/oauth-authorization-server/mcp",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ],
+    [
+      "/.well-known/openid-configuration/mcp",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ],
+    [
+      "/.well-known/oauth-protected-resource/mcp/",
+      [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ]
+    ]
+  ],
+  "profile": {
+    "GET /.well-known/oauth-protected-resource/mcp/": {
+      "status": 200,
+      "cache": "public, max-age=3600",
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": [],
+      "body": {
+        "resource": "http://127.0.0.1:8000/mcp/",
+        "authorization_servers": [
+          "http://127.0.0.1:8000/mcp"
+        ],
+        "scopes_supported": [
+          "collection:read",
+          "collection:write"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ]
+      }
+    },
+    "GET /.well-known/oauth-protected-resource/mcp": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /.well-known/oauth-authorization-server/mcp": {
+      "status": 200,
+      "cache": "public, max-age=3600",
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": [],
+      "body": {
+        "issuer": "http://127.0.0.1:8000/mcp",
+        "authorization_endpoint": "http://127.0.0.1:8000/mcp/authorize",
+        "token_endpoint": "http://127.0.0.1:8000/mcp/token",
+        "registration_endpoint": "http://127.0.0.1:8000/mcp/register",
+        "scopes_supported": [
+          "collection:read",
+          "collection:write"
+        ],
+        "response_types_supported": [
+          "code"
+        ],
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_post",
+          "client_secret_basic",
+          "private_key_jwt",
+          "none"
+        ],
+        "revocation_endpoint": "http://127.0.0.1:8000/mcp/revoke",
+        "revocation_endpoint_auth_methods_supported": [
+          "client_secret_post",
+          "client_secret_basic"
+        ],
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true
+      }
+    },
+    "GET /.well-known/oauth-authorization-server/mcp/": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /.well-known/oauth-authorization-server": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /.well-known/openid-configuration/mcp": {
+      "status": 200,
+      "cache": "public, max-age=3600",
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": [],
+      "body": {
+        "issuer": "http://127.0.0.1:8000/mcp",
+        "authorization_endpoint": "http://127.0.0.1:8000/mcp/authorize",
+        "token_endpoint": "http://127.0.0.1:8000/mcp/token",
+        "registration_endpoint": "http://127.0.0.1:8000/mcp/register",
+        "scopes_supported": [
+          "collection:read",
+          "collection:write"
+        ],
+        "response_types_supported": [
+          "code"
+        ],
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_post",
+          "client_secret_basic",
+          "private_key_jwt",
+          "none"
+        ],
+        "revocation_endpoint": "http://127.0.0.1:8000/mcp/revoke",
+        "revocation_endpoint_auth_methods_supported": [
+          "client_secret_post",
+          "client_secret_basic"
+        ],
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true
+      }
+    },
+    "GET /.well-known/openid-configuration": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/.well-known/oauth-authorization-server": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/.well-known/oauth-protected-resource/mcp/": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/.well-known/openid-configuration": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "OPTIONS /.well-known/oauth-authorization-server/mcp (CORS preflight)": {
+      "status": 200,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": "*",
+      "cookies": []
+    },
+    "POST /mcp/ (no bearer)": {
+      "status": 401,
+      "cache": null,
+      "ctype": "",
+      "location": null,
+      "www_auth": "Bearer resource_metadata=\"http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp/\"",
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp (bare, source-run)": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/authorize (no params)": {
+      "status": 400,
+      "cache": "no-store",
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/authorize (unknown client_id)": {
+      "status": 400,
+      "cache": "no-store",
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/authorize/ (trailing slash)": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "PUT /mcp/authorize": {
+      "status": 405,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": "GET, HEAD, POST",
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/register": {
+      "status": 201,
+      "cache": null,
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "OPTIONS /mcp/register (CORS)": {
+      "status": 200,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": "*",
+      "cookies": []
+    },
+    "GET /mcp/register": {
+      "status": 405,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": "OPTIONS, POST",
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/authorize (registered, -> consent)": {
+      "status": 302,
+      "cache": "no-store",
+      "ctype": "",
+      "location": "http://127.0.0.1:8000/mcp/consent?txn_id=aDWmAA8H_DvkQOv981cU9PT3dSuzsBVeE2fQb_AUqQ4",
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/consent (with cookie jar from authorize)": {
+      "status": 200,
+      "cache": null,
+      "ctype": "text/html",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": [
+        "__MCP_CONSENT_STATE [HttpOnly;Max-Age=900;Path=/;SameSite=lax]"
+      ]
+    },
+    "GET /mcp/consent (no cookie)": {
+      "status": 200,
+      "cache": null,
+      "ctype": "text/html",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": [
+        "__MCP_CONSENT_STATE [HttpOnly;Max-Age=900;Path=/;SameSite=lax]"
+      ]
+    },
+    "GET /mcp/consent (no txn)": {
+      "status": 400,
+      "cache": null,
+      "ctype": "text/html",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/consent (deny)": {
+      "status": 400,
+      "cache": null,
+      "ctype": "text/html",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/consent (bad csrf)": {
+      "status": 400,
+      "cache": null,
+      "ctype": "text/html",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/consent (approve -> upstream)": {
+      "status": 302,
+      "cache": null,
+      "ctype": "",
+      "location": "https://idp.example/authorize?response_type=code&client_id=upstream-client-id&redirect_uri=http%3A%2F%2F127.0.0.1%3A8000%2Fmcp%2Fauth%2Fcallback&state=BkkeQ4LxdohHtElrZ5hPX57SvMiU2v5TCIUph5SV5sU&scope=collection%3Aread&code_challenge=e8XexK4JrY7OYZu7l5D437GrFk-iQI-2E2RW-Czqx7M&code_challenge_method=S256",
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": [
+        "__MCP_CONSENT_STATE [HttpOnly;Max-Age=60;Path=/;SameSite=lax]",
+        "__MCP_CONSENT_BINDING [HttpOnly;Max-Age=900;Path=/;SameSite=lax]"
+      ]
+    },
+    "GET /mcp/auth/callback (no params)": {
+      "status": 400,
+      "cache": null,
+      "ctype": "text/html",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/auth/callback (error, valid txn -> client)": {
+      "status": 302,
+      "cache": null,
+      "ctype": "",
+      "location": "http://localhost:3000/cb?error=access_denied&state=client-state-123",
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/auth/callback (error, unknown txn)": {
+      "status": 400,
+      "cache": null,
+      "ctype": "text/html",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/auth/callback/ (trailing slash + code)": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/auth/callback (code, unknown txn)": {
+      "status": 400,
+      "cache": null,
+      "ctype": "text/html",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/token (bad code)": {
+      "status": 401,
+      "cache": "no-store",
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/token (bad code, stray bearer)": {
+      "status": 401,
+      "cache": "no-store",
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/token (bad refresh)": {
+      "status": 401,
+      "cache": "no-store",
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/token/ (trailing slash)": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/token": {
+      "status": 405,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": "OPTIONS, POST",
+      "acao": null,
+      "cookies": []
+    },
+    "POST /mcp/revoke (unknown token)": {
+      "status": 400,
+      "cache": null,
+      "ctype": "application/json",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    },
+    "GET /mcp/nope": {
+      "status": 404,
+      "cache": null,
+      "ctype": "text/plain",
+      "location": null,
+      "www_auth": null,
+      "allow": null,
+      "acao": null,
+      "cookies": []
+    }
+  },
+  "registration_response_keys": [
+    "client_id",
+    "client_id_issued_at",
+    "grant_types",
+    "redirect_uris",
+    "response_types",
+    "scope",
+    "token_endpoint_auth_method"
+  ],
+  "consent_location_shape": "http://127.0.0.1:8000/mcp/consent?txn_id=<txn>",
+  "self_redirect_host_provenance": {
+    "normal": "127.0.0.1:8000",
+    "hostile Host + XFH": "127.0.0.1:8000"
+  },
+  "consent_html_has_csp_meta": true,
+  "consent_html_has_frame_headers": {
+    "x-frame-options": "DENY",
+    "content-security-policy": null,
+    "x-content-type-options": null
+  },
+  "deny_location": null,
+  "upstream_redirect": {
+    "endpoint": "https://idp.example/authorize",
+    "redirect_uri": [
+      "http://127.0.0.1:8000/mcp/auth/callback"
+    ],
+    "params": [
+      "client_id",
+      "code_challenge",
+      "code_challenge_method",
+      "redirect_uri",
+      "response_type",
+      "scope",
+      "state"
+    ],
+    "resource": null,
+    "scope": [
+      "collection:read"
+    ]
+  },
+  "token_bad_code_body": {
+    "error": "invalid_grant",
+    "error_description": "authorization code does not exist"
+  },
+  "redirect_binding": {
+    "DCR, no allowlist, registered http://localhost:3000/cb": {
+      "http://localhost:3000/cb": {
+        "status": 302,
+        "location": "<consent>",
+        "body": null
+      },
+      "http://localhost:4000/cb": {
+        "status": 302,
+        "location": "<consent>",
+        "body": null
+      },
+      "http://127.0.0.1:3000/cb": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'http://127.0.0.1:3000/cb' not registered for client\",\"stat"
+      },
+      "http://localhost:3000/other": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'http://localhost:3000/other' not registered for client\",\"s"
+      },
+      "http://localhost:3000/cb/../x": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'http://localhost:3000/x' not registered for client\",\"state"
+      },
+      "http://localhost@evil.example/cb": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'http://localhost@evil.example/cb' not registered for clien"
+      },
+      "https://evil.example/cb": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'https://evil.example/cb' not registered for client\",\"state"
+      },
+      "https://evil.example/cb [upstream id]": {
+        "status": 302,
+        "location": "<consent>",
+        "body": null
+      }
+    },
+    "DCR, no allowlist, registered https://claude.ai/api/mcp/auth_callback": {
+      "https://claude.ai/api/mcp/auth_callback": {
+        "status": 302,
+        "location": "<consent>",
+        "body": null
+      },
+      "https://claude.ai/api/mcp/auth_callback2": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'https://claude.ai/api/mcp/auth_callback2' not registered f"
+      },
+      "https://claude.ai:8443/api/mcp/auth_callback": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'https://claude.ai:8443/api/mcp/auth_callback' not register"
+      },
+      "https://evil.example/api/mcp/auth_callback": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'https://evil.example/api/mcp/auth_callback' not registered"
+      }
+    },
+    "DCR, allowlist [http://localhost:*], registered http://localhost:3000/cb": {
+      "http://localhost:3000/cb": {
+        "status": 302,
+        "location": "<consent>",
+        "body": null
+      },
+      "http://localhost:5000/anything-at-all": {
+        "status": 302,
+        "location": "<consent>",
+        "body": null
+      },
+      "http://127.0.0.1:3000/cb": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'http://127.0.0.1:3000/cb' does not match allowed patterns."
+      },
+      "https://evil.example/cb": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'https://evil.example/cb' does not match allowed patterns.\""
+      },
+      "https://evil.example/cb [upstream id]": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Redirect URI 'https://evil.example/cb' does not match allowed patterns.\""
+      },
+      "http://localhost:9999/x [upstream id]": {
+        "status": 302,
+        "location": "<consent>",
+        "body": null
+      }
+    },
+    "DCR, allowlist [http://localhost:*], registering https://client.example/cb": {
+      "REGISTER https://client.example/cb": {
+        "status": 400,
+        "body": {
+          "error": "invalid_redirect_uri",
+          "error_description": "Redirect URI 'https://client.example/cb' is not allowed."
+        }
+      }
+    },
+    "PinnedProxy (get_client refuses upstream id), no allowlist": {
+      "http://localhost:3000/cb": {
+        "status": 302,
+        "location": "<consent>",
+        "body": null
+      },
+      "https://evil.example/cb [upstream id]": {
+        "status": 400,
+        "location": null,
+        "body": "{\"error\":\"invalid_request\",\"error_description\":\"Client ID 'upstream-client-id' is not registered with this server. MCP c"
+      }
+    },
+    "DCR, no allowlist, registering javascript: scheme": {
+      "REGISTER javascript:alert(1)": {
+        "status": 400,
+        "body": {
+          "error": "invalid_redirect_uri",
+          "error_description": "Redirect URI 'javascript:alert(1)' is not allowed."
+        }
+      }
+    }
+  }
+}

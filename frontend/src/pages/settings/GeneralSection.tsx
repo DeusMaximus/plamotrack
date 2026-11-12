@@ -24,7 +24,7 @@ export function GeneralSection() {
       ) : settings ? (
         <CurrencyCard settings={settings} />
       ) : (
-        <p className="text-sm text-zinc-500">{t("common.loading")}</p>
+        <p className="text-sm text-muted">{t("common.loading")}</p>
       )}
     </div>
   );
@@ -74,15 +74,15 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
       description={t("settings.general.currencyDescription")}
     >
       <form onSubmit={onSubmit} className="space-y-3">
-        <ErrorBanner message={error} />
         <Field
           label={t("settings.general.currencyLabel")}
           required
           error={errors.reference_currency?.message}
-          className="max-w-40"
+          className="max-w-40 max-md:max-w-none"
         >
           <Input
             list="settings-currencies"
+            data-focus-key="settings-currency"
             maxLength={3}
             {...register("reference_currency", {
               required: t("validation.currencyCode"),
@@ -95,14 +95,25 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
             ))}
           </datalist>
         </Field>
-        <p className="text-xs text-zinc-500">{t("settings.general.currencyNote")}</p>
+        <p className="text-xs text-muted">{t("settings.general.currencyNote")}</p>
+        {/* Beside its Save, not at the form's head: on the smallest phone the
+            head is under the sticky bar by the time Save is reached (#316). */}
+        <ErrorBanner message={error} />
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={!isDirty || isSubmitting}>
+          {/* Waiting, it keeps the keyboard; saved, there is nothing left to
+              save, and the keyboard goes back to the field before it (#268). */}
+          <Button
+            type="submit"
+            disabled={!isDirty}
+            pending={isSubmitting}
+            data-focus-key="settings-general-save"
+            data-focus-stand-in="settings-currency"
+          >
             {isSubmitting ? t("settings.general.saving") : t("common.save")}
           </Button>
           {/* isDirty gates the confirmation so editing again retires it. */}
           {saved && !isDirty && (
-            <span role="status" className="text-sm text-green-700">
+            <span role="status" className="text-sm text-status-complete">
               {t("settings.general.saved")}
             </span>
           )}

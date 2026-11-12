@@ -31,7 +31,7 @@ export function LanguageSection() {
       ) : settings ? (
         <RegionCard settings={settings} />
       ) : (
-        <p className="text-sm text-zinc-500">{t("common.loading")}</p>
+        <p className="text-sm text-muted">{t("common.loading")}</p>
       )}
     </div>
   );
@@ -130,14 +130,13 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
       {resolved.fallback && (
         <div
           role="alert"
-          className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+          className="mb-3 rounded-sm border border-status-in-transit/40 bg-status-in-transit/10 px-3 py-2 text-sm text-status-in-transit"
         >
           {t("settings.language.fallbackWarning", { tag: settings.interface_language })}
         </div>
       )}
       <form onSubmit={onSubmit} className="space-y-3">
-        <ErrorBanner message={error} />
-        <Field label={t("settings.language.interfaceLanguage")} required className="max-w-72">
+        <Field label={t("settings.language.interfaceLanguage")} required className="max-w-72 max-md:max-w-none">
           <Select {...register("interface_language")}>
             {resolved.fallback && (
               <option value={settings.interface_language}>
@@ -151,17 +150,17 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
             ))}
           </Select>
         </Field>
-        <Field label={t("settings.language.formattingLocale")} required className="max-w-72">
+        <Field label={t("settings.language.formattingLocale")} required className="max-w-72 max-md:max-w-none">
           <Input {...register("formatting_locale")} />
           {suggestsLocale && (
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-muted">
               {t("settings.language.localeHint", {
                 language: draftLanguage.nativeName,
                 tag: draftLanguage.tag,
               })}{" "}
               <button
                 type="button"
-                className="text-indigo-600 hover:underline"
+                className="text-accent hover:underline"
                 onClick={() =>
                   setValue("formatting_locale", draftLanguage.tag, { shouldDirty: true })
                 }
@@ -171,17 +170,17 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
             </p>
           )}
         </Field>
-        <Field label={t("settings.language.timeZone")} required className="max-w-72">
+        <Field label={t("settings.language.timeZone")} required className="max-w-72 max-md:max-w-none">
           <Input list="settings-time-zones" {...register("time_zone")} />
           <datalist id="settings-time-zones">
             {zoneOptions().map((zone) => (
               <option key={zone} value={zone} />
             ))}
           </datalist>
-          <p className="mt-1 text-xs text-zinc-500">{t("settings.language.timeZoneHint")}</p>
+          <p className="mt-1 text-xs text-muted">{t("settings.language.timeZoneHint")}</p>
         </Field>
         <div className="flex flex-wrap gap-3">
-          <Field label={t("settings.language.dateStyle")} required className="max-w-44">
+          <Field label={t("settings.language.dateStyle")} required className="max-w-44 max-md:max-w-none max-md:flex-[1_1_9rem]">
             <Select {...register("date_style")}>
               {DATE_STYLES.map((style) => (
                 <option key={style} value={style}>
@@ -190,8 +189,8 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
               ))}
             </Select>
           </Field>
-          <Field label={t("settings.language.hourCycle")} required className="max-w-44">
-            <Select {...register("hour_cycle")}>
+          <Field label={t("settings.language.hourCycle")} required className="max-w-44 max-md:max-w-none max-md:flex-[1_1_9rem]">
+            <Select data-focus-key="settings-hour-cycle" {...register("hour_cycle")}>
               {HOUR_CYCLES.map((cycle) => (
                 <option key={cycle} value={cycle}>
                   {t(`hourCycle.${cycle}`)}
@@ -202,9 +201,9 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
         </div>
         {/* The draft, rendered live through the same helpers every page uses —
             what saving will make of a timestamp, a count, and an amount. */}
-        <p data-testid="format-preview" className="text-xs text-zinc-500">
+        <p data-testid="format-preview" className="text-xs text-muted">
           {t("settings.language.preview")}{" "}
-          <span className="text-zinc-700">
+          <span className="text-text">
             {formatDateTimeWith(previewPrefs, "2026-03-14T04:00:00+00:00")}
             {t("common.dotSeparator")}
             {formatNumberWith(draft.formatting_locale, 1234567)}
@@ -212,12 +211,23 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
             {formatMoneyWith(draft.formatting_locale, 499900, settings.reference_currency)}
           </span>
         </p>
+        {/* Beside its Save, not at the form's head: on the smallest phone the
+            head is under the sticky bar by the time Save is reached (#316). */}
+        <ErrorBanner message={error} />
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={!isDirty || isSubmitting}>
+          {/* Waiting, it keeps the keyboard; saved, there is nothing left to
+              save, and the keyboard goes back to the field before it (#268). */}
+          <Button
+            type="submit"
+            disabled={!isDirty}
+            pending={isSubmitting}
+            data-focus-key="settings-language-save"
+            data-focus-stand-in="settings-hour-cycle"
+          >
             {isSubmitting ? t("settings.language.saving") : t("common.save")}
           </Button>
           {saved && !isDirty && (
-            <span role="status" className="text-sm text-green-700">
+            <span role="status" className="text-sm text-status-complete">
               {t("settings.language.saved")}
             </span>
           )}

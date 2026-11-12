@@ -1,6 +1,6 @@
 /**
- * README screenshot capture — NOT part of the test suite. Skipped unless
- * SCREENSHOTS=1, so `npm run test:e2e` never runs it.
+ * Screenshot capture for the README and the docs site — NOT part of the test
+ * suite. Skipped unless SCREENSHOTS=1, so `npm run test:e2e` never runs it.
  *
  * Re-shoot (from the repo root, dev `db` container up) against a throwaway
  * database so the demo data never touches real data:
@@ -8,53 +8,67 @@
  *   eval "$(grep -E '^POSTGRES_(USER|PASSWORD|PORT)=' .env | sed 's/^/export /')"
  *   DSN="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:${POSTGRES_PORT:-5432}/plamotrack_demo"
  *   # create plamotrack_demo + alembic upgrade head as for the e2e from-empty
- *   # recipe in .agents/testing-and-review.md, then:
+ *   # recipe in .agents/testing-and-review.md, then EITHER
  *   ( cd frontend && DATABASE_URL="$DSN" SCREENSHOTS=1 npx playwright test e2e/screenshots.spec.ts )
+ *   # — the README's eight files into docs/screenshots/ — OR, for the docs site,
+ *   ( cd frontend && DATABASE_URL="$DSN" SCREENSHOTS=1 SCREENSHOTS_OUT=../../plamotrack-docs/images/screenshots \
+ *       npx playwright test e2e/screenshots.spec.ts )
+ *   # — the full set there: every page and dialog, `name.png` dark and
+ *   # `name-light.png` light, the phone's and the tablet's shells (`phone-*`,
+ *   # `tablet-*`, design §13.7), plus the unclaimed "Set up plamotrack" screen
+ *   # that auth.setup.ts captures on its way through (screenshots.ts says
+ *   # which set is which).
  *
- * Writes six 2× PNGs into docs/screenshots/, same names and logical sizes as
- * the originals. Everything seeded here is invented demo data — the README
- * says so under the retailers screenshot, so keep it that way: no real shops,
- * no real ratings. The one cross-reference the README prose makes must hold:
- * Mr. Color Thinner at 0 on hand, sitting on a *pending* Mecha Supply Co
- * order.
+ * The database must be fresh: the seed refuses a populated one, and the setup
+ * screen exists only before the first claim. Everything seeded here is invented
+ * demo data — the README and the docs say so under the screenshots, so keep it
+ * that way: no real shops, no real ratings. The one cross-reference the README
+ * prose makes must hold: Mr. Color Thinner at 0 on hand, sitting on a *pending*
+ * Mecha Supply Co order. Nothing is written through the browser: every dialog
+ * is filled for the picture and abandoned by the next navigation.
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { expect, test } from "@playwright/test";
-
-const API = "http://127.0.0.1:8000";
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const OUT = path.join(HERE, "..", "..", "docs", "screenshots");
+import { STORAGE_STATE, apiContext } from "./api";
+import { DEVICES, SCREENSHOTS, THEMES, anonymousContext, save, type Theme } from "./screenshots";
 
 const DAY = 24 * 60 * 60 * 1000;
 const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * DAY).toISOString();
 const day = (daysAgo: number) => iso(daysAgo).slice(0, 10);
 
 test.describe.configure({ mode: "serial" });
-test.skip(!process.env.SCREENSHOTS, "screenshot capture runs only with SCREENSHOTS=1");
+test.skip(!SCREENSHOTS, "screenshot capture runs only with SCREENSHOTS=1");
 
-test.use({ deviceScaleFactor: 2, viewport: { width: 1440, height: 900 } });
+// Dark: the default look (design §13). A browser with no stored preference
+// follows its device, and Playwright's device is light unless told otherwise.
+test.use({
+  deviceScaleFactor: 2,
+  viewport: { width: 1440, height: 900 },
+  colorScheme: "dark",
+  // A capture that cannot find its element should say so in seconds, not sit
+  // out the whole test timeout.
+  actionTimeout: 15_000,
+});
 
-test("seed the demo collection and capture the README screenshots", async ({
-  page,
-  request,
-}) => {
-  test.setTimeout(180_000);
+type Order = { id: string; items: { spawned_kit_ids: string[] }[] };
+
+test("seed the demo collection and capture the screenshots", async ({ page, browser }) => {
+  test.setTimeout(420_000);
+  const api = await apiContext();
   const post = async (route: string, json: object) => {
-    const resp = await request.post(`${API}${route}`, { data: json });
+    const resp = await api.post(route, { data: json });
     expect(resp.ok(), `${route}: ${resp.status()} ${await resp.text()}`).toBeTruthy();
     return resp.json();
   };
   const patch = async (route: string, json: object) => {
-    const resp = await request.patch(`${API}${route}`, { data: json });
+    const resp = await api.patch(route, { data: json });
     expect(resp.ok(), `${route}: ${resp.status()} ${await resp.text()}`).toBeTruthy();
     return resp.json();
   };
 
   // Refuse to seed into a database that already holds anything — this spec is
   // for the throwaway demo DB, and a stray run against dev data would pollute it.
-  const existing = await (await request.get(`${API}/retailers`)).json();
+  const existing = await (await api.get("/retailers")).json();
   expect(existing, "screenshots seed wants an empty database").toEqual([]);
 
   // --- retailers (all invented; the README disclaimer depends on it) ------------
@@ -133,7 +147,7 @@ test("seed the demo collection and capture the README screenshots", async ({
     manufacturer: "Metallic Forge",
     quantity_on_hand: 2,
   });
-  await post("/upgrades", {
+  const decals = await post("/upgrades", {
     name: "RG waterslide decals — Nu Gundam",
     manufacturer: "D.L. Decal",
     quantity_on_hand: 1,
@@ -166,7 +180,7 @@ test("seed the demo collection and capture the README screenshots", async ({
   });
 
   // --- received history: builds the backlog, the bench, and the shelf -----------
-  const historic = await post("/orders", {
+  const historic: Order = await post("/orders", {
     retailer_id: side7.id,
     order_date: day(160),
     order_number: "S7-20260315",
@@ -179,7 +193,7 @@ test("seed the demo collection and capture the README screenshots", async ({
       kitLine("HG Barbatos Lupus", "HG", 1400, { series: "Iron-Blooded Orphans" }),
     ],
   });
-  const bench = await post("/orders", {
+  const bench: Order = await post("/orders", {
     retailer_id: mecha.id,
     order_date: day(75),
     order_number: "MS-88742",
@@ -192,7 +206,7 @@ test("seed the demo collection and capture the README screenshots", async ({
       { item_type: "tool", quantity: 1, unit_price_minor: 1200, currency_code: "JPY", catalog_ref_id: tweezers.id },
     ],
   });
-  await post("/orders", {
+  const shelf: Order = await post("/orders", {
     retailer_id: panel.id,
     order_date: day(40),
     order_number: "PLI-1207",
@@ -253,8 +267,7 @@ test("seed the demo collection and capture the README screenshots", async ({
   });
 
   // --- move the shelf and the bench into their statuses -------------------------
-  const kitId = (order: { items: { spawned_kit_ids: string[] }[] }, line: number, n = 0) =>
-    order.items[line].spawned_kit_ids[n];
+  const kitId = (order: Order, line: number, n = 0) => order.items[line].spawned_kit_ids[n];
 
   await patch(`/kits/${kitId(historic, 0)}`, {
     status: "complete",
@@ -278,74 +291,368 @@ test("seed the demo collection and capture the README screenshots", async ({
   await patch(`/kits/${kitId(bench, 0)}`, { status: "building", build_started_at: iso(18) });
   await patch(`/kits/${kitId(bench, 1)}`, { status: "building", build_started_at: iso(6) });
 
-  // --- capture ------------------------------------------------------------------
-  const shot = async (
-    route: string,
-    file: string,
-    size: { width: number; height: number },
-    ready: () => Promise<void>,
-    arrange?: () => Promise<void>,
-  ) => {
-    await page.setViewportSize(size);
-    await page.goto(route);
-    await ready();
-    if (arrange) await arrange();
-    await page.waitForTimeout(400); // let layout, fonts and counters settle
-    await page.screenshot({ path: path.join(OUT, file) });
-  };
-
-  await shot("/board", "board.png", { width: 1440, height: 900 }, async () => {
-    await expect(page.getByText("Build Pipeline")).toBeVisible();
-    await expect(page.getByText("MG RX-78-2 Ver. 3.0")).toBeVisible();
+  // --- the docs' extra state ----------------------------------------------------
+  // An applied upgrade, so the kit editor has something to withdraw; a token, so
+  // the Access tokens page has a row. The token's secret is never shown: the
+  // page lists it by prefix, and the one-time card is not captured.
+  await post(`/upgrades/${decals.id}/apply`, { kit_id: kitId(shelf, 3), quantity: 1 });
+  await post("/auth/tokens", {
+    name: "Claude Desktop on the laptop",
+    scopes: ["collection:read", "collection:write"],
   });
 
-  await shot(
-    "/board",
-    "board-orders.png",
-    { width: 1800, height: 820 },
-    async () => {
-      await expect(page.getByText("Build Pipeline")).toBeVisible();
-    },
-    async () => {
-      await page.getByRole("button", { name: "Orders", exact: true }).click();
-      await expect(page.getByText("Orders Pipeline")).toBeVisible();
-      await expect(page.getByText("HG Unicorn Gundam (Perfectibility)")).toBeVisible();
-    },
+  // A starter sheet to preview: the real header from the API, four invented
+  // rows under it — two kits on one Side 7 order, one waiting at Orbit, one with
+  // no purchase at all. Previewed only, never applied.
+  const header = (await (await api.get("/export/starter-sheet.csv?examples=false")).text())
+    .trim()
+    .split("\n")[0]
+    .split(",");
+  const csvRow = (row: Record<string, string>) =>
+    header.map((column) => row[column] ?? "").join(",");
+  const starterSheet = Buffer.from(
+    [
+      header.join(","),
+      csvRow({ kit_name: "HG Gundam Aerial Rebuild", grade: "HG", status: "backlog", quantity: "1", retailer: "Side 7 Hobby Works", order_date: day(2), order_number: "S7-20260910", unit_price: "15.00", received: "yes" }),
+      csvRow({ kit_name: "HG Darilbalde", grade: "HG", status: "backlog", quantity: "1", retailer: "Side 7 Hobby Works", order_date: day(2), order_number: "S7-20260910", unit_price: "18.00", received: "yes" }),
+      csvRow({ kit_name: "MG Gundam Barbatos", grade: "MG", status: "ordered", quantity: "1", retailer: "Orbit Hobby Depot", order_date: day(1), order_number: "OHD-5602", unit_price: "48.00", received: "no" }),
+      csvRow({ kit_name: "HG Gundam Schwarzette", grade: "HG", status: "backlog", quantity: "1" }),
+      "",
+    ].join("\n"),
   );
+  await api.dispose();
 
-  await shot(
-    "/orders",
-    "orders.png",
-    { width: 1440, height: 820 },
-    async () => {
-      await expect(page.getByText("MS-91055")).toBeVisible();
-    },
-    async () => {
-      // Expand the pending Mecha Supply Co order so its lines show.
-      await page.getByRole("row").filter({ hasText: "MS-91055" }).first().click();
-      await expect(page.getByText("Mr. Color Thinner 400")).toBeVisible();
-    },
-  );
+  // --- capture, once per theme --------------------------------------------------
+  // The dark pass is the test's own page. The light pass is a second context
+  // whose device is light and that holds no stored preference — what a light-mode
+  // browser sees on first visit (§13.1: the same tokens under [data-theme="light"]).
+  for (const theme of THEMES) {
+    const context =
+      theme === "dark"
+        ? null
+        : await browser.newContext({
+            storageState: STORAGE_STATE,
+            colorScheme: "light",
+            deviceScaleFactor: 2,
+            viewport: { width: 1440, height: 900 },
+          });
+    const p = context ? await context.newPage() : page;
+    await captureSignedIn(p, theme, starterSheet);
+    if (context) await context.close();
 
-  await shot(
-    "/inventory",
-    "inventory.png",
-    { width: 1440, height: 620 },
-    async () => {
-      await expect(page.getByRole("button", { name: "Consumables" })).toBeVisible();
-    },
-    async () => {
-      await page.getByRole("button", { name: "Consumables" }).click();
-      await expect(page.getByText("Mr. Color Thinner 400")).toBeVisible();
-    },
-  );
+    // The sign-in screen (local mode): a context with no session cookie.
+    const anonymous = await anonymousContext(browser, theme, 720);
+    const anonymousPage = await anonymous.newPage();
+    await anonymousPage.goto("/");
+    await expect(anonymousPage.getByRole("button", { name: "Sign in" })).toBeVisible();
+    await save(anonymousPage, "sign-in", theme);
+    await anonymous.close();
 
-  await shot("/retailers", "retailers.png", { width: 1440, height: 560 }, async () => {
-    await expect(page.getByText("Mecha Supply Co")).toBeVisible();
-    await expect(page.getByText("Orbit Hobby Depot")).toBeVisible();
-  });
-
-  await shot("/settings/data", "data.png", { width: 1440, height: 900 }, async () => {
-    await expect(page.getByText(/export/i).first()).toBeVisible();
-  });
+    // The phone's and the tablet's shells (§13.7): a context each, with the
+    // `phone` and `tablet` projects' viewport and touch screen.
+    for (const [device, capture] of [
+      ["phone", capturePhone],
+      ["tablet", captureTablet],
+    ] as const) {
+      const shell = await browser.newContext({
+        storageState: STORAGE_STATE,
+        colorScheme: theme,
+        ...DEVICES[device],
+      });
+      await capture(await shell.newPage(), theme);
+      await shell.close();
+    }
+    const phoneDoor = await anonymousContext(browser, theme, 844, DEVICES.phone);
+    const phoneDoorPage = await phoneDoor.newPage();
+    await phoneDoorPage.goto("/");
+    await expect(phoneDoorPage.getByRole("button", { name: "Sign in" })).toBeVisible();
+    await save(phoneDoorPage, "phone-sign-in", theme);
+    await phoneDoor.close();
+  }
 });
+
+/** The phone shell (below 768 px, §13.7), at 390 × 844: what the tab bar, the
+ *  card rows, the sheets and Settings' section list look like. Each capture is
+ *  the screen as held — the viewport, the tab bar at its foot — not the page's
+ *  whole length. */
+async function capturePhone(p: Page, theme: Theme): Promise<void> {
+  const tabs = p.getByRole("navigation", { name: "Main" });
+  await p.goto("/");
+  await expect(p.locator("html")).toHaveAttribute("data-theme", theme);
+
+  // Home: one column, the bench first. The README's one phone capture.
+  await expect(p.getByRole("heading", { level: 3, name: "HG Sinanju Stein (Narrative Ver.)" })).toBeVisible();
+  await expect(tabs.getByRole("link")).toHaveText(["Home", "Kits", "Orders", "Inventory", "More"]);
+  await save(p, "phone-home", theme);
+
+  // Further down the same page: the mail as three stacked groups.
+  const mail = p.getByRole("heading", { level: 2, name: "In the mail" });
+  await mail.evaluate((heading) => heading.scrollIntoView({ block: "start" }));
+  await expect(p.getByText("HG Unicorn Gundam (Perfectibility)")).toBeVisible();
+  await save(p, "phone-home-mail", theme);
+
+  // Kits as card rows, the backlog chosen through the URL as the desktop's is.
+  await p.goto("/kits?status=backlog");
+  await expect(p.getByRole("button", { name: "Filter and sort, 1 filter active" })).toBeVisible();
+  await expect(p.getByText("HG Gouf Custom").filter({ visible: true })).toBeVisible();
+  await save(p, "phone-kits", theme);
+
+  // The one filter-and-sort sheet, reopened on that state.
+  await p.getByRole("button", { name: /^Filter and sort/ }).click();
+  const filters = p.getByRole("dialog", { name: "Filter and sort" });
+  await expect(filters.getByRole("button", { name: /^Backlog/ })).toHaveAttribute("aria-pressed", "true");
+  await save(p, "phone-filter", theme);
+
+  // New order as a full-screen sheet: the line a card, the actions in the bar
+  // at the foot. Filled for the picture, never recorded.
+  await p.goto("/orders");
+  await p.getByRole("button", { name: "New order" }).click();
+  const order = p.getByRole("dialog", { name: "New order" });
+  await order.locator('select[name="retailer_id"]').selectOption({ label: "Mecha Supply Co" });
+  await order.getByLabel("Currency").fill("JPY");
+  await order.getByLabel("Order number").fill("MS-91201");
+  await order.getByPlaceholder("Kit name *").fill("HG Zaku II");
+  await order.getByPlaceholder("Grade *").fill("HG");
+  await order.getByLabel("Quantity").first().fill("2");
+  await order.getByLabel("Unit price").first().fill("1100");
+  await order.getByRole("heading", { name: "New order" }).click(); // drop the focus ring
+  // The line's card under its heading, down to the bar.
+  await order.getByRole("button", { name: "Add line" }).evaluate((add) => add.scrollIntoView({ block: "start" }));
+  await save(p, "phone-order-form", theme);
+
+  // Orders as cards, behind the abandoned sheet's navigation.
+  await p.goto("/orders");
+  await expect(p.getByText("MS-91055").filter({ visible: true })).toBeVisible();
+  await save(p, "phone-orders", theme);
+
+  // Inventory: a card a row, the stepper a finger wide.
+  await p.goto("/inventory");
+  await p.getByRole("button", { name: "Consumables" }).click();
+  await expect(p.getByText("Mr. Color Thinner 400").filter({ visible: true })).toBeVisible();
+  await save(p, "phone-inventory", theme);
+
+  // More: the fifth tab — Retailers, Settings, the theme, signing out.
+  await tabs.getByRole("link", { name: "More" }).click();
+  await expect(p.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await save(p, "phone-more", theme);
+
+  // Settings is its section list; a section opens from it.
+  await p.goto("/settings");
+  await expect(p.getByRole("link", { name: /Data management/ })).toBeVisible();
+  await save(p, "phone-settings", theme);
+
+  // Data management on a phone: the exports, and the import under them (#304).
+  await p.goto("/settings/data");
+  await expect(p.getByRole("button", { name: "Download full archive (.zip)" })).toBeVisible();
+  await expect(p.getByRole("button", { name: "Choose a file" })).toBeVisible();
+  await save(p, "phone-data", theme);
+}
+
+/** The icon rail (768–1279 px, §13.7), at an iPad's portrait 820 × 1180: Home
+ *  by its box, and a table folded to the width it has. */
+async function captureTablet(p: Page, theme: Theme): Promise<void> {
+  await p.goto("/");
+  await expect(p.locator("html")).toHaveAttribute("data-theme", theme);
+  await expect(p.getByRole("heading", { level: 3, name: "HG Sinanju Stein (Narrative Ver.)" })).toBeVisible();
+  await save(p, "tablet-home", theme);
+
+  await p.goto("/orders");
+  await expect(p.getByText("MS-91055").filter({ visible: true })).toBeVisible();
+  await p.getByRole("row").filter({ hasText: "MS-91055" }).first().click();
+  await expect(p.getByText("Mr. Color Thinner 400").filter({ visible: true })).toBeVisible();
+  await save(p, "tablet-orders", theme);
+}
+
+/** Every signed-in capture, in one theme. Each starts with its own navigation,
+ *  which is also what discards the dialog the previous one left open. */
+async function captureSignedIn(p: Page, theme: Theme, starterSheet: Buffer): Promise<void> {
+  const shot = async (
+    name: string,
+    size: { width: number; height: number },
+    act: () => Promise<Page | Locator>,
+  ) => {
+    await p.setViewportSize(size);
+    await save(await act(), name, theme);
+  };
+  // Today on the browser's own calendar, matching what the date inputs accept.
+  const today = (() => {
+    const shifted = new Date();
+    shifted.setMinutes(shifted.getMinutes() - shifted.getTimezoneOffset());
+    return shifted.toISOString().slice(0, 10);
+  })();
+  await p.goto("/");
+  await expect(p.locator("html")).toHaveAttribute("data-theme", theme);
+
+  // Home (§13.2, #233): the bench, the two strips and the mail columns, all
+  // populated by the seed above.
+  await shot("home", { width: 1440, height: 1000 }, async () => {
+    await p.goto("/");
+    await expect(p.getByRole("heading", { level: 1, name: "Home" })).toBeVisible();
+    // The bench card, a completed row and an in-transit card, from the seed.
+    await expect(
+      p.getByRole("heading", { level: 3, name: "HG Sinanju Stein (Narrative Ver.)" }),
+    ).toBeVisible();
+    await expect(p.getByText("MG RX-78-2 Ver. 3.0")).toBeVisible();
+    await expect(p.getByText("HG Unicorn Gundam (Perfectibility)")).toBeVisible();
+    await expect(p.getByTestId("home-count-mail")).not.toHaveText("0");
+    return p;
+  });
+
+  // Kits, filtered to the backlog through the URL — the bookmarkable view the
+  // docs describe.
+  await shot("kits", { width: 1440, height: 820 }, async () => {
+    await p.goto("/kits?status=backlog");
+    await expect(p.getByLabel("Filter by status")).toHaveValue("backlog");
+    await expect(p.getByText("HG Zaku II").first()).toBeVisible();
+    await expect(p.getByText("HG Gouf Custom")).toBeVisible();
+    return p;
+  });
+
+  // The Add kit dialog, filled in for a kit that was never on an order.
+  await shot("kit-form", { width: 1440, height: 900 }, async () => {
+    await p.goto("/kits");
+    await p.getByRole("button", { name: "Add kit" }).click();
+    const dialog = p.getByRole("dialog", { name: "Add kit" });
+    await dialog.getByPlaceholder("RX-79(G) Gundam Ground Type").fill("HG Gundam Calibarn");
+    await dialog.getByPlaceholder("HG", { exact: true }).fill("HG");
+    await dialog.getByPlaceholder("HGUC 210").fill("HG 1/144 #26");
+    await dialog.getByPlaceholder("Iron-Blooded Orphans").fill("The Witch from Mercury");
+    await dialog.getByLabel("Status").selectOption("backlog");
+    await dialog.getByRole("heading", { name: "Add kit" }).click(); // drop the focus ring
+    return dialog;
+  });
+
+  // Orders, with the pending Mecha Supply Co order expanded so its lines show.
+  await shot("orders", { width: 1440, height: 820 }, async () => {
+    await p.goto("/orders");
+    // `visible`: the row also holds the number for where the table folds its
+    // column away (#258), hidden at this width.
+    await expect(p.getByText("MS-91055").filter({ visible: true })).toBeVisible();
+    await p.getByRole("row").filter({ hasText: "MS-91055" }).first().click();
+    await expect(p.getByText("Mr. Color Thinner 400")).toBeVisible();
+    return p;
+  });
+
+  // The New order dialog: a two-copy kit line and a consumable chosen through
+  // the catalogue picker, still pending — stock waits for the arrival.
+  await shot("order-form", { width: 1440, height: 1100 }, async () => {
+    await p.goto("/orders");
+    await p.getByRole("button", { name: "New order" }).click();
+    const dialog = p.getByRole("dialog", { name: "New order" });
+    await dialog.locator('select[name="retailer_id"]').selectOption({ label: "Mecha Supply Co" });
+    await dialog.getByLabel("Currency").fill("JPY");
+    await dialog.getByLabel("Order number").fill("MS-91201");
+    await dialog.getByLabel("Delivery service").fill("Japan Post EMS");
+    await dialog.getByPlaceholder("Kit name *").fill("HG Zaku II");
+    await dialog.getByPlaceholder("Grade *").fill("HG");
+    await dialog.getByLabel("Quantity").first().fill("2");
+    await dialog.getByLabel("Unit price").first().fill("1100");
+    await dialog.getByRole("button", { name: "Add line" }).click();
+    await dialog.locator('select:has(option[value="consumable"])').nth(1).selectOption("consumable");
+    await dialog.getByLabel("Quantity").nth(1).fill("1");
+    await dialog.getByLabel("Unit price").nth(1).fill("300");
+    await dialog.getByPlaceholder("Search consumables…").fill("Gundam Marker");
+    await dialog.getByRole("button", { name: /on hand/ }).filter({ hasText: "Gundam Marker GM02" }).click();
+    await expect(dialog.getByRole("button", { name: "Change" })).toBeVisible();
+    return dialog;
+  });
+
+  // Edit order on the in-transit Side 7 order: Shipped on is stored, Received
+  // on filled in for the picture.
+  await shot("order-edit", { width: 1440, height: 1100 }, async () => {
+    await p.goto("/orders");
+    await p.getByRole("row").filter({ hasText: "S7-20260812" }).getByRole("button", { name: "Edit" }).click();
+    const dialog = p.getByRole("dialog", { name: "Edit order" });
+    // Stored as an instant, shown on the browser's own calendar — so the date,
+    // not the UTC day the seed computed.
+    await expect(dialog.getByLabel("Shipped on")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+    await dialog.getByLabel("Received on").fill(today);
+    return dialog;
+  });
+
+  // Inventory, on Consumables: the thinner at 0 and the cement below its threshold.
+  await shot("inventory", { width: 1440, height: 620 }, async () => {
+    await p.goto("/inventory");
+    await p.getByRole("button", { name: "Consumables" }).click();
+    await expect(p.getByText("Mr. Color Thinner 400")).toBeVisible();
+    await expect(p.getByText("restock")).toBeVisible();
+    return p;
+  });
+
+  // Apply to kit, from the Upgrades tab, with the bench kit chosen.
+  await shot("upgrade-apply", { width: 1440, height: 800 }, async () => {
+    await p.goto("/inventory");
+    await p.getByRole("button", { name: "Upgrades" }).click();
+    await p
+      .getByRole("row")
+      .filter({ hasText: "Metal thruster set (1/144)" })
+      .getByRole("button", { name: "Apply to kit" })
+      .click();
+    const dialog = p.getByRole("dialog", { name: /Apply/ });
+    const kit = dialog.getByLabel("Kit");
+    const value = await kit.locator("option", { hasText: "Sinanju Stein" }).getAttribute("value");
+    await kit.selectOption(value!);
+    return dialog;
+  });
+
+  // The withdrawal question in the kit editor, both choices offered and neither
+  // pre-selected (§3.6).
+  await shot("kit-withdraw", { width: 1440, height: 1000 }, async () => {
+    // Searched for, so the row is on the first page whatever the sort.
+    await p.goto("/kits?q=RG%20Nu");
+    await p.getByRole("row", { name: /RG Nu Gundam/ }).getByRole("button", { name: "Edit" }).click();
+    const dialog = p.getByRole("dialog", { name: "Edit RG Nu Gundam" });
+    await expect(dialog.getByText("Applied upgrades")).toBeVisible();
+    await dialog.getByRole("button", { name: "Withdraw…" }).click();
+    await expect(dialog.getByRole("button", { name: "Withdraw — return to stock" })).toBeVisible();
+    return dialog;
+  });
+
+  await shot("retailers", { width: 1440, height: 560 }, async () => {
+    await p.goto("/retailers");
+    await expect(p.getByText("Mecha Supply Co")).toBeVisible();
+    await expect(p.getByText("Orbit Hobby Depot")).toBeVisible();
+    return p;
+  });
+
+  await shot("data", { width: 1440, height: 900 }, async () => {
+    await p.goto("/settings/data");
+    await expect(p.getByRole("button", { name: "Download full archive (.zip)" })).toBeVisible();
+    return p;
+  });
+
+  // The import preview: the starter sheet read, nothing written. The card is
+  // the picture — the export and template cards above it are `data.png`'s.
+  await shot("import-preview", { width: 1440, height: 1100 }, async () => {
+    await p.goto("/settings/data");
+    await p.locator("#import-file").setInputFiles({
+      name: "my-collection.csv",
+      mimeType: "text/csv",
+      buffer: starterSheet,
+    });
+    await p.getByRole("button", { name: "Preview changes" }).click();
+    await expect(p.getByRole("button", { name: "Apply import" })).toBeVisible();
+    return p.locator("section").filter({
+      has: p.getByRole("heading", { level: 3, name: "Import", exact: true }),
+    });
+  });
+
+  await shot("tokens", { width: 1440, height: 900 }, async () => {
+    await p.goto("/settings/tokens");
+    await expect(p.getByRole("heading", { level: 2, name: "Access tokens" })).toBeVisible();
+    await expect(p.getByTestId("token-row").filter({ hasText: "Claude Desktop on the laptop" })).toBeVisible();
+    return p;
+  });
+
+  await shot("settings-general", { width: 1440, height: 620 }, async () => {
+    await p.goto("/settings/general");
+    await expect(p.getByText("Reference currency")).toBeVisible();
+    return p;
+  });
+
+  await shot("settings-language", { width: 1440, height: 800 }, async () => {
+    await p.goto("/settings/language");
+    await expect(p.getByText("Time zone")).toBeVisible();
+    return p;
+  });
+}

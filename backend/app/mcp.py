@@ -2,6 +2,7 @@
 so agents hit identical business logic (fan-out/increment dispatch, de-dup search,
 stock guards) without any duplicated rules."""
 
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -34,6 +35,7 @@ from app.schemas.catalog import (
 from app.schemas.kits import KitCreate, KitRead, KitUpdate
 from app.schemas.numeric import Int4, NonNegativeInt4, PositiveInt4
 from app.schemas.orders import (
+    OrderAdjustmentCreate,
     OrderCreate,
     OrderItemCreate,
     OrderRead,
@@ -48,6 +50,7 @@ from app.services import kits as kits_service
 from app.services import orders as orders_service
 from app.services import upgrades as upgrades_service
 from app.services.meta import instance_meta
+from app.services.summary import collection_summary
 
 mcp = FastMCP(
     "plamotrack",
@@ -72,6 +75,22 @@ mcp = FastMCP(
         "an order that didn't happen."
     ),
 )
+
+
+# Per-tool scope from the registry's tool map (§5.5 family 7; #189): every
+# `tools/call` resolves a principal — the verified bearer over HTTP, the pytest
+# seam in memory — and a tool whose declared scope it lacks is refused before
+# the wrapper runs. One middleware, not thirty checks.
+from app.auth.mcp_auth import ToolScopeMiddleware  # noqa: E402
+
+mcp.add_middleware(ToolScopeMiddleware(mcp))
+
+# Test-only modern-hold instrumentation (#244): off unless the environment arms
+# it, so it runs after the scope check above and never in the shipped image.
+# See app/mcp_hold_probe.py — it adds no tool and no route.
+from app.mcp_hold_probe import hold_probe_seconds, install_hold_probe  # noqa: E402
+
+install_hold_probe(mcp, hold_probe_seconds(os.environ))
 
 
 @asynccontextmanager
@@ -129,10 +148,15 @@ def _parse_item_type(value: str) -> ItemType:
             "create_kit (or a kit line on create_order for a purchase)"
         )
     try:
-        return ItemType(normalized)
+        parsed = ItemType(normalized)
     except ValueError:
+        parsed = None
+    # A catalog table, not merely an order-line type: `other` (#349) is a line the
+    # collection does not track, so it names no table to list.
+    if parsed not in _CATALOG_READ_MODELS:
         valid = ", ".join(t.value for t in _CATALOG_READ_MODELS)
-        raise ToolError(f"invalid item_type {value!r} — valid types: {valid}") from None
+        raise ToolError(f"invalid item_type {value!r} — valid types: {valid}")
+    return parsed
 
 
 def _parse_instant(value: str, field: str = "received_at") -> datetime:
@@ -190,18 +214,48 @@ async def get_meta() -> dict:
 
 
 @mcp.tool
+async def get_summary() -> dict:
+    """The collection at a glance: how many kits sit in each pipeline status
+    (pre_ordered, ordered, in_transit, backlog, building, complete) and how many
+    orders in each stage — pre_ordered (every kit on it still a pre-order),
+    ordered, in_transit (shipped, not yet received) or received. Read this before
+    listing rows: "what's on the bench?" is kits.building, "what's in the mail?"
+    is the first three order stages. The same function serves REST's GET /summary
+    and Home's headings, so the counts cannot disagree. For the rows use
+    list_kits(status=...) and list_orders(pending_only=true) — every order row
+    carries its stage."""
+    async with _tool_session() as session:
+        return (await collection_summary(session)).model_dump(mode="json")
+
+
+@mcp.tool
 async def list_kits(
-    status: str | None = None, grade: str | None = None, series: str | None = None
+    status: str | None = None,
+    grade: str | None = None,
+    series: str | None = None,
+    sort: str = "created",
+    limit: PositiveInt4 | None = None,
 ) -> list[dict]:
     """List kits in the collection, optionally filtered by pipeline status
     (pre_ordered, ordered, in_transit, backlog, building, complete — backlog
     means in hand but not started), grade (HG, RG, MG, PG, SD, ...) and/or
     series (exact name, case-insensitively — get the spellings in use from
-    list_kit_series)."""
+    list_kit_series). sort: "created" (oldest first, the default), "newest"
+    (most recently added first), "recent" (the kits that most recently changed
+    status first — what moved lately), "started" or "completed" (by the build's
+    start or completion date, newest first; kits without that date come last —
+    status="complete", sort="completed" is what was finished lately) or "name".
+    limit: only the first N in that order, e.g. sort="recent", limit=5 for the
+    five kits that last moved."""
     parsed_status = _parse_status(status) if status else None
     async with _tool_session() as session:
         kits = await kits_service.list_kits(
-            session, status=parsed_status, grade=grade, series=series
+            session,
+            status=parsed_status,
+            grade=grade,
+            series=series,
+            sort=sort,  # type: ignore[arg-type]  # the service refuses a stranger
+            limit=limit,
         )
         return [KitRead.model_validate(k).model_dump(mode="json") for k in kits]
 
@@ -241,8 +295,8 @@ async def get_kit(kit_id: str) -> dict:
 
 @mcp.tool
 async def update_kit_status(kit_id: str, status: str) -> dict:
-    """Move a kit to a new pipeline status (equivalent to dragging its Kanban
-    card). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
+    """Move a kit to a new pipeline status (what the kit dialog's status field
+    does in the browser). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
     hand, not started), building, complete. Entering building/complete stamps
     build_started_at/build_completed_at with now — only when that date is still
     null, so a real date already recorded is never overwritten; use update_kit
@@ -442,21 +496,27 @@ async def update_retailer(retailer_id: str, changes: RetailerUpdate) -> dict:
 
 @mcp.tool
 async def create_order(
-    retailer: str,
     order_date: str,
     items: list[OrderItemCreate],
+    retailer: str | None = None,
+    retailer_id: str | None = None,
     currency_code: str | None = None,
     order_number: str | None = None,
     shipping_cost_minor: NonNegativeInt4 | None = None,
     delivery_service: str | None = None,
     tracking_number: str | None = None,
     tracking_url: str | None = None,
+    notes: str | None = None,
     received: bool = False,
     received_at: str | None = None,
     shipped_at: str | None = None,
+    adjustments: list[OrderAdjustmentCreate] | None = None,
 ) -> dict:
-    """Record a purchase. The retailer is matched by name case-insensitively and
-    created if new; order_date is ISO format (YYYY-MM-DD). Item lines follow the
+    """Record a purchase. Name the shop with exactly one of `retailer_id` — the id
+    of a shop already on record, from list_retailers; use it whenever you have the
+    id — or `retailer`, the shop's name, matched case-insensitively and created if
+    new. An id is never a name: an id passed as `retailer` is refused, not made
+    into a shop. order_date is ISO format (YYYY-MM-DD). Item lines follow the
     order's dispatch semantics: a `kit` line needs `kit` details (name, grade,
     optional kit_number; status defaults to `ordered`, use `pre_ordered` for
     pre-orders) and spawns one collection row per quantity. A tool, consumable,
@@ -466,6 +526,11 @@ async def create_order(
     and the whole order with it. A new tool, consumable or display item needs a
     `category` — check list_catalog_categories for that type and reuse a value
     that fits; a new upgrade needs a `manufacturer` (optional on display items).
+    An `other` line is for something on the order the collection does not track —
+    a non-model item in a mixed basket, an add-on: it takes a `description` and
+    its quantity and price, creates no kit and no catalog item, never moves
+    stock, and counts toward the order's total. Use it so the order matches the
+    receipt, never for a kit, tool, consumable, upgrade or display item.
     Catalog stock does NOT increase until the order is received: pass
     received=true for store purchases already in hand, or call
     mark_order_received when a shipment arrives. When logging a purchase that
@@ -477,10 +542,21 @@ async def create_order(
     flag): spawned kits land in_transit stamped with it instead of ordered.
     Include the
     retailer's order_number from the confirmation email when available (support
-    reference — only unique per retailer, never treat it as an identifier). Prices
-    are integer minor units (cents/yen) with an ISO 4217 currency_code; omit
-    currency_code to use the instance's own reference currency, which get_meta
-    reports."""
+    reference — only unique per retailer, never treat it as an identifier). `notes`
+    is free text for what no other field holds about this purchase: how it was paid,
+    a substitution, a partial refund, a damage claim. It changes no total and no
+    stock, so a real price or quantity belongs on the lines. `adjustments` is what
+    came off the price at the checkout — a discount, a promo code, a voucher, a
+    gift card — one `{label, amount_minor}` each, the amount a positive number of
+    minor units in the order's currency. Keep every line at the price the shop
+    charged and record the deduction here; never lower a line price to make the
+    total match. Together they may not exceed the order's lines in that currency
+    plus its shipping. The order's `totals` then show, per currency, items,
+    shipping, adjustments and what was actually paid. Prices
+    are integer minor units (cents/yen) with an ISO 4217 currency_code. Each item
+    line's currency_code is required; the order-level currency_code is what may be
+    omitted, and omitting it takes the instance's own reference currency, which
+    get_meta reports."""
     try:
         parsed_date = date.fromisoformat(order_date)
     except ValueError:
@@ -491,42 +567,66 @@ async def create_order(
             "received_at asserts the order arrived — pass received=true with it, or omit the date"
         )
     parsed_shipped_at = _parse_instant(shipped_at, "shipped_at") if shipped_at is not None else None
+    # One field or the other, never both (#289): a pair that disagreed would leave
+    # the tool choosing which the caller meant.
+    if (retailer is None) == (retailer_id is None):
+        raise ToolError(
+            "name the shop with exactly one of retailer_id (an id from list_retailers) "
+            "or retailer (its name — matched case-insensitively, created if new)"
+        )
+    parsed_retailer_id = (
+        _parse_uuid(retailer_id, "retailer_id") if retailer_id is not None else None
+    )
     async with _tool_session() as session:
-        retailer_row = await orders_service.get_or_create_retailer(session, retailer)
+        if retailer is not None:
+            parsed_retailer_id = (await orders_service.get_or_create_retailer(session, retailer)).id
         data = OrderCreate(
-            retailer_id=retailer_row.id,
+            retailer_id=parsed_retailer_id,
             order_date=parsed_date,
             order_number=order_number,
             delivery_service=delivery_service,
             tracking_number=tracking_number,
             tracking_url=tracking_url,
+            notes=notes,
             shipping_cost_minor=shipping_cost_minor,
             currency_code=currency_code or await settings_service.reference_currency(session),
             received=received,
             received_at=parsed_received_at,
             shipped_at=parsed_shipped_at,
             items=items,
+            adjustments=adjustments or [],
         )
         order = await orders_service.create_order(session, data)
         return OrderRead.model_validate(order).model_dump(mode="json")
 
 
 @mcp.tool
-async def list_orders(pending_only: bool = False) -> list[dict]:
-    """List orders (newest first), including received state and line items.
-    Use pending_only=true to see orders still awaiting delivery — e.g. to find
-    which order a shipping-notification email belongs to."""
+async def list_orders(
+    pending_only: bool = False, sort: str = "placed", limit: PositiveInt4 | None = None
+) -> list[dict]:
+    """List orders, including received state and line items. Use
+    pending_only=true to see orders still awaiting delivery — e.g. to find which
+    order a shipping-notification email belongs to. sort: "placed" (newest order
+    date first, the default) or "recent" (by the last status change — received,
+    else shipped, else placed, a placement date being its midnight in the instance's
+    time zone — newest first). limit: only the first N in that
+    order."""
     async with _tool_session() as session:
-        orders = await orders_service.list_orders(session)
-        if pending_only:
-            orders = [order for order in orders if order.received_at is None]
+        orders = await orders_service.list_orders(
+            session,
+            pending_only=pending_only,
+            sort=sort,  # type: ignore[arg-type]  # the service refuses a stranger
+            limit=limit,
+        )
         return [OrderRead.model_validate(order).model_dump(mode="json") for order in orders]
 
 
 @mcp.tool
 async def get_order(order_id: str) -> dict:
-    """Read one order in full: header fields, received state, and every line with
-    its id, prices, the §6 conversion snapshot, and the kits it spawned. ALWAYS
+    """Read one order in full: header fields, received state, every line with
+    its id, prices, the §6 conversion snapshot, and the kits it spawned, the
+    adjustments that came off its price, and `totals` — per currency, items,
+    shipping, adjustments and `paid_minor`, what was actually paid. ALWAYS
     read the order with this before editing it with update_order — line edits are
     keyed by the line ids this returns, and the full line set you must restate
     comes from here. Ids come from list_orders."""
@@ -541,9 +641,15 @@ async def update_order(
     order_id: str, changes: OrderUpdate, remove_missing_lines: bool = False
 ) -> dict:
     """Correct an order after entry: header fields (order_date, order_number,
-    tracking, shipping_cost_minor, currency_code, retailer_id) and/or the line
-    set. Read the order with get_order first. Only the fields present in
-    `changes` are touched.
+    tracking, shipping_cost_minor, currency_code, retailer_id, notes) and/or the
+    line set. Read the order with get_order first. Only the fields present in
+    `changes` are touched; a null or blank `notes` clears it.
+
+    `changes.adjustments`, when present, is the full replacement set of what
+    came off the price (discounts, vouchers, gift cards — see create_order): omit
+    it to leave the stored ones alone, send [] to remove them all. An edit that
+    would leave the adjustments larger than the order's lines in its currency
+    plus its shipping is refused, whichever of those the edit changed.
 
     `changes.items`, when present, is the FULL replacement set: a line with an
     `id` (from get_order) updates that line, a line without one is added — and a
@@ -559,7 +665,9 @@ async def update_order(
     touch nothing, and a quantity increase then clones the line's current kit.
     Kits that are building/complete, rated, or have
     photos, and stock already consumed, block destructive edits with a conflict.
-    A line's item_type cannot change. Omit converted_price_minor /
+    A line's item_type cannot change — an `other` line cannot become a tracked
+    one, so remove it and add the kit or catalog line instead — and restating an
+    `other` line restates its `description`. Omit converted_price_minor /
     converted_currency_code to keep a line's stored entry-time conversion
     snapshot — never restate that pair from guesswork; an explicit null clears
     it. `received_at` (offset-aware ISO 8601) corrects a receipt date already

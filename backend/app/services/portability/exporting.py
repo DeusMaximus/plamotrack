@@ -26,6 +26,7 @@ from app.models import (
     ItemType,
     Kit,
     Order,
+    OrderAdjustment,
     OrderItem,
     Retailer,
     Tool,
@@ -44,7 +45,13 @@ from app.services.portability.spec import (
 from app.services.read_snapshot import begin_read_snapshot
 
 #: Bumped when the CSV shape changes in a way an older importer couldn't read.
-EXPORT_VERSION = 1
+#:
+#: * **2** (#349): `order_items.item_type` gained `other`, with its `description`
+#:   column. A version-1 reader refuses the value cell by cell, naming a vocabulary
+#:   the row is outside of, which blocks the import without saying the instance is
+#:   simply older than the archive. The number says it instead. Version-1 archives
+#:   read unchanged: they hold no such line and no such column.
+EXPORT_VERSION = 2
 ARCHIVE_FORMAT = "plamotrack-archive"
 MANIFEST_NAME = "manifest.json"
 
@@ -120,11 +127,25 @@ async def _load_all(session: AsyncSession) -> dict[str, list[Any]]:
         ),
         "orders": list(orders),
         "order_items": list(order_items),
+        "order_adjustments": list(
+            (
+                await session.scalars(
+                    select(OrderAdjustment).order_by(
+                        OrderAdjustment.order_id, OrderAdjustment.position, OrderAdjustment.id
+                    )
+                )
+            ).all()
+        ),
         "kits": list((await session.scalars(select(Kit).order_by(Kit.created_at, Kit.id))).all()),
+        # `id` breaks ties: two applications at one instant otherwise came out in
+        # whatever order the plan produced them, and the archive's row order is
+        # pinned by the golden fixture (#303).
         "upgrade_applications": list(
             (
                 await session.scalars(
-                    select(UpgradeApplication).order_by(UpgradeApplication.applied_at)
+                    select(UpgradeApplication).order_by(
+                        UpgradeApplication.applied_at, UpgradeApplication.id
+                    )
                 )
             ).all()
         ),

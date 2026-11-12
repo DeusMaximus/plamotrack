@@ -1,0 +1,129 @@
+#!/bin/sh
+# Sourced by the nginx image's entrypoint before its envsubst step (the
+# `.envsh` suffix is what makes it sourced rather than executed, so the export
+# survives). Assembles PLAMOTRACK_SERVER_NAMES — the `server_name` line of the
+# allow server in default.conf.template — from the same three inputs the API's
+# Host allowlist is built from (backend/app/ingress.py, backend/app/hostnames.py):
+# the loopback names, the host of PUBLIC_BASE_URL, every WEB_BIND that names
+# something, and ALLOWED_HOSTS. The two derivations are held equal by
+# backend/tests/test_ingress.py, which runs this file under `sh` over one corpus.
+#
+# Normalisation, matching the API's: lowercase; ports dropped (nginx matches
+# server_name on the host alone); an IPv6 literal bracketed; terminal DNS dots
+# dropped (nginx drops them from the request Host before matching, so a dotted
+# server_name would never match — PR #196 review, P3-3); duplicates skipped
+# (nginx warns on a repeated server_name); the one wildcard form is `*.domain`,
+# any other `*` placement is ignored here and refused by the API at startup.
+# It also renders TRUSTED_PROXIES into `set_real_ip_from` directives. Only the
+# IP/CIDR character set is admitted here; the API performs the authoritative
+# address validation and nginx itself rejects a malformed address. A loopback
+# entry additionally trusts this container's default gateway — the address a
+# proxy on the host arrives from (see the comment at the rule).
+
+set -e
+
+plamotrack_add_name() {
+    name=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    case "$name" in
+        "") return ;;
+        \[*) name="${name%%]*}]" ;;                       # [v6]:port -> [v6]
+        *:*:*) name="[$name]" ;;                          # bare v6 -> [v6]
+        *) name="${name%%:*}" ;;                          # host:port -> host
+    esac
+    name="${name%.}"                                      # one terminal DNS dot, as the API
+    case "$name" in
+        ""|"[]") return ;;
+        \*.?*) ;;
+        *\**) return ;;
+    esac
+    case " ${PLAMOTRACK_SERVER_NAMES} " in
+        *" ${name} "*) return ;;
+    esac
+    PLAMOTRACK_SERVER_NAMES="${PLAMOTRACK_SERVER_NAMES} ${name}"
+}
+
+PLAMOTRACK_SERVER_NAMES="localhost 127.0.0.1 [::1]"
+
+if [ -n "${PUBLIC_BASE_URL:-}" ]; then
+    host="${PUBLIC_BASE_URL#*://}"                        # strip the scheme
+    host="${host%%/*}"                                    # strip any path
+    host="${host##*@}"                                    # strip any userinfo
+    plamotrack_add_name "$host"
+fi
+
+case "${WEB_BIND:-}" in
+    ""|0.0.0.0|::|"[::]") ;;                              # binds everything, names nothing
+    *) plamotrack_add_name "${WEB_BIND}" ;;               # loopback aliases included (P3-2)
+esac
+
+if [ -n "${ALLOWED_HOSTS:-}" ]; then
+    for entry in $(printf '%s' "${ALLOWED_HOSTS}" | tr ',' ' '); do
+        plamotrack_add_name "$entry"
+    done
+fi
+
+export PLAMOTRACK_SERVER_NAMES
+
+PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES=""
+plamotrack_trusts_host=""
+if [ -n "${TRUSTED_PROXIES:-}" ]; then
+    for entry in $(printf '%s' "${TRUSTED_PROXIES}" | tr ',' ' '); do
+        case "$entry" in
+            *[!0-9A-Fa-f.:/]*)
+                echo "plamotrack: invalid TRUSTED_PROXIES entry: $entry" >&2
+                return 1
+                ;;
+        esac
+        PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES="${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}set_real_ip_from ${entry};
+"
+        # A loopback entry means "a proxy on this host" (the configuration
+        # reference at docs.gunp.la, TRUSTED_PROXIES). Inside this container a
+        # host process — Caddy
+        # dialling the loopback-published port — arrives from the Compose
+        # network's gateway (docker-proxy / MASQUERADE), never from 127.0.0.1,
+        # so the entry alone would match nothing and every visitor would key
+        # the rate limits and the audit address on the gateway (§5.4's
+        # degradation). Canonical spellings only: 127.x with no prefix or /8
+        # and longer, ::1 with no prefix or /128 — the same set Python's
+        # ip_network(...).is_loopback admits for those spellings
+        # (backend/tests/test_ingress.py holds the two equal).
+        address="${entry%%/*}"
+        prefix="${entry#"$address"}"
+        prefix="${prefix#/}"
+        case "$address" in
+            127.*)
+                case "$prefix" in
+                    ""|[89]|[12][0-9]|3[0-2]) plamotrack_trusts_host=1 ;;
+                esac
+                ;;
+            ::1)
+                case "$prefix" in
+                    ""|128) plamotrack_trusts_host=1 ;;
+                esac
+                ;;
+        esac
+    done
+fi
+if [ -n "$plamotrack_trusts_host" ]; then
+    # The default route's gateway from the kernel's table (little-endian hex);
+    # PLAMOTRACK_ROUTE_TABLE is a test seam for the file's path, never a value.
+    gateway_hex=$(awk '$2 == "00000000" && $3 != "00000000" { print $3; exit }' \
+        "${PLAMOTRACK_ROUTE_TABLE:-/proc/net/route}" 2>/dev/null)
+    case "$gateway_hex" in
+        [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])
+            gateway=$(printf '%d.%d.%d.%d' \
+                "0x$(printf '%s' "$gateway_hex" | cut -c7-8)" \
+                "0x$(printf '%s' "$gateway_hex" | cut -c5-6)" \
+                "0x$(printf '%s' "$gateway_hex" | cut -c3-4)" \
+                "0x$(printf '%s' "$gateway_hex" | cut -c1-2)")
+            PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES="${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}set_real_ip_from ${gateway};
+"
+            ;;
+        *)
+            echo "plamotrack: TRUSTED_PROXIES names loopback, but no default route was found; a proxy on this host will not be trusted" >&2
+            ;;
+    esac
+fi
+export PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES
+
+echo "plamotrack: server_name ${PLAMOTRACK_SERVER_NAMES}"

@@ -51,7 +51,13 @@ IMPORT_PLAN_STALE = "import.plan_stale"
 FIELD_NOT_NULLABLE = "field.not_nullable"
 FIELD_BLANK = "field.blank"
 NAME_BLANK = "name.blank"
+#: A value offered as a name that parses as an id — where a name is resolved or
+#: created (MCP `create_order`'s `retailer`), an id is never a name (#289).
+NAME_IS_ID = "name.is_id"
 VALUE_OUT_OF_RANGE = "value.out_of_range"
+#: A list endpoint's `sort` outside its vocabulary, or `limit` below 1 (§13.4, #232).
+LIST_SORT_UNKNOWN = "list.sort_unknown"
+LIST_LIMIT_INVALID = "list.limit_invalid"
 ORDER_LINE_QUANTITY_TOO_SMALL = "order_line.quantity_too_small"
 ORDER_LINE_QUANTITY_TOO_LARGE = "order_line.quantity_too_large"
 ORDER_FANOUT_LIMIT = "order.fanout_limit"
@@ -64,6 +70,10 @@ ORDER_LINE_NOT_ON_ORDER = "order_line.not_on_order"
 ORDER_LINE_DUPLICATED = "order_line.duplicated"
 ORDER_LINE_TYPE_IMMUTABLE = "order_line.item_type_immutable"
 ORDER_LINE_NO_KIT_TO_CLONE = "order_line.no_kit_to_clone"
+#: #350: an order's adjustments come to more than its lines in the order's
+#: currency plus its shipping. One code for all three writers — the importer's
+#: preview raises it as a row diagnostic on the same rule (`order_totals`).
+ORDER_ADJUSTMENTS_EXCEED_TOTAL = "order.adjustments_exceed_total"
 CATALOG_ITEM_CATEGORY_REQUIRED = "catalog_item.category_required"
 CATALOG_ITEM_MANUFACTURER_REQUIRED = "catalog_item.manufacturer_required"
 CATALOG_ITEM_CATEGORY_UNSUPPORTED = "catalog_item.category_unsupported"
@@ -72,6 +82,7 @@ UPGRADE_APPLICATION_QUANTITY_INVALID = "upgrade_application.quantity_invalid"
 SETTINGS_FIELD_REQUIRED = "settings.field_required"
 SETTINGS_VALUE_INVALID = "settings.value_invalid"
 IMPORT_ENCODING_INVALID = "import.encoding_invalid"
+IMPORT_CSV_UNREADABLE = "import.csv_unreadable"
 IMPORT_FILE_TOO_LARGE = "import.file_too_large"
 IMPORT_FILE_UNSUPPORTED = "import.file_unsupported"
 IMPORT_ARCHIVE_TOO_LARGE = "import.archive_too_large"
@@ -111,6 +122,8 @@ IMPORT_SCHEMA_DRIFT = "import.schema_drift"
 # row parsing and identity
 IMPORT_COLUMN_UNKNOWN = "import.column_unknown"
 IMPORT_CELL_REQUIRED = "import.cell_required"
+IMPORT_CELL_BELOW_MINIMUM = "import.cell_below_minimum"
+IMPORT_CELL_ABOVE_MAXIMUM = "import.cell_above_maximum"
 IMPORT_MATCH_AMBIGUOUS = "import.match_ambiguous"
 IMPORT_ORDER_MATCH_AMBIGUOUS = "import.order_match_ambiguous"
 IMPORT_ID_DUPLICATED = "import.id_duplicated"
@@ -125,6 +138,9 @@ IMPORT_REF_NOT_IN_UPLOAD = "import.ref_not_in_upload"
 IMPORT_REF_UNMATCHED = "import.ref_unmatched"
 IMPORT_REF_DANGLING = "import.ref_dangling"
 IMPORT_REF_IGNORED_KIT_LINE = "import.ref_ignored_kit_line"
+#: The same discard on an `other` line (#349), which is tracked nowhere and so
+#: references no catalog item either. Its own code because the reason differs.
+IMPORT_REF_IGNORED_OTHER_LINE = "import.ref_ignored_other_line"
 IMPORT_STUB_CREATED = "import.stub_created"
 IMPORT_STUB_CREATED_UNSTOCKED = "import.stub_created_unstocked"
 
@@ -156,6 +172,11 @@ IMPORT_CATALOG_REF_UNRESOLVED = "import.catalog_ref_unresolved"
 IMPORT_LINE_JOINS_RECEIVED = "import.line_joins_received"
 IMPORT_RECEIPT_UNACCOUNTED = "import.receipt_unaccounted"
 IMPORT_UNRECEIVE_UNACCOUNTED = "import.unreceive_unaccounted"
+#: #349: an `other` line with no description, and a description on any other line —
+#: the two halves of the rule REST and MCP hold in the request schema. (No code may
+#: end in `_other` or `_one`: the browser's catalogue reads those as plural forms.)
+IMPORT_LINE_DESCRIPTION_REQUIRED = "import.line_description_required"
+IMPORT_LINE_DESCRIPTION_MISPLACED = "import.line_description_misplaced"
 
 # plan-level
 IMPORT_ROWS_UNREADABLE = "import.rows_unreadable"
@@ -164,8 +185,82 @@ IMPORT_STOCK_NOTE = "import.stock_note"
 # starter sheet
 IMPORT_RECEIPT_CONFLICT = "import.receipt_conflict"
 
+# --- ingress refusals (before routing — app/ingress.py, §5.6) ----------------
+# 421: the Host header names nothing the instance answers to. 403: an unsafe
+# request's Origin (or Referer) fails the three-way rule. `params.setting` is
+# the .env key that fixes it, so the sentence can point at it.
+INGRESS_HOST_NOT_ALLOWED = "ingress.host_not_allowed"
+INGRESS_ORIGIN_NOT_ALLOWED = "ingress.origin_not_allowed"
+# 429 from the bundled nginx alone: the per-peer limit on the three OAuth
+# endpoints an unauthenticated party can drive (`/mcp/authorize`, `/mcp/token`,
+# `/mcp/register`; §5.5 family 8, M6-7). Carries `Cache-Control: no-store` like
+# every family-8 failure (Codex #212 round 1, f4). The app has no raise site for
+# it — its own budgets are #193's.
+INGRESS_RATE_LIMITED = "ingress.rate_limited"
+# 413: a request body past the budget the route policy registry declares for
+# the route (`RoutePolicy.max_body_bytes`; the anonymous routes that take one),
+# refused before it is read whole — by the pre-routing gate, the protocol
+# guards and the bundled nginx alike (#221 item 1). `params.limit` from the app.
+INGRESS_BODY_TOO_LARGE = "ingress.body_too_large"
+# 503 from the MCP OAuth registration endpoint: the client-record collection
+# is at its cap and a new registration must wait for unlinked ones to expire
+# (#221 item 2). Rendered by the registration guard; `Retry-After` names the
+# lifetime. No params.
+AUTH_MCP_REGISTRATIONS_FULL = "auth.mcp_registrations_full"
+
+# --- authorization refusals (the route-policy dependency — app/auth, §5.5) ----
+# 401: no credential, or a presented one that fails, on a route that needs one.
+# 403: an authenticated principal whose scope is insufficient. Raised by the
+# authorization dependency; no params (the sentence names no value).
+AUTH_UNAUTHENTICATED = "auth.unauthenticated"
+AUTH_FORBIDDEN = "auth.forbidden"
+
+# --- local owner authentication (M6-3, #188 — §5.5 families 2–3, §5.6) --------
+# 403 `login_failed` / `setup_token_invalid`: the presented form secret is wrong
+# (one body for every failure kind, T11; 403 rather than a challenge-less 401 —
+# see `exceptions.CredentialRejectedError`). 410 `setup_claimed`: the instance already
+# has an owner. 429 `too_many_attempts`: the failure budget is shut, `params.
+# retry_after` in seconds. 403 `csrf_failed` / `origin_required`: a cookie-borne
+# unsafe request without the session-bound token, or without an Origin/Referer.
+# 422 `password_too_short` / `password_too_long`: `params.min` / `params.max`.
+AUTH_LOGIN_FAILED = "auth.login_failed"
+AUTH_SETUP_TOKEN_INVALID = "auth.setup_token_invalid"
+AUTH_SETUP_CLAIMED = "auth.setup_claimed"
+AUTH_TOO_MANY_ATTEMPTS = "auth.too_many_attempts"
+AUTH_CSRF_FAILED = "auth.csrf_failed"
+AUTH_ORIGIN_REQUIRED = "auth.origin_required"
+AUTH_PASSWORD_TOO_SHORT = "auth.password_too_short"
+AUTH_PASSWORD_TOO_LONG = "auth.password_too_long"
+
+# --- personal access tokens (M6-4, #189 — §5.5 family 6, §5.6) -----------------
+# 401 `bearer_invalid`: an `Authorization` header was presented and failed —
+# unknown, wrong secret, expired, revoked, malformed, or not a bearer at all; one
+# body for every kind (T11). 404 `token_not_found`: no token with that id. 422
+# `token_scope_invalid`: the requested scopes are empty, unknown, or include
+# `instance:admin` (no admin tokens in M6). 422 `token_expiry_in_past`: the
+# requested expiry has already passed.
+AUTH_BEARER_INVALID = "auth.bearer_invalid"
+AUTH_TOKEN_NOT_FOUND = "auth.token_not_found"
+AUTH_TOKEN_SCOPE_INVALID = "auth.token_scope_invalid"
+AUTH_TOKEN_EXPIRY_IN_PAST = "auth.token_expiry_in_past"
+
+# --- browser OIDC (M6-6, #191 — §5.5 family 3, §5.6 open redirect) ---------------
+# 404 `not_in_this_mode`: the route belongs to the other authentication mode
+# (`POST /auth/login` in OIDC mode, `POST /auth/oidc/start` in local mode) — a
+# 404 rather than a 401 so the anonymous fallback does not turn a mode into a
+# challenge. 503 `oidc_provider_unavailable`: discovery or the code exchange at
+# the provider failed; existing sessions and tokens are untouched (§5.6, safe
+# failure). The callback never answers JSON to a browser navigation — its
+# refusals are the `auth_error` words in `services/oidc.py` (`CallbackError`),
+# carried back to the SPA in the query string; they are not envelope codes.
+AUTH_NOT_IN_THIS_MODE = "auth.not_in_this_mode"
+AUTH_OIDC_PROVIDER_UNAVAILABLE = "auth.oidc_provider_unavailable"
+
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"
+
+# --- text a query could not carry: a filter holding a NUL (`services/text.py`) ------
+REQUEST_TEXT_UNSTORABLE = "request.text_unstorable"
 
 # --- parser-stage failures (the 400 the framework raises before any schema
 # --- or service runs: multipart with no boundary, an unreadable body) -------

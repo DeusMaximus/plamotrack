@@ -59,7 +59,7 @@ const RATING_MAXIMUM = 5;
  * because a rating is a quantity the user reads and ar-EG spells those
  * ٤/٥ (#177 review, P3-1). The separator lives in the catalogue so a language
  * can reorder or respell it; the stored rating is untouched. Shared by the
- * Board card and the Retailers table so the two cannot drift. */
+ * Home strip and the Retailers table so the two cannot drift. */
 export function ratingTooltip(rating: number): string {
   return i18n.t("common.ratingOutOf", {
     ratingDisplay: formatNumber(rating),
@@ -135,4 +135,16 @@ export function counted(values: Record<string, unknown>, count: number): Record<
 export function countedPhrase(key: string, count: number, values: Record<string, unknown> = {}): string {
   const t = i18n.t as (key: string, options?: Record<string, unknown>) => string;
   return t(key, counted(values, count));
+}
+
+/** The OpenID Connect provider as a person recognises it — the issuer's host
+ * (`accounts.google.com`) — on the sign-in screens and the sidebar's identity
+ * line (§13.3). An unparseable issuer is shown as given. */
+export function providerName(issuer: string | null): string {
+  if (!issuer) return i18n.t("auth.providerFallback");
+  try {
+    return new URL(issuer).host;
+  } catch {
+    return issuer;
+  }
 }

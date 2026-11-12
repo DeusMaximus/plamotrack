@@ -1,0 +1,289 @@
+/** A list page's state lives in the URL (design §13.4, #232): the filter, the
+ *  sort, the search and the page are query parameters, so a "view all" link
+ *  from Home is a page state and so is a bookmark. The readers below are pure
+ *  and total — anything the URL might hold (missing, empty, garbage, a page
+ *  past the end) reads as the default rather than as an error — and the hooks
+ *  wrap them in `useSearchParams`, dropping a parameter again when it returns
+ *  to its default so a clean URL stays clean, and dropping a filter or sort
+ *  value outside its vocabulary so the URL never names a state the page is
+ *  not showing (#247). Changing a filter, the sort or
+ *  the search resets the page: the page was a position in a list that no
+ *  longer exists. */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigationType, useSearchParams } from "react-router-dom";
+
+import { focusedRecordKeys } from "./focusKey";
+import { useShell } from "./shell";
+
+export const PAGE_PARAM = "page";
+
+/** One of an allowed set, else the fallback — the value axis a link can carry. */
+export function readEnum<T extends string>(
+  raw: string | null,
+  allowed: readonly T[],
+  fallback: T,
+): T {
+  return raw !== null && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
+}
+
+/** A positive page number, else 1. */
+export function readPage(raw: string | null): number {
+  if (raw === null || !/^\d{1,6}$/.test(raw)) return 1;
+  const page = Number(raw);
+  return page >= 1 ? page : 1;
+}
+
+export type Paged<T> = {
+  rows: T[];
+  total: number;
+  /** The page shown — the requested one clamped into the list. */
+  page: number;
+  pages: number;
+  /** 1-based positions of the first and last row shown, 0–0 for an empty list. */
+  from: number;
+  to: number;
+};
+
+/** Rows a page holds: a count, or every row — the phone's (#318, `usePaging`). */
+export type PageSize = number | "all";
+
+/** Rows a page from 768 px up (§13.4). */
+export const PAGE_SIZE = 10;
+
+/** The slice of `rows` for `page`, clamping a page past the end onto the last
+ *  one so a bookmark outlives a shrinking list. Under "all" there is one page. */
+export function paginate<T>(rows: readonly T[], page: number, pageSize: PageSize): Paged<T> {
+  const total = rows.length;
+  const size = pageSize === "all" ? Math.max(1, total) : pageSize;
+  const pages = Math.max(1, Math.ceil(total / size));
+  const shown = Math.min(Math.max(1, page), pages);
+  const start = (shown - 1) * size;
+  const slice = rows.slice(start, start + size);
+  return {
+    rows: slice,
+    total,
+    page: shown,
+    pages,
+    from: total === 0 ? 0 : start + 1,
+    to: total === 0 ? 0 : start + slice.length,
+  };
+}
+
+/** The pager's labels: every page when few, else the ends and a window around
+ *  the current page with `null` for each gap — "1 2 3 4 5 … 11". */
+export function pageWindow(page: number, pages: number): (number | null)[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, index) => index + 1);
+  const around = new Set([1, 2, pages - 1, pages, page - 1, page, page + 1]);
+  if (page <= 4) for (let n = 1; n <= 5; n += 1) around.add(n);
+  if (page >= pages - 3) for (let n = pages - 4; n <= pages; n += 1) around.add(n);
+  const sorted = [...around].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
+  const out: (number | null)[] = [];
+  for (const n of sorted) {
+    const previous = out[out.length - 1];
+    if (typeof previous === "number" && n - previous > 1) out.push(null);
+    out.push(n);
+  }
+  return out;
+}
+
+type Setter<T> = (next: T) => void;
+
+/** Write several parameters in one navigation — `null` removes one. Two
+ *  single-key writes in one handler would not compose: React Router's
+ *  functional updater reads the params of the render, not of the previous
+ *  call, so the second would overwrite the first. `replace` keeps a search
+ *  box's keystrokes out of the history. */
+export function useWriteParams(): (
+  changes: Record<string, string | null>,
+  options?: { replace?: boolean },
+) => void {
+  const [, setParams] = useSearchParams();
+  return useCallback(
+    (changes, options) => {
+      setParams(
+        (current) => {
+          const params = new URLSearchParams(current);
+          for (const [key, value] of Object.entries(changes)) {
+            if (value === null) params.delete(key);
+            else params.set(key, value);
+          }
+          return params;
+        },
+        { replace: options?.replace ?? false },
+      );
+    },
+    [setParams],
+  );
+}
+
+/** Write one parameter, dropping it at its default and resetting the page. */
+function useParamWriter(key: string, fallback: string, replace: boolean): Setter<string> {
+  const write = useWriteParams();
+  return useCallback(
+    (next: string) => {
+      const changes: Record<string, string | null> = { [key]: next === fallback ? null : next };
+      if (key !== PAGE_PARAM) changes[PAGE_PARAM] = null;
+      write(changes, { replace });
+    },
+    [key, fallback, replace, write],
+  );
+}
+
+/** A parameter with a closed vocabulary — a status, a sort.
+ *
+ *  A value outside the vocabulary reads as the default (`readEnum`), and the
+ *  address bar is made to say so: the parameter is dropped, in place, with no
+ *  history entry. Left there, the URL named one state while the page showed
+ *  another, and a bookmark or a shared link carried the mismatch on — which an
+ *  old `/kits?sort=recent` link does since the Kits page stopped offering that
+ *  sort (#247, Greptile P2). The effect re-runs on every change of the query,
+ *  not only of this value — a guard, not a measured need: two strangers in one
+ *  URL are two writes in one commit, which `useWriteParams` warns may not
+ *  compose, and a re-run catches one a sibling write put back. With the query
+ *  left out of the dependencies, list-urls.spec.ts's two-stranger case still
+ *  passed (2026-09-25), so no overwrite has been reproduced. */
+export function useEnumParam<T extends string>(
+  key: string,
+  allowed: readonly T[],
+  fallback: T,
+): [T, Setter<T>] {
+  const [params] = useSearchParams();
+  const write = useParamWriter(key, fallback, false);
+  const writeParams = useWriteParams();
+  const raw = params.get(key);
+  const stranger = raw !== null && !(allowed as readonly string[]).includes(raw);
+  useEffect(() => {
+    if (stranger) writeParams({ [key]: null }, { replace: true });
+  }, [stranger, key, params, writeParams]);
+  return [readEnum(raw, allowed, fallback), write as Setter<T>];
+}
+
+/** A free-text parameter — a search, a series, a retailer id, a category. */
+export function useTextParam(key: string, replace = false): [string, Setter<string>] {
+  const [params] = useSearchParams();
+  const write = useParamWriter(key, "", replace);
+  return [params.get(key) ?? "", write];
+}
+
+/** A search box's text. The box owns its value and the URL follows: React
+ *  Router navigates inside a transition, and a controlled input whose update is
+ *  deferred is restored to its old value once the event ends, so a burst of
+ *  keystrokes kept only the last one or two (Codex #236 P3-2). Every write is a
+ *  `replace` — keystrokes make no history — and any navigation the box did not
+ *  make (Back, Forward, a link) resets the box to what the URL says. */
+export function useSearchParam(key: string): [string, Setter<string>] {
+  const [inUrl, write] = useTextParam(key, true);
+  const [draft, setDraft] = useState(inUrl);
+  const { key: locationKey } = useLocation();
+  const navigationType = useNavigationType();
+  useEffect(() => {
+    // A REPLACE is this box's own write, already in `draft`; a new location
+    // reached any other way carries the value to show.
+    if (navigationType !== "REPLACE") setDraft(inUrl);
+  }, [locationKey, navigationType, inUrl]);
+  const set = useCallback(
+    (next: string) => {
+      setDraft(next);
+      write(next);
+    },
+    [write],
+  );
+  return [draft, set];
+}
+
+/** The page, 1-based; setting 1 removes the parameter. */
+export function usePageParam(): [number, Setter<number>] {
+  const [params] = useSearchParams();
+  const write = useParamWriter(PAGE_PARAM, "1", false);
+  return [readPage(params.get(PAGE_PARAM)), useCallback((next: number) => write(String(next)), [write])];
+}
+
+/** A turn out of the phone shell in progress (#321): the keys of the record to
+ *  keep drawn, and the page it wrote to the URL — "" for page 1, `null` until it
+ *  has written. */
+type Turn = { keys: readonly string[]; wrote: string | null };
+
+/** A list page's paging (#318): ten a page from 768 px, and in the phone shell
+ *  every row — one long scroll under a thumb, with no pager and nothing to
+ *  choose; the search and the filter sheet are what narrow a long list there.
+ *  Decided by the shell alone (§13.7), so a tablet turned across 768 px
+ *  switches live. Under "all" there is one page, and `?page=` is dropped in
+ *  place as soon as it is seen — from a shared link, a bookmark, or a turn into
+ *  the phone shell — rather than left naming a page the list is not showing
+ *  (#247's rule for the URL).
+ *
+ *  **A turn out of the phone shell lands on the focused record's page** (#321).
+ *  Every row was drawn; ten are now. Page 1 would leave the keyboard on row 12
+ *  with nothing carrying its key, and it would fall to `<body>` — so the render
+ *  that crosses the line reads which record the keyboard is on, or will come
+ *  back to from an open dialog (`focusedRecordKeys`), and draws the page that
+ *  holds its row; the URL is then told (`?page=N`, a replace). A row's controls
+ *  carry `<prefix>:<row id>` keys, which is how the row is found. Nothing to
+ *  find — no keyboard on a row, a record this list does not hold — is page 1.
+ *
+ *  `slice` is the rows the page draws; call it during render, once per list. */
+export function usePaging(): {
+  setPage: Setter<number>;
+  slice: <T extends { id: string }>(rows: readonly T[]) => Paged<T>;
+} {
+  const [page, setPage] = usePageParam();
+  const shell = useShell();
+  const all = shell === "phone";
+  const [params] = useSearchParams();
+  const write = useWriteParams();
+  const inUrl = params.has(PAGE_PARAM);
+  const stray = all && inUrl;
+  useEffect(() => {
+    if (stray) write({ [PAGE_PARAM]: null }, { replace: true });
+  }, [stray, write]);
+
+  // The shell this list last rendered in, adjusted during render (React's
+  // pattern for state from the previous render) so the crossing render itself
+  // already draws the right rows: the commit that swaps them is the one that
+  // must hold the focused record's row. Coming out of the phone, whatever
+  // `?page=` says is stale by definition — the phone drops it, and that drop
+  // may still be on its way when the turn renders (a tablet turned back within
+  // a moment; caught at 1 run in 8) — so the turn decides the page, not the URL.
+  const [seen, setSeen] = useState(shell);
+  const [turn, setTurn] = useState<Turn | null>(null);
+  if (seen !== shell) {
+    setSeen(shell);
+    setTurn(seen === "phone" && !all ? { keys: focusedRecordKeys(), wrote: null } : null);
+  }
+  // The page `slice` found the record on this render, for the effect to write.
+  const landed = useRef<number | null>(null);
+  landed.current = null;
+  const slice = <T extends { id: string }>(rows: readonly T[]): Paged<T> => {
+    if (all) return paginate(rows, 1, "all");
+    if (turn !== null) {
+      const index = rows.findIndex((row) => turn.keys.some((key) => key.endsWith(`:${row.id}`)));
+      if (index >= 0) landed.current = Math.floor(index / PAGE_SIZE) + 1;
+      return paginate(rows, landed.current ?? 1, PAGE_SIZE);
+    }
+    return paginate(rows, page, PAGE_SIZE);
+  };
+  // The turn holds until the URL says its page — no `?page=` for page 1 — so a
+  // render in between still draws the row, and a late drop from the phone is
+  // written over rather than obeyed. Asked of the browser's address, not the
+  // router's location: a navigation changes the address at once and reaches
+  // React later, in a transition, so the location a turn renders with can be
+  // one the address has already left (the phone's drop, caught at 2 runs in
+  // 10). It writes once, then stands down when the router agrees — or at once
+  // if the address moves anywhere else: a page chosen, a filter changed, any
+  // navigation but its own is the person's, and theirs wins (Greptile on #322).
+  const pageParam = params.get(PAGE_PARAM);
+  const { key: locationKey } = useLocation();
+  useEffect(() => {
+    if (turn === null) return;
+    const address = new URLSearchParams(window.location.search).get(PAGE_PARAM);
+    if (turn.wrote === null) {
+      const target = landed.current ?? 1;
+      const wanted = target === 1 ? "" : String(target);
+      if ((address ?? "") !== wanted) write({ [PAGE_PARAM]: wanted || null }, { replace: true });
+      setTurn({ ...turn, wrote: wanted });
+    } else if ((address ?? "") !== turn.wrote) setTurn(null);
+    else if ((pageParam ?? "") === turn.wrote) setTurn(null);
+  }, [turn, pageParam, locationKey, write]);
+  return { setPage, slice };
+}

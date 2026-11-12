@@ -22,6 +22,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-slim-bookworm AS runtime
 
+ARG SOURCE_REVISION=working-tree
+ARG RELEASE_VERSION=unreleased
+LABEL org.opencontainers.image.source="https://github.com/DeusMaximus/plamotrack" \
+      org.opencontainers.image.revision=$SOURCE_REVISION \
+      org.opencontainers.image.version=$RELEASE_VERSION
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
@@ -45,4 +51,13 @@ EXPOSE 8000
 
 # Config arrives as real environment variables; app/config.py finds no .env file
 # in here and falls through to them (.dockerignore keeps one from sneaking in).
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+#
+# --no-proxy-headers is load-bearing (design notes §5.6, proxy trust): uvicorn's
+# default middleware rewrites request.client from X-Forwarded-For for any peer
+# on its trust list, and request.client is the raw socket peer that /readyz's
+# `internal` check reads. The app resolves the forwarded address itself, from
+# TRUSTED_PROXIES, into a separate key (app/ingress.py).
+# Pin one worker explicitly: WEB_CONCURRENCY and UVICORN_WORKERS can override
+# uvicorn's default. The in-process global login failure budget requires this
+# pin; adding workers requires a shared store first (design notes §5.6, T8).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--workers", "1"]

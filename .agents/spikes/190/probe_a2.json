@@ -1,0 +1,89 @@
+{
+  "BoundProxy, allowlist [http://localhost:*], registered http://localhost:3000/cb": {
+    "http://localhost:3000/cb": {
+      "status": 302,
+      "location": "<consent>"
+    },
+    "http://localhost:4000/cb": {
+      "status": 302,
+      "location": "<consent>"
+    },
+    "http://localhost:5000/anything-at-all": {
+      "status": 400,
+      "location": null
+    },
+    "http://127.0.0.1:3000/cb": {
+      "status": 400,
+      "location": null
+    },
+    "https://evil.example/cb": {
+      "status": 400,
+      "location": null
+    },
+    "https://evil.example/cb [upstream id]": {
+      "status": 400,
+      "location": null
+    },
+    "http://localhost:9999/x [upstream id]": {
+      "status": 400,
+      "location": null
+    }
+  },
+  "BoundProxy, no allowlist, registered http://localhost:3000/cb": {
+    "http://localhost:3000/cb": {
+      "status": 302,
+      "location": "<consent>"
+    },
+    "http://localhost:4000/cb": {
+      "status": 302,
+      "location": "<consent>"
+    },
+    "http://localhost:5000/anything-at-all": {
+      "status": 400,
+      "location": null
+    }
+  },
+  "consent deny": {
+    "status": 302,
+    "cache": null,
+    "ctype": "",
+    "location": "http://localhost:3000/cb?error=access_denied&state=client-state-123",
+    "www_auth": null,
+    "allow": null,
+    "acao": null,
+    "cookies": [
+      "__MCP_CONSENT_STATE [HttpOnly;Max-Age=60;Path=/;SameSite=lax]"
+    ]
+  },
+  "HEAD discovery": {
+    "status": 200,
+    "cache": "public, max-age=3600",
+    "ctype": "application/json",
+    "location": null,
+    "www_auth": null,
+    "allow": null,
+    "acao": null,
+    "cookies": []
+  },
+  "POST /mcp/revoke (no client_id)": {
+    "status": 401,
+    "cache": null,
+    "ctype": "application/json",
+    "location": null,
+    "www_auth": null,
+    "allow": null,
+    "acao": null,
+    "cookies": [],
+    "body": "{\"error\":\"unauthorized_client\",\"error_description\":\"Missing client_id\"}"
+  },
+  "consent GET cookies (https base)": [
+    "__Host-MCP_CONSENT_STATE [HttpOnly;Max-Age=900;Path=/;SameSite=lax;Secure]"
+  ],
+  "consent approve cookies (https base)": [
+    "__Host-MCP_CONSENT_STATE [HttpOnly;Max-Age=60;Path=/;SameSite=lax;Secure]",
+    "__Host-MCP_CONSENT_BINDING [HttpOnly;Max-Age=900;Path=/;SameSite=lax;Secure]"
+  ],
+  "upstream redirect_uri (https base)": [
+    "https://plamo.example/mcp/auth/callback"
+  ]
+}

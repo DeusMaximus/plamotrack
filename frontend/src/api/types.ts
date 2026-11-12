@@ -14,10 +14,12 @@ export type KitStatus = (typeof KIT_STATUSES)[number];
 /** Wire values; what the user reads comes from the catalogue via
  * `itemTypeLabel` in lib/labels.ts (the runtime list exists so tests can drive
  * every member through that lookup). */
-export const ITEM_TYPES = ["kit", "tool", "consumable", "upgrade", "display"] as const;
+export const ITEM_TYPES = ["kit", "tool", "consumable", "upgrade", "display", "other"] as const;
 
 export type ItemType = (typeof ITEM_TYPES)[number];
-export type CatalogItemType = Exclude<ItemType, "kit">;
+/** The types that name a catalog table. A kit line spawns kits and an `other`
+ *  line (#349) is tracked nowhere, so neither points at one. */
+export type CatalogItemType = Exclude<ItemType, "kit" | "other">;
 
 export interface Kit {
   id: string;
@@ -209,6 +211,10 @@ export interface OrderItem {
   id: string;
   item_type: ItemType;
   catalog_ref_id: string | null;
+  /** What an `other` line bought, in the buyer's words (#349). Set on those
+   *  lines and null on every other: a kit line is named by its kit, a catalog
+   *  line by its catalog item. */
+  description: string | null;
   quantity: number;
   unit_price_minor: number;
   currency_code: string;
@@ -220,6 +226,27 @@ export interface OrderItem {
    * separately cached kit list — that second cache going stale is how a warm page
    * reverted a kit somebody had just changed (#65). */
   kits: Kit[];
+}
+
+/** Something that came off what an order cost (#350): a discount, a promo
+ *  code, a voucher, a gift card. `amount_minor` is positive, in the order's own
+ *  currency; being an adjustment is what makes it a deduction. */
+export interface OrderAdjustment {
+  id: string;
+  label: string;
+  amount_minor: number;
+}
+
+/** One currency's share of what an order cost (#350), derived on the server
+ *  (`services/order_totals.py`) and never recomputed here. Shipping and
+ *  adjustments are zero in every currency but the order's own. */
+export interface OrderTotal {
+  currency_code: string;
+  items_minor: number;
+  shipping_minor: number;
+  adjustments_minor: number;
+  /** items + shipping − adjustments: what was actually paid in this currency. */
+  paid_minor: number;
 }
 
 export interface Order {
@@ -236,7 +263,34 @@ export interface Order {
   /** Null = not marked shipped. Never carries stock semantics (#95). */
   shipped_at: string | null;
   received_at: string | null;
+  /** Free text for what no other field holds (#348). Never blank: the server
+   *  strips it and stores a blank one as null. */
+  notes: string | null;
   items: OrderItem[];
+  /** What came off at the checkout, in entry order (#350). */
+  adjustments: OrderAdjustment[];
+  /** What the order cost and what was paid, one entry per currency, in the
+   *  order the lines first name them (#350). */
+  totals: OrderTotal[];
+  /** Where the order sits (§13.2, #233), derived on the server from the dates
+   *  and the spawned kits — received, in_transit (shipped), pre_ordered (every
+   *  kit still a pre-order) or ordered. Never stored; the Orders filter, Home's
+   *  columns and the summary counts all read this one field. */
+  stage: OrderStage;
+}
+
+/** Mirrors `services/order_stage.py::ORDER_STAGES` — the Orders page's
+ *  `?status=` vocabulary and Home's three *In the mail* columns (the first
+ *  three), in pipeline order. */
+export const ORDER_STAGES = ["pre_ordered", "ordered", "in_transit", "received"] as const;
+export type OrderStage = (typeof ORDER_STAGES)[number];
+
+/** `GET /summary` (§13.2, #233) — mirrors backend/app/schemas/summary.py: the
+ *  collection at a glance, one count per kit status and per order stage, every
+ *  bucket present (an empty one is 0). */
+export interface Summary {
+  kits: Record<KitStatus, number>;
+  orders: Record<OrderStage, number>;
 }
 
 export interface OrderKitDetails {
@@ -271,6 +325,13 @@ export interface OrderItemCreate {
   kit?: OrderKitDetails | null;
   catalog_ref_id?: string | null;
   new_item?: NewCatalogItem | null;
+  /** `other` lines only, and required there (#349). */
+  description?: string | null;
+}
+
+export interface OrderAdjustmentCreate {
+  label: string;
+  amount_minor: number;
 }
 
 export interface OrderCreate {
@@ -282,6 +343,7 @@ export interface OrderCreate {
   tracking_url?: string | null;
   shipping_cost_minor?: number | null;
   currency_code: string;
+  notes?: string | null;
   received?: boolean;
   /** When the delivery actually arrived, for orders entered after the fact (#93).
    *  Offset-aware ISO 8601; requires `received: true`; omitted = now. */
@@ -290,6 +352,7 @@ export interface OrderCreate {
    *  the assertion. On its own it lands spawned kits in_transit. */
   shipped_at?: string;
   items: OrderItemCreate[];
+  adjustments?: OrderAdjustmentCreate[];
 }
 
 /** A line in an order edit: with id = update, without = new; omitted = removed. */
@@ -306,6 +369,7 @@ export interface OrderUpdate {
   tracking_url?: string | null;
   shipping_cost_minor?: number | null;
   currency_code?: string;
+  notes?: string | null;
   /** Correction only: adjusts a receipt date already set (409 on a pending
    *  order — receiving goes through `receiveOrder`). Cannot be nulled. */
   received_at?: string;
@@ -313,6 +377,9 @@ export interface OrderUpdate {
    *  shipping goes through `shipOrder`. Cannot be nulled. */
   shipped_at?: string;
   items?: OrderItemUpsert[];
+  /** Omitted = leave the stored ones alone; a list is the full replacement
+   *  set, and an empty one removes them all (#350). */
+  adjustments?: OrderAdjustmentCreate[];
 }
 
 /** Optional body for the receive call: omit entirely for "it arrived now". */
@@ -500,4 +567,79 @@ export interface InstanceSettingsUpdate {
   date_style?: DateStyle;
   hour_cycle?: HourCycle;
   reference_currency?: string;
+}
+
+/** `GET /auth/session` (§5.5 family 2, #188) — the SPA's bootstrap: whether the
+ *  instance is claimed, whether this browser is the owner, the language/locale
+ *  the setup and login screens render in, and (owner only) the CSRF token that
+ *  travels back in `X-CSRF-Token` on every unsafe request. No version, no
+ *  collection data. Mirrors backend/app/schemas/auth.py. */
+/** `GET /kits?sort=` (§13.4, #232, #247) — mirrors `services/kits.py::KIT_SORTS`:
+ *  `created` oldest first (the API default) and `newest` the reverse, `recent` by
+ *  the status clock newest first, `started` / `completed` by the build's own date
+ *  newest first with undated kits last, `name` alphabetical. */
+export const KIT_SORTS = ["created", "newest", "recent", "started", "completed", "name"] as const;
+export type KitSort = (typeof KIT_SORTS)[number];
+
+/** `GET /orders?sort=` — mirrors `services/orders.py::ORDER_SORTS`: `placed`
+ *  newest order date first (the API default), `recent` by the last status
+ *  change — received, else shipped, else placed, a placement date being its midnight
+ *  in the instance's time zone — newest first. */
+export const ORDER_SORTS = ["placed", "recent"] as const;
+export type OrderSort = (typeof ORDER_SORTS)[number];
+
+export interface AuthSession {
+  state: "unclaimed" | "anonymous" | "owner";
+  interface_language: string;
+  formatting_locale: string;
+  csrf_token: string | null;
+  /** Which way in this instance offers (#191): a password (`local`), or a sign-in
+   *  at the configured OpenID Connect provider (`oidc`). In OIDC mode `unclaimed`
+   *  also means a claimed owner with no binding yet — the setup screen with the
+   *  provider button, and the setup token from the API log. */
+  auth_mode: "local" | "oidc";
+  /** The provider's issuer URL, for naming it on the login screen. OIDC mode only. */
+  oidc_issuer: string | null;
+  /** The owner's display name — the email or name the provider supplied at the
+   *  binding — for the sidebar's identity line (§13.3). Only on the owner's own
+   *  read, and null in local mode, which stores none. */
+  display_name: string | null;
+}
+
+/** `POST /auth/oidc/start` (#191): where the browser goes next. The response also
+ *  sets the login-binding cookie, so the navigation must happen in this tab. */
+export interface OidcStart {
+  authorization_url: string;
+}
+
+/** A personal access token as `GET /auth/tokens` lists it (§5.5 family 6, #189):
+ *  everything but the secret. `token_prefix` is the public id in the middle of
+ *  `ptk_<prefix>_…`, so a row can be matched to a client's configuration;
+ *  `scopes` is the granted set as canonical identifiers. Mirrors
+ *  backend/app/schemas/auth.py. */
+export interface AccessToken {
+  id: string;
+  name: string;
+  token_prefix: string;
+  scopes: TokenScope[];
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
+/** The two scopes a token may hold — never `instance:admin` (§5.5). Write
+ *  implies read, and the server stores a write grant with both. */
+export type TokenScope = "collection:read" | "collection:write";
+
+export interface AccessTokenCreate {
+  name: string;
+  scopes: TokenScope[];
+  /** ISO 8601 with an offset, or omitted for a token that never expires. */
+  expires_at?: string;
+}
+
+/** The mint response: the row plus the raw token, shown once. */
+export interface AccessTokenMinted extends AccessToken {
+  token: string;
 }

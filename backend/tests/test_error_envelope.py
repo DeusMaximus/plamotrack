@@ -241,7 +241,26 @@ async def test_unrouted_paths_keep_the_stock_body(http_client):
 # --- the raise-site audit (#169 review, P3) -------------------------------------
 
 # Codes emitted by handlers in main.py rather than raised by a service.
-_HANDLER_CODES = {"request.validation", "request.body_invalid"}
+# Codes a handler or middleware builds into a response directly rather than
+# raising: FastAPI's two parser-stage handlers in app/main.py, and the ingress
+# guard's two refusals — 421 and 403 — that `_refusal` in app/ingress.py emits
+# before routing, so no exception handler is ever involved (§5.6, M6-1).
+_HANDLER_CODES = {
+    "request.validation",
+    "request.body_invalid",
+    "ingress.host_not_allowed",
+    "ingress.origin_not_allowed",
+    # nginx alone emits this one — `limit_req` on the three OAuth endpoints
+    # (frontend/nginx/default.conf.template); the app has no raise site for it.
+    "ingress.rate_limited",
+    # Rendered, never raised: the pre-routing gate and the protocol guards
+    # answer it before any handler (#221 item 1), and nginx's
+    # `client_max_body_size` answers the same code on the same routes.
+    "ingress.body_too_large",
+    # Rendered by the MCP OAuth registration guard when the client-record
+    # collection is at its cap (#221 item 2); no raise site.
+    "auth.mcp_registrations_full",
+}
 
 # The two bridge helpers whose `Diagnostic(code=exc.code, params={**...})` the
 # AST cannot see through. Each borrows a `DomainError`'s own code and params, so
@@ -303,7 +322,18 @@ def _raise_sites() -> list[tuple[str, str | None, set[str] | None]]:
                 continue
             func = node.exc.func
             name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-            if name not in ("NotFoundError", "ConflictError", "InvalidInputError", "DomainError"):
+            if name not in (
+                "NotFoundError",
+                "ConflictError",
+                "InvalidInputError",
+                "DomainError",
+                "UnauthenticatedError",
+                "CredentialRejectedError",
+                "ForbiddenError",
+                "GoneError",
+                "RateLimitedError",
+                "UnavailableError",
+            ):
                 continue
             code, params_keys = _extract_code_and_params(node.exc)
             sites.append((f"{path.relative_to(app_dir)}:{node.lineno}", code, params_keys))

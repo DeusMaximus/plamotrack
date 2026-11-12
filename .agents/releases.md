@@ -1,0 +1,130 @@
+# Release artifacts (#278)
+
+This is the maintainer procedure. Its first run, v0.5.1-alpha (candidate run
+35789572692, 2026-09-23), passed the candidate and the deployment gate and was
+promoted, then stopped at the draft: GitHub had renamed `.env.example` on upload,
+so the draft's own `SHA256SUMS` failed. That tag and its image tags stay, unmoved
+and unpublished. v0.5.2-alpha is the first release meant for publication. GitHub
+publication and native CI cannot be certified by a local build.
+
+## Candidate, then promotion
+
+1. Complete the version bump and ordinary PR review. The application, pyproject
+   and lockfile versions must agree; `vX.Y.Z-alpha[.N]` is the release spelling.
+2. With the owner's explicit permission for registry publication, dispatch
+   **Release candidate** on the exact release commit, giving that version. It
+   pushes only `candidate-RUN-ATTEMPT` tags to
+   `ghcr.io/deusmaximus/plamotrack-api` and `plamotrack-web`. These are temporary
+   build identifiers, never a supported update channel. The build job's token
+   alone can write packages; the native test jobs have no registry credentials.
+3. **First use:** the owner must make both GHCR packages public in package
+   settings. A newly created package can be private even in a public repository.
+   The anonymous native pulls must succeed before claiming a credential-free
+   install. If this fails, set visibility and dispatch a new candidate.
+4. Wait for the entire candidate run: backend, frontend, and Integration on both
+   native amd64 and arm64 runners. The Integration jobs consume the downloaded
+   Compose bundle and the recorded digests with `--no-build`, run migrations from
+   an empty volume, check running image identities and run the existing
+   authenticated ingress/MCP/log checks. PostgreSQL is pinned to one multi-platform
+   digest, too. A successful pull alone never passes the gate.
+   **Two runner behaviours, observed on the first candidate (run 35789572692):**
+   the absolute bundle `COMPOSE_FILE` written to `GITHUB_ENV` did override the
+   job-level source-build value — the pull/start step's environment shows the
+   bundle's path and the Compose project `release-bundle` — and both native
+   runners, arm64 included, ran `docker compose` under the anonymous Docker config
+   with only `cliPluginsExtraDirs`. Ordinary source PR CI and local environment
+   substitution do not exercise either; if a runner image changes, re-read that
+   step's log rather than assuming.
+5. Download the `release-bundle` artifact for the existing deployment/client gate.
+   Run `deployment_gate.py` **without** `--source-build` against a directory with
+   those release files and its own `.env` (the recipe is "Against a release's
+   files" in `.agents/deployment-gate/README.md`). It will not build. A source checkout
+   gate uses `--source-build` and is evidence about source, not about release
+   digests. Record the observed deployment/client results in the release notes.
+   **Then the update from the previous release's files** — the docs' Updating page
+   is written from it. On the gate host, before resetting it for the candidate:
+   install the previous release's files, claim the instance, give it data, a
+   personal access token and a linked MCP client; then, in the same folder, replace
+   the five files with the candidate's, keep `.env`, `sha256sum -c SHA256SUMS`, and
+   `docker compose up -d --no-build --wait`. Check the version, the session, the
+   token, the data, that `<folder>_db-data` is the same volume (its CreatedAt), and
+   an MCP refresh plus initialize. Its first run was v0.5.2-alpha → v0.6.0-alpha
+   (2026-10-07). The driver has no phase for it: it was scripted by hand against
+   the real API — state built on the old release (a claimed owner, records, a
+   token, and a row the new migration changes), then checked after the swap —
+   and its observations are in v0.6.0-alpha's release notes. The
+   move from a source checkout was rehearsed for v0.4.1 → v0.5.2 (two variants:
+   a new folder with `COMPOSE_PROJECT_NAME`, and the checkout renamed aside with
+   a fresh folder of the old name); re-run it when a release adds a migration or
+   changes the Compose project identity, the volume mapping, or the environment
+   configuration an existing `.env` must carry.
+6. On the owner's approval, create/push the annotated release tag at exactly the
+   candidate commit. Do not move it later. Dispatch **Promote release candidate**
+   **on that tag**, supplying the successful run ID. It verifies the workflow,
+   run result, repository, source commit, tag and file checksums. It copies the
+   tested image indices to version tags and verifies the resulting digests are
+   identical; it attaches the same files to a **draft** release, then downloads
+   the draft's assets and verifies them as a user would. If that read-back fails,
+   the draft stays unpublished: inspect it, delete it, fix the bundle, and gate a
+   new version — the tag and version image tags already exist and are not moved.
+7. Add the reviewed change/data/migration notes and observed deployment/client
+   gate results to that draft. The install commands name the version: update
+   `README.md`'s and the docs site's (Installation, Updating) to the new one, and
+   search both for the previous version string. Then bring the docs site and the
+   README's user-facing parts up to this release: they describe the published
+   release, never `main` (AGENTS.md → Release artifacts), so every user-visible
+   change merged since the previous tag has waited for this step. The list is
+   `.agents/next-release.md`: write the release notes and the docs site's changelog
+   from its **Release note** lines, make the README and docs-site changes its other
+   lines name, and land the docs with the publication, not before it. Check it
+   against `git log <previous-tag>..<tag>` for a user-visible change with no entry,
+   and read the README's own claims (the feature table, the milestone rows) against
+   the release: an entry's "README: nothing" is a guess made when the change merged,
+   and v0.6.0-alpha's said so for the phone import while the feature table still
+   called a phone export-only (Codex, PR #339).
+   Once the release is published, a docs commit on `main` removes the entries it
+   shipped (changes in the tagged commit) and keeps any merged after the tag. Publishing the draft is a separate owner-approved
+   action. Alpha releases retain the prerelease flag.
+
+**Dispatch a new candidate instead of rerunning jobs.** Promotion requires attempt
+1: partial reruns must not combine an old passing gate with newly built artifacts.
+The workflow artifact expires after 30 days; promote while it is retained or gate
+a new candidate. Promotion may resume a partial image-tag copy only when every
+existing version tag still equals its candidate digest. An existing draft/release
+is never overwritten; inspect a partial draft manually before proceeding.
+
+For a manual `release_artifacts.py running` check, use the same working directory,
+`COMPOSE_FILE`, project selection and (for source builds) `PLAMOTRACK_SOURCE_TAG`
+as the stack's startup command. Identity refusals include the resolved Compose
+project and API/migrate/web image references to make a selection mismatch visible.
+
+## Files and version policy
+
+The five release files are `docker-compose.yml`, `env.example`,
+`plamotrack-gunpla.zip`, `release.json` and `SHA256SUMS`. Every name must survive
+GitHub's upload unchanged — letters, digits, `.`, `-` and `_`, beginning and ending
+with a letter or digit — which is why the template is `env.example`, not
+`.env.example` (`test_every_release_file_keeps_its_name_as_a_github_asset`). The JSON records version,
+source SHA, both platforms, API/web/Postgres index digests and payload checksums.
+The API and migrate services name the very same digest. The skill ZIP contains its
+parent folder, excludes untracked files, and is reproducible for the same source.
+The ZIP filename stays install-friendly; the explicit release URL supplies its
+version. The Compose file embeds literal digests, so local image variables cannot
+silently substitute a different build. The `.env` file remains operator-owned.
+
+Bundle verification checks each Compose service against the manifest, including
+API and migrate separately. It requires the Docker Compose CLI (no running daemon)
+to parse the explicit bundle file without interpolation or resolving `.env` files;
+image variables are refused even when the caller's environment matches the digest.
+
+Published version tags and assets are immutable by project policy. Fixes, rebuilt
+base images and dependency updates get a new version and another candidate gate.
+No `latest`, `alpha`, minor-version or other moving channel is published. Never
+prune digests referenced by supported release bundles. Candidate-only tags may be
+removed after their workflow artifacts expire, retaining every promoted digest.
+Existing-install update/backup/restore acceptance remains #285; don't promise a
+rollback across migrations on the strength of a fresh installation test.
+
+Registry administrators can technically change a tag; installs pin digests and the
+workflow refuses to overwrite a conflicting version. This is not a claim that
+GHCR itself enforces immutable tags or that checksums are a signature.

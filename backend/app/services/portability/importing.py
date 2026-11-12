@@ -28,11 +28,10 @@ import io
 import json
 import uuid
 import zipfile
-import zlib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -41,7 +40,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import error_codes
-from app.exceptions import ConflictError, DomainError, InvalidInputError
+from app.auth.principal import Scope
+from app.exceptions import ConflictError, DomainError, ForbiddenError, InvalidInputError
+
+if TYPE_CHECKING:
+    from app.auth.principal import Principal
 from app.models import ItemType, Kit, Order, OrderItem
 from app.models.enums import KitStatus
 from app.schemas.portability import (
@@ -78,6 +81,7 @@ from app.services.portability.exporting import (
 )
 from app.services.portability.spec import (
     CATALOG_TABLE_BY_ITEM_TYPE,
+    INSTANCE_SETTINGS,
     SPEC_BY_KEY,
     TABLE_SPECS,
     ColumnRole,
@@ -85,6 +89,7 @@ from app.services.portability.spec import (
     parse_currency,
     render,
 )
+from app.services.text import has_utf8_form
 from app.services.write_gate import acquire_write_gate
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -94,6 +99,14 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 #: comfortably under 50 MB, so this is headroom, not a working constraint.
 MAX_EXPANDED_BYTES = 100 * 1024 * 1024
 _EXPAND_CHUNK = 64 * 1024
+
+# The `csv` module refuses a field over 131,072 characters by default, and nothing
+# caps a free-text column that low: a `build_notes` the API accepted and the export
+# wrote came back as a 500 (#343). The size limits above are the real bound — a
+# member can't hold more characters than the budget lets it unpack to, nor a single
+# CSV more than the upload limit — so the field limit is raised to meet them. It is
+# process-wide, which is how `csv` keeps it; nothing else in the app reads CSV.
+csv.field_size_limit(max(MAX_EXPANDED_BYTES, MAX_UPLOAD_BYTES))
 MAX_ROWS = 50_000
 
 #: Every catalog table an order line can point at, by spec key. Derived, so a fifth
@@ -139,7 +152,7 @@ _check_stub_placeholders()
 #: archive's settings sheet, if any, is applied to it as an update (#23).
 _PORTABLE_TABLES = (
     "kits, kit_photos, tools, consumables, upgrades, display_items, "
-    "upgrade_applications, retailers, orders, order_items"
+    "upgrade_applications, retailers, orders, order_items, order_adjustments"
 )
 
 _ROW_MARKER = "_source_row"
@@ -173,17 +186,36 @@ def _read_csv_text(raw: bytes, source: str) -> tuple[list[str], list[dict[str, s
             code=error_codes.IMPORT_ENCODING_INVALID,
             params={"source": source, "line": line},
         ) from exc
-    reader = csv.DictReader(io.StringIO(text_content))
-    header = [name.strip() for name in (reader.fieldnames or [])]
+    # `newline=""`, as `csv` asks of its source: under the default a file saved with
+    # bare-CR line endings — the old Mac "CSV (Macintosh)" — raised "new-line
+    # character seen in unquoted field" and answered 500 (#343). The reader then
+    # finds the line endings itself, and a quoted field keeps its own as written.
+    reader = csv.DictReader(io.StringIO(text_content, newline=""))
     rows: list[dict[str, str]] = []
-    for index, raw_row in enumerate(reader, start=2):  # line 1 is the header
-        row = {
-            (key or "").strip(): (value or "") for key, value in raw_row.items() if key is not None
-        }
-        if not any(value.strip() for value in row.values()):
-            continue  # blank spreadsheet filler line
-        row[_ROW_MARKER] = str(index)
-        rows.append(row)
+    try:
+        header = [name.strip() for name in (reader.fieldnames or [])]
+        for index, raw_row in enumerate(reader, start=2):  # line 1 is the header
+            row = {
+                (key or "").strip(): (value or "")
+                for key, value in raw_row.items()
+                if key is not None
+            }
+            if not any(value.strip() for value in row.values()):
+                continue  # blank spreadsheet filler line
+            row[_ROW_MARKER] = str(index)
+            rows.append(row)
+    except csv.Error as exc:
+        # Whatever `csv` still refuses is the uploaded file's shape, so under rule 6
+        # it is a refusal naming the file and the line, not a 500. The line is the
+        # inner reader's: `DictReader.line_num` is copied only once a row comes back,
+        # so on a failed row it still names the end of the one before.
+        line = reader.reader.line_num
+        raise InvalidInputError(
+            f"{source}: line {line} couldn't be read as CSV ({exc}). Open it in a "
+            "spreadsheet, save it as CSV again, and import it again.",
+            code=error_codes.IMPORT_CSV_UNREADABLE,
+            params={"source": source, "line": line},
+        ) from exc
     return header, rows
 
 
@@ -258,24 +290,26 @@ class _ExpansionBudget:
                             params={"limit_mb": self.limit // 1024 // 1024},
                         )
                     chunks.append(chunk)
-        except DomainError:
-            # The budget above raises through here. Re-raised explicitly so it stays
-            # a budget refusal no matter what the tuple below grows to hold.
+        except (DomainError, MemoryError):
+            # The budget above raises through here, and stays a budget refusal. Running
+            # out of memory says something about the server, not the file.
             raise
-        except (
-            zipfile.BadZipFile,
-            EOFError,
-            zlib.error,
-            RuntimeError,
-            NotImplementedError,
-        ) as exc:
-            # Everything `zipfile` throws for a member it cannot hand back. Damage —
-            # a bad CRC, a payload that ends early — is invisible to `ZipFile()`
-            # construction, which only reads the central directory. The other two are
-            # not damage but are just as much the uploader's business: `RuntimeError`
-            # for an encrypted member, `NotImplementedError` for a compression method
-            # this build has no decompressor for. All three are properties of a file
-            # someone uploaded, so under rule 6 none of them is a 500.
+        except Exception as exc:
+            # Everything but those two, on purpose. All this reads is an in-memory
+            # buffer, so whatever is raised here is about the file someone uploaded, and
+            # under rule 6 none of it is a 500. Damage (a bad CRC, a payload that ends
+            # early) is invisible to `ZipFile()`, which only reads the central directory,
+            # and each decompressor reports it in its own words: `zlib.error`, a bare
+            # `OSError` from `bz2`, `lzma.LZMAError`, and on Python 3.14
+            # `compression.zstd.ZstdError`. So do an encrypted member (`RuntimeError`) and
+            # a method this build can't read (`NotImplementedError`). A list of them was
+            # missed three times (#341, #352, Zstandard on #353), and a runtime can add a
+            # method a list has never heard of.
+            #
+            # The manifest goes through here too, so a manifest that cannot be
+            # unpacked refuses the import like any other member (owner's call on
+            # #341, 18/10/2026). Only one that unpacks and then fails to parse is the
+            # "continuing without it" warning in `_read_zip`.
             raise InvalidInputError(
                 f"{entry} could not be unpacked ({exc}) — the archive may be damaged, "
                 "encrypted, or written with a compression method plamotrack can't "
@@ -483,7 +517,10 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
 
     try:
         archive = zipfile.ZipFile(io.BytesIO(content))
-    except zipfile.BadZipFile as exc:
+    except (zipfile.BadZipFile, ValueError, NotImplementedError) as exc:
+        # `BadZipFile` is not all `ZipFile()` raises for a damaged directory (#341):
+        # a name flagged UTF-8 that isn't is a `UnicodeDecodeError`, and a record
+        # asking for a ZIP version past 6.3 is `NotImplementedError`.
         raise InvalidInputError(
             "that zip file is corrupt or not a zip archive",
             code=error_codes.IMPORT_ARCHIVE_INVALID,
@@ -531,9 +568,15 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
                 )
             )
         elif manifest_names:
+            content = budget.read(archive, manifest_names[0])
             try:
-                data = json.loads(budget.read(archive, manifest_names[0]))
-            except (json.JSONDecodeError, ValueError) as exc:
+                data = json.loads(content)
+                # Valid JSON can spell text with no UTF-8 form (`"\\ud800"`). It would go
+                # into the plan and the diagnostics, and only fail as the response left:
+                # after the commit, on an apply (#353).
+                if not has_utf8_form(data):
+                    raise ValueError("it holds text with no UTF-8 form")
+            except (json.JSONDecodeError, ValueError, RecursionError) as exc:
                 warnings.append(
                     Diagnostic(
                         code=error_codes.IMPORT_MANIFEST_UNREADABLE,
@@ -720,6 +763,15 @@ class _Row:
     #: the two are different instructions once there is a stored link to lose
     #: (`_refuse_unresolved_overwrite`).
     unresolved: dict[str, tuple[str, uuid.UUID]] = field(default_factory=dict)
+    #: Minor-unit columns `_apply_money_alternates` filled from a major-unit cell —
+    #: `minor column -> the ALT_MONEY column the sheet actually wrote`. A refusal
+    #: about the stored amount names the cell the human typed (#305).
+    scaled_from: dict[str, str] = field(default_factory=dict)
+    #: Each column's cell as the sheet wrote it — `column -> (header, text)` — under
+    #: the header actually used, a retired alias included. What a refusal quotes, so
+    #: the operator is pointed at their own cell rather than the parsed value (`+7`
+    #: read as 7) or a header the file doesn't contain.
+    written: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     def refuse(self, diagnostic: Diagnostic) -> None:
         """Mark this row ERROR, carrying `diagnostic`. Appends rather than
@@ -924,6 +976,14 @@ class _Planner:
     # -- parsing ---------------------------------------------------------------
 
     def _parse_row(self, spec: TableSpec, raw: dict[str, str]) -> _Row:
+        # Before canonicalising, which forgets them: the header each cell arrived
+        # under, for a refusal that has to name what the sheet says.
+        written = {
+            column.name: (key, cell.strip())
+            for key, cell in raw.items()
+            if (column := spec.column(key)) is not None
+            and (column.name == key or column.name not in raw)
+        }
         # Retired header names become current ones before anything looks at the
         # row, so the rest of this method only ever sees the spec's own vocabulary.
         raw = spec.canonicalise(raw)
@@ -947,6 +1007,7 @@ class _Planner:
                     self.warnings.append(diagnostic)
 
         lone_grouped: set[str] = set()
+        unreadable: set[str] = set()
         for column in spec.columns:
             if column.name not in raw:
                 continue
@@ -974,8 +1035,12 @@ class _Planner:
                     )
                 )
                 values[column.name] = None
+                unreadable.add(column.name)
 
         for column in spec.columns:
+            # A cell that could not be read has had its say: it is not also empty.
+            if column.name in unreadable:
+                continue
             if column.required and column.name in present and values.get(column.name) is None:
                 errors.append(
                     Diagnostic(
@@ -996,6 +1061,7 @@ class _Planner:
             present=present,
             filled=filled,
             lone_grouped=lone_grouped,
+            written=written,
         )
         row.label = spec.label(values)
         row.errors = errors
@@ -1047,14 +1113,40 @@ class _Planner:
             if item_type is None:
                 return None
             table = CATALOG_TABLE_BY_ITEM_TYPE.get(str(item_type))
-            if table is None:  # kit lines don't reference the catalog
+            if table is None:  # kit and `other` lines don't reference the catalog
                 # Dropped, and said out loud for the same reason as any other
                 # discarded reference (#82): the operator filled the cell in. This
                 # one never reaches the `dangling` path below, because there is no
-                # catalog table to fail to find it in — kits are spawned fresh, so
-                # the column means nothing here whatever it holds.
+                # catalog table to fail to find it in — kits are spawned fresh and
+                # an `other` line (#349) is tracked nowhere, so the column means
+                # nothing here whatever it holds.
                 discarded = row.values.get(column.name)
                 row.values[column.name] = None
+                if item_type is ItemType.OTHER:
+                    # Said of the readable mirror as well as the id: on a catalog
+                    # line a name creates the item it names, so a name typed on an
+                    # `other` line was typed expecting something, and nothing here
+                    # will come of it.
+                    stated = [(column.name, discarded)]
+                    alt = self._alt_for(spec, column)
+                    if alt is not None:
+                        stated.append((alt.name, row.values.get(alt.name)))
+                    for field, value in stated:
+                        if value is None:
+                            continue
+                        row.messages.append(
+                            Diagnostic(
+                                code=error_codes.IMPORT_REF_IGNORED_OTHER_LINE,
+                                params={"field": field},
+                                detail=(
+                                    f"{field}: an other line isn't tracked in the "
+                                    f"collection, so it references no catalog item and "
+                                    f"{value} was ignored — what it bought is its "
+                                    f"description"
+                                ),
+                            )
+                        )
+                    return None
                 if discarded is not None:
                     row.messages.append(
                         Diagnostic(
@@ -1235,6 +1327,10 @@ class _Planner:
     def _existing_line_fingerprint(self, item: OrderItem) -> tuple:
         if item.item_type is ItemType.KIT:
             ref_name = item.kits[0].name if item.kits else ""
+        elif item.item_type is ItemType.OTHER:
+            # Named by nothing but its description (#349), so that is the name two
+            # such lines are the same purchase by.
+            ref_name = item.description or ""
         else:
             ref_name = self.catalog_names.get(item.catalog_ref_id, "")
         return self._line_fingerprint(
@@ -1245,6 +1341,8 @@ class _Planner:
         item_type = values.get("item_type")
         if item_type is ItemType.KIT:
             ref_name = values.get("kit_name") or ""
+        elif item_type is ItemType.OTHER:
+            ref_name = values.get("description") or ""
         else:
             ref_name = values.get("catalog_name") or self.catalog_names.get(
                 values.get("catalog_ref_id"), ""
@@ -1681,11 +1779,11 @@ class _Planner:
         case 5).
 
         `update_kit` stamps `status_updated_at` on every status change, because the
-        board's "most recently moved" ordering is read off it. The importer assigns
-        `status` directly, so a merge that moved a kit from `ordered` to `building`
-        left the timestamp reading whenever it last moved for real — the board
-        silently lied about it, and the further back the original move was, the
-        further from the truth.
+        `recent` sort (Home's Backlog strip, `GET /kits?sort=recent`) is read off
+        it. The importer assigns `status` directly, so a merge that moved a kit
+        from `ordered` to `building` left the timestamp reading whenever it last
+        moved for real — the page silently lied about it, and the further back the
+        original move was, the further from the truth.
 
         Deferred rather than filled in here: the value is `datetime.now(UTC)`, and
         `_plan_fingerprint` hashes every value in `row.present`. A clock reading in
@@ -1760,6 +1858,7 @@ class _Planner:
                 self._check_line_quantity(spec, row)
                 self._resolve_all_refs(spec, row, replace_all)
                 self._apply_money_alternates(spec, row)
+                self._check_ranges(spec, row)
                 _clear_orphan_money_currency(spec, row)
                 # Before matching: a row that duplicates a file id must not reach
                 # `_classify` and leave a `remap` entry behind it.
@@ -1916,6 +2015,47 @@ class _Planner:
                 row.unresolved[column.name] = dangling
                 row.messages.append(_dangling_optional_diagnostic(column.name, target, missing))
 
+    def _check_ranges(self, spec: TableSpec, row: _Row) -> None:
+        """Each value against its column's declared domain (`ColumnSpec.minimum` /
+        `maximum`): a rating of 1–5, stock that never goes below 0, a price that is
+        not negative.
+
+        REST and MCP hold these through the request schemas and the database through
+        CHECK constraints, but the importer builds models directly and met neither
+        until flush — so `rating=7` or `quantity_on_hand=-2` previewed as a clean
+        import and then failed the apply with an `IntegrityError`, a 500 naming no
+        row (#305). Asked after `_apply_money_alternates`, so a major-unit amount is
+        judged as the minor-unit value it becomes, and the refusal quotes the cell the
+        sheet wrote: its header (a retired alias included) and its text as typed.
+
+        A line's `quantity` is not here: `_check_line_quantity` already answers for
+        it with the live writers' own codes.
+        """
+        for column in spec.columns:
+            if column.minimum is None and column.maximum is None:
+                continue
+            value = row.values.get(column.name)
+            if not isinstance(value, int):
+                continue  # absent, blank, or already reported as unreadable
+            stated = row.scaled_from.get(column.name, column.name)
+            stated, shown = row.written.get(stated, (stated, render(value)))
+            if column.minimum is not None and value < column.minimum:
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_CELL_BELOW_MINIMUM,
+                        params={"field": stated, "value": shown, "minimum": column.minimum},
+                        detail=f"{stated} is {shown} — it can't be less than {column.minimum}",
+                    )
+                )
+            elif column.maximum is not None and value > column.maximum:
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_CELL_ABOVE_MAXIMUM,
+                        params={"field": stated, "value": shown, "maximum": column.maximum},
+                        detail=f"{stated} is {shown} — it can't be more than {column.maximum}",
+                    )
+                )
+
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
         """Major units fill in only where the canonical minor-unit column is absent
         or blank — §6 keeps integer minor units authoritative.
@@ -1964,6 +2104,7 @@ class _Planner:
                 minor = require_int4(major_to_minor(major, code), f"{column.name}: '{major}'")
                 row.values[column.mirrors] = minor
                 row.present.add(column.mirrors)
+                row.scaled_from[column.mirrors] = column.name
             except (ArithmeticError, ValueError) as exc:
                 row.refuse(
                     Diagnostic(
@@ -2620,10 +2761,10 @@ class _Planner:
                         code=error_codes.IMPORT_KIT_MOVE_TO_CATALOG_LINE,
                         params={"line_id": str(line_id), "item_type": str(item_type)},
                         detail=(
-                            f"order_item_id: order line {line_id} is a {item_type} line, and "
-                            "a kit's order_item_id records which line bought it — a catalog "
-                            "line buys stock, not kits. Point these kits at a kit line, or "
-                            "leave the column blank"
+                            f"order_item_id: order line {line_id} is not a kit line (its "
+                            f"type is {item_type}), and a kit's order_item_id records "
+                            "which line bought it — only a kit line buys kits. Point "
+                            "these kits at a kit line, or leave the column blank"
                         ),
                     ),
                 )
@@ -3299,6 +3440,27 @@ def _stamp_generated_status_changes(execution: ExecutionPlan) -> None:
             row.target.status_updated_at = now
 
 
+def plan_requires_admin(plan: ImportPlan) -> bool:
+    """Whether applying this plan needs `instance:admin` (§5.5 family 6).
+
+    An import reconfigures the instance — and so crosses the admin boundary — in
+    exactly two shapes: a ``replace_all`` wipe, or a plan that UPDATEs the
+    ``instance_settings`` singleton. The privilege follows the **mutation**, not
+    the presence of a settings sheet: a sheet that is unchanged (SKIP) or absent
+    leaves settings untouched and stays ``collection:write`` (Codex, PR #185;
+    §5.5). Read off the re-planned outcome and enforced before any row is
+    written — the wiring lands with the credential mechanisms (#188); the
+    predicate is the foundation the authorization matrix drives now.
+    """
+    if plan.mode is ImportMode.REPLACE_ALL:
+        return True
+    return any(
+        table.table == INSTANCE_SETTINGS.key
+        and any(row.action is RowAction.UPDATE for row in table.rows)
+        for table in plan.tables
+    )
+
+
 async def apply_import(
     session: AsyncSession,
     filename: str,
@@ -3306,6 +3468,7 @@ async def apply_import(
     mode: ImportMode,
     plan_hash: str | None,
     confirm: str | None = None,
+    principal: "Principal | None" = None,
 ) -> ImportResult:
     if mode is ImportMode.REPLACE_ALL and (confirm or "").strip().upper() != "REPLACE":
         raise InvalidInputError(
@@ -3357,6 +3520,19 @@ async def apply_import(
             "the collection changed since you previewed this import, so the preview "
             "no longer matches what would happen — run the preview again",
             code=error_codes.IMPORT_PLAN_STALE,
+        )
+
+    # The admin escalation is read off the re-planned outcome, after the hash
+    # match and before any row is written (§5.5 family 6): a plan that UPDATEs
+    # instance_settings, or a replace_all, needs instance:admin whatever the
+    # mode; a collection-only plan or an unchanged/skipped settings sheet stays
+    # collection:write. `principal is None` is the pre-auth path (auth off, or a
+    # caller that predates this wiring) — the app-level dependency has already
+    # gated entry to collection:write, and the predicate is still tested directly.
+    if principal is not None and plan_requires_admin(plan) and not principal.has_scope(Scope.ADMIN):
+        raise ForbiddenError(
+            "this import changes instance settings, which needs owner access",
+            code=error_codes.AUTH_FORBIDDEN,
         )
 
     if mode is ImportMode.REPLACE_ALL:

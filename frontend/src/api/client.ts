@@ -1,4 +1,8 @@
 import type {
+  AccessToken,
+  AccessTokenCreate,
+  AccessTokenMinted,
+  AuthSession,
   CatalogSearchResult,
   Consumable,
   ConsumableCreate,
@@ -13,18 +17,22 @@ import type {
   InstanceSettingsUpdate,
   Kit,
   KitCreate,
+  KitSort,
   KitStatus,
   KitUpdate,
   Meta,
+  OidcStart,
   Order,
   OrderCreate,
   OrderReceive,
   OrderShip,
+  OrderSort,
   OrderUpdate,
   Retailer,
   RetailerCreate,
   RetailerUpdate,
   StockAdjustment,
+  Summary,
   Tool,
   ToolCreate,
   ToolUpdate,
@@ -77,10 +85,40 @@ async function throwApiError(res: Response): Promise<never> {
   throw new ApiError(res.status, resolveApiError(res.statusText, body));
 }
 
+/** The session-bound CSRF token (#188): obtained from `GET /auth/session` for the
+ *  owner and sent in `X-CSRF-Token` on every cookie-borne unsafe request. Held in
+ *  a module variable rather than storage — it lives exactly as long as the tab,
+ *  the same lifetime as the session cookie it is bound to, and is re-read on every
+ *  session refresh (`setCsrfToken`). The cookie itself is `HttpOnly`, so JS never
+ *  sees or sends it explicitly; `credentials: "same-origin"` is what carries it. */
+let csrfToken: string | null = null;
+
+export function setCsrfToken(token: string | null): void {
+  csrfToken = token;
+}
+
+/** The token the next unsafe request will carry. One per session — an HMAC of
+ *  the session's own token — so it also says *which* owner session a write was
+ *  sent under (#315: an import belongs to the session that sent it). */
+export function csrfTokenInUse(): string | null {
+  return csrfToken;
+}
+
+const UNSAFE = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+function withCsrf(method: string, headers: HeadersInit): HeadersInit {
+  if (csrfToken && UNSAFE.has(method.toUpperCase())) {
+    return { ...headers, "X-CSRF-Token": csrfToken };
+  }
+  return headers;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? "GET";
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     ...init,
+    headers: withCsrf(method, { "Content-Type": "application/json", ...init?.headers }),
   });
   if (!res.ok) {
     await throwApiError(res);
@@ -101,7 +139,12 @@ function patch(body: unknown): RequestInit {
 
 /** Multipart POST — the browser sets its own boundary, so no Content-Type here. */
 async function upload<T>(path: string, form: FormData): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: form });
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
+    headers: withCsrf("POST", {}),
+  });
   if (!res.ok) {
     await throwApiError(res);
   }
@@ -111,7 +154,7 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
 /** Pull a file down through fetch so an API error renders as a message rather
  *  than dumping a JSON error page into a download. */
 export async function downloadFile(path: string, fallbackName: string): Promise<void> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetch(`${API_BASE}${path}`, { credentials: "same-origin" });
   if (!res.ok) {
     throw new ApiError(res.status, i18n.t("api.exportFailed", { status: res.status }));
   }
@@ -128,9 +171,11 @@ export async function downloadFile(path: string, fallbackName: string): Promise<
 }
 
 export const api = {
-  listKits: (filters?: { status?: KitStatus | "" }) => {
+  listKits: (filters?: { status?: KitStatus | ""; sort?: KitSort; limit?: number }) => {
     const params = new URLSearchParams();
     if (filters?.status) params.set("status", filters.status);
+    if (filters?.sort) params.set("sort", filters.sort);
+    if (filters?.limit) params.set("limit", String(filters.limit));
     const qs = params.size > 0 ? `?${params.toString()}` : "";
     return request<Kit[]>(`/kits${qs}`);
   },
@@ -195,12 +240,44 @@ export const api = {
   deleteRetailer: (id: string) => request<void>(`/retailers/${id}`, { method: "DELETE" }),
 
   getMeta: () => request<Meta>("/meta"),
+  /** The collection at a glance (§13.2): Home's heading counts, from one
+   *  server-side snapshot — the same numbers the list pages total. */
+  getSummary: () => request<Summary>("/summary"),
+
+  /** The SPA bootstrap (#188): claim state, whether this browser is the owner,
+   *  the language/locale for the setup and login screens, and the CSRF token. */
+  getAuthSession: () => request<AuthSession>("/auth/session"),
+  /** Claim an unclaimed instance: the setup token from the API log + a password. */
+  setupOwner: (token: string, password: string) =>
+    request<AuthSession>("/auth/setup", post({ token, password })),
+  login: (password: string) => request<AuthSession>("/auth/login", post({ password })),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+  /** OIDC mode (#191): begin a login at the provider. The setup token is needed
+   *  only while the instance reports `unclaimed`; the caller navigates to the URL. */
+  oidcStart: (setupToken?: string) =>
+    request<OidcStart>(
+      "/auth/oidc/start",
+      post(setupToken ? { setup_token: setupToken } : {}),
+    ),
+
+  /** Personal access tokens (#189) — owner-session only (family 6); the mint
+   *  response is the one time the secret is readable. */
+  listTokens: () => request<AccessToken[]>("/auth/tokens"),
+  createToken: (data: AccessTokenCreate) => request<AccessTokenMinted>("/auth/tokens", post(data)),
+  revokeToken: (id: string) => request<void>(`/auth/tokens/${id}`, { method: "DELETE" }),
 
   getSettings: () => request<InstanceSettings>("/settings"),
   updateSettings: (data: InstanceSettingsUpdate) =>
     request<InstanceSettings>("/settings", patch(data)),
 
-  listOrders: () => request<Order[]>("/orders"),
+  listOrders: (filters?: { sort?: OrderSort; pendingOnly?: boolean; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.sort) params.set("sort", filters.sort);
+    if (filters?.pendingOnly) params.set("pending_only", "true");
+    if (filters?.limit) params.set("limit", String(filters.limit));
+    const qs = params.size > 0 ? `?${params.toString()}` : "";
+    return request<Order[]>(`/orders${qs}`);
+  },
   /** One order, fresh — what the editor hydrates from (#67): the list is a
    *  cache exactly as stale as the page is old. */
   getOrder: (id: string) => request<Order>(`/orders/${id}`),
@@ -237,6 +314,29 @@ export const metaQuery = {
   queryKey: ["meta"],
   queryFn: api.getMeta,
   staleTime: Infinity,
+} as const;
+
+/** Home's counts (§13.2, #233). Under the default staleTime like any list; the
+ * writes that move a count invalidate it through `lib/invalidate.ts`. */
+export const summaryQuery = {
+  queryKey: ["summary"],
+  queryFn: api.getSummary,
+} as const;
+
+/** The auth session (#188). Short staleTime so a login/logout elsewhere in the
+ * app reflects quickly; the AuthGate keeps `setCsrfToken` in step with it. */
+export const authSessionQuery = {
+  queryKey: ["auth-session"],
+  queryFn: api.getAuthSession,
+  staleTime: 30_000,
+} as const;
+
+/** The owner's access tokens (#189). Fresh on every visit to the section — a
+ * token minted or revoked from another tab should show without a reload. */
+export const tokensQuery = {
+  queryKey: ["auth-tokens"],
+  queryFn: api.listTokens,
+  staleTime: 0,
 } as const;
 
 /** The instance-settings singleton (§6.1). Same shape and reasoning as

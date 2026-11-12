@@ -1,26 +1,19 @@
-# The full local stack (design notes §8). `docker compose up -d --build --wait`
-# builds it, migrates the database, and leaves an instance on
-# http://127.0.0.1:8080.
-#
-# `--build` is not optional. `api` and `migrate` share an `image:` tag below so
-# they build once and run the same bits — which also means a plain `up` will reuse
-# a stale local image after the source changes, and has run migrations it predated.
-# A fresh LXC on the official Docker packages also failed a first `up` outright,
-# saying it could not find the images in any registry, and the flag fixed that too;
-# why that host refuses to build when a one-service probe on it builds fine is not
-# understood. See AGENTS.md before theorising — several explanations have been
-# written down and retracted.
+# Pull-only stack. Release bundles replace the three image references below
+# with the digests tested for that release. In a source checkout, explicitly add
+# docker-compose.build.yml; the unpublished placeholder cannot install by accident.
 #
 # Only `web` is published. The API and the database stay on the compose network,
-# so an instance has exactly one door, bound to loopback by default. That makes
-# this a convenient local install and NOT an internet deployment — nothing here
-# is authenticated yet (Milestone 6).
+# so an instance has exactly one door, bound to loopback by default. The browser
+# needs the owner login (M6-3), REST scripts and MCP clients need a personal
+# access token (M6-4), and the tested ways to expose that door — a private
+# network, your own reverse proxy, a Cloudflare Tunnel, or Caddy on the same host
+# (the reference, M6-9) — are at https://docs.gunp.la/deployment/overview.
 #
 # Developing on it instead? Add `docker-compose.dev.yml` explicitly; it publishes
 # only Postgres on loopback while the API and frontend run from source.
 services:
   db:
-    image: postgres:16
+    image: ${PLAMOTRACK_DB_IMAGE:-postgres:16}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-plamotrack}
@@ -29,7 +22,18 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-plamotrack}"]
+      # Over TCP on purpose. On a fresh volume the image runs a temporary
+      # server for its init scripts and shuts it down before starting the real
+      # one; that server answers the Unix socket but listens on no TCP address
+      # (the entrypoint's `listen_addresses=''`), so a socket probe let
+      # `up -d db --wait` return between the two and the next command — the
+      # runbook's pg_restore, Alembic — met "the database system is shutting
+      # down" (found by the release gate's restore phase; #228).
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-plamotrack} -d ${POSTGRES_DB:-plamotrack}",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -38,8 +42,7 @@ services:
   # Doing it in the API's entrypoint instead would turn a failed migration into
   # a crash-looping API rather than a stopped deploy with a readable error.
   migrate:
-    build: ./backend
-    image: plamotrack-api:local
+    image: ${PLAMOTRACK_API_IMAGE:-ghcr.io/deusmaximus/plamotrack-api:unreleased}
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     env_file: .env
@@ -53,13 +56,15 @@ services:
         condition: service_healthy
 
   api:
-    build: ./backend
-    image: plamotrack-api:local
+    image: ${PLAMOTRACK_API_IMAGE:-ghcr.io/deusmaximus/plamotrack-api:unreleased}
     restart: unless-stopped
     env_file: .env
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
+      # The API port is unpublished; nginx overwrites this internal header on
+      # every proxied path after resolving TRUSTED_PROXIES for rate limiting.
+      PLAMOTRACK_BUNDLED_INGRESS: "true"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -80,15 +85,24 @@ services:
       start_period: 15s
 
   web:
-    build: ./frontend
-    image: plamotrack-web:local
+    image: ${PLAMOTRACK_WEB_IMAGE:-ghcr.io/deusmaximus/plamotrack-web:unreleased}
     restart: unless-stopped
+    environment:
+      # The ingress builds its Host allowlist from these (frontend/nginx/), the
+      # same keys the API reads from .env for its own copy of the check. Only
+      # These identity/rate-limit inputs reach the web container — it has no
+      # business with the database password.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      WEB_BIND: ${WEB_BIND:-127.0.0.1}
     ports:
-      # The one published port. WEB_BIND is the whole access-control story until
-      # M6 — nothing here authenticates, so whoever can reach this can write to
-      # it. Loopback by default; see "Reaching it from another machine" in
-      # docs/operations.md before widening it, especially on Linux, where a
-      # published port is not covered by the host firewall.
+      # The one published port. WEB_BIND decides who can connect; ALLOWED_HOSTS
+      # decides which names the instance answers to (a request for any other
+      # name is 421). Loopback by default — the right value on your own machine
+      # and behind a TLS proxy on this host; read
+      # https://docs.gunp.la/deployment/overview before widening it, on Linux
+      # where a published port is not covered by the host firewall.
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"
     depends_on:
       api:

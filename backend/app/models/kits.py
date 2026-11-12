@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -24,8 +24,16 @@ class Kit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[KitStatus] = mapped_column(
         text_enum(KitStatus, "kit_status"), default=KitStatus.BACKLOG, index=True
     )
+    # The status clock (§13.4's `recent` reads it across rows). Every *generated*
+    # stamp is the API's own clock — here on create, in `update_kit`, in the
+    # order dispatch on a move — never the database's; a supplied instant (a
+    # backdated ship or receipt, a CSV column) is recorded as given. `server_default` stays for the
+    # schema, but a row written through the ORM takes the Python default: a
+    # create under Postgres's clock beside a move under the API's ranked the pair
+    # by whichever clock ran ahead, a few milliseconds between a host and its
+    # container (#232, found re-running the `recent` tests).
     status_updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )
     rating: Mapped[int | None]
     # When the build started / was declared finished (#94). Nullable, owned by the

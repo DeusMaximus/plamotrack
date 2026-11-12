@@ -1,0 +1,117 @@
+{
+  "format": "plamotrack-scenarios",
+  "version": 1,
+  "note": "Catalog stock: quantity_on_hand is what is physically on hand, and it never goes below zero (§3.3–§3.5, AGENTS.md rule 7). Read by backend/tests/test_scenarios.py AND by plamotrack-ios's domain tests. Add a case here rather than to either suite. The format is .agents/testing-and-review.md → 'Behaviour scenarios'. `why` is for the reader; nothing asserts on it.",
+  "scenarios": [
+    {
+      "id": "adjusting-stock-down-to-zero-is-allowed",
+      "why": "zero is a stock level; only below it is refused",
+      "given": {
+        "consumables": [
+          { "id": "@consumables:cement", "name": "Tamiya Extra Thin Cement", "category": "cement", "quantity_on_hand": 2 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "adjust_stock",
+          "args": { "catalog_id": "@consumables:cement", "delta": -2, "reason": "used up" },
+          "result": { "quantity_on_hand": 0 }
+        }
+      ],
+      "then": { "tables": { "consumables": [{ "id": "@consumables:cement", "quantity_on_hand": 0 }] } }
+    },
+    {
+      "id": "adjusting-stock-below-zero-is-refused",
+      "why": "stock never goes negative: using three of two is a mistake in the request, not a debt",
+      "given": {
+        "tools": [{ "id": "@tools:blades", "name": "Spare blades", "category": "cutting", "quantity_on_hand": 2 }]
+      },
+      "steps": [
+        {
+          "op": "adjust_stock",
+          "args": { "catalog_id": "@tools:blades", "delta": -3 },
+          "expect": {
+            "refused": {
+              "kind": "conflict",
+              "code": "stock.insufficient",
+              "params": { "name": "Spare blades", "on_hand": 2, "requested": 3 }
+            }
+          }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "adjusting-stock-up-adds-to-what-is-there",
+      "why": "an adjustment is a delta, never a new total",
+      "given": {
+        "display_items": [
+          { "id": "@display_items:base", "name": "Action Base 2", "category": "stand", "quantity_on_hand": 1 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "adjust_stock",
+          "args": { "catalog_id": "@display_items:base", "delta": 3 },
+          "result": { "quantity_on_hand": 4 }
+        }
+      ],
+      "then": { "tables": { "display_items": [{ "id": "@display_items:base", "quantity_on_hand": 4 }] } }
+    },
+    {
+      "id": "applying-an-upgrade-spends-its-stock",
+      "why": "§3.6: an application records which kit took the parts, and the parts leave stock",
+      "given": {
+        "upgrades": [
+          { "id": "@upgrades:thrusters", "name": "Metal thruster set", "manufacturer": "Madworks", "quantity_on_hand": 2 }
+        ],
+        "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "MG", "scale": "1/100", "status": "building", "status_updated_at": "2026-03-01T00:00:00+00:00" }]
+      },
+      "steps": [
+        {
+          "op": "apply_upgrade",
+          "args": { "upgrade_id": "@upgrades:thrusters", "kit_id": "@kits:zaku", "quantity": 2 },
+          "as": "@upgrade_applications:new"
+        }
+      ],
+      "then": {
+        "tables": {
+          "upgrades": [{ "id": "@upgrades:thrusters", "quantity_on_hand": 0 }],
+          "upgrade_applications": [
+            {
+              "id": "@upgrade_applications:new",
+              "upgrade_id": "@upgrades:thrusters",
+              "kit_id": "@kits:zaku",
+              "quantity_used": 2,
+              "applied_at": "@now"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "applying-more-of-an-upgrade-than-is-on-hand-is-refused",
+      "why": "the same floor as adjust_stock: an application can't spend parts that aren't there",
+      "given": {
+        "upgrades": [
+          { "id": "@upgrades:decal", "name": "Waterslide decal", "manufacturer": "Delpi", "quantity_on_hand": 1 }
+        ],
+        "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "MG", "scale": "1/100", "status": "building", "status_updated_at": "2026-03-01T00:00:00+00:00" }]
+      },
+      "steps": [
+        {
+          "op": "apply_upgrade",
+          "args": { "upgrade_id": "@upgrades:decal", "kit_id": "@kits:zaku", "quantity": 2 },
+          "expect": {
+            "refused": {
+              "kind": "conflict",
+              "code": "stock.insufficient",
+              "params": { "name": "Waterslide decal", "on_hand": 1, "requested": 2 }
+            }
+          }
+        }
+      ],
+      "then": "unchanged"
+    }
+  ]
+}

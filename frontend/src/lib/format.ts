@@ -166,6 +166,25 @@ export function formatDate(iso: string): string {
   return formatDateWith(formatPreferences(), iso);
 }
 
+/** Whether the instance writes this date in digits ("27/08/2026", "2026-08-27")
+ *  rather than in words ("27 Aug 2026", "Thursday, 27 August 2026",
+ *  "2026年8月27日木曜日") — the date style and the locale are settings (§6.1), so
+ *  a cell cannot know which it will hold. A table cell keeps a date in digits on
+ *  one line with what follows it ("27/08/2026 · 9 d", #120) and lets one in words
+ *  wrap: held to a line, the long styles put list tables past their boxes and the
+ *  row's edit control off the edge (#258; Codex #266, finding 2).
+ *
+ *  A heuristic, and named as one (round 2): ten characters is as long as a
+ *  numeric date gets in the locales this was run in, and the list pages' fold
+ *  lines were measured with those; anything longer has spaces to break at, or is
+ *  CJK and breaks anywhere. A locale whose numeric date is longer ("2026. 8. 27.")
+ *  is classed as words and may wrap where it need not; one whose worded date is
+ *  ten or fewer ("2026年8月27日") is held to a line, and is short. Neither is an
+ *  overflow — the containment tests are what hold the tables, not this. */
+export function dateInDigits(iso: string): boolean {
+  return formatDate(iso).length <= 10;
+}
+
 export function formatDateTimeWith(prefs: FormatPreferences, iso: string): string {
   const value = new Date(iso);
   const hourCycle =

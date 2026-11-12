@@ -1,4 +1,4 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * #126 — the display-items tab and the order line that stocks it.
@@ -24,7 +24,8 @@ import { expect, request, test } from "@playwright/test";
  * type that shows category *and* manufacturer *and* scale at once.
  */
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
+import { openListAt } from "./listRows";
 const suffix = Date.now().toString(36);
 const STAND = `E2E Stand ${suffix}`;
 const SCENERY = `E2E Diorama Set ${suffix}`;
@@ -47,7 +48,7 @@ test("the Display tab adds an item, and blank optional fields store as null", as
   await page.getByRole("button", { name: "Display", exact: true }).click();
 
   // The noun, not the tab id — "+ Add display item", never "+ Add display-item".
-  const add = page.getByRole("button", { name: "+ Add display item" });
+  const add = page.getByRole("button", { name: "Add display item" });
   await expect(add).toBeVisible();
   await add.click();
 
@@ -59,10 +60,12 @@ test("the Display tab adds an item, and blank optional fields store as null", as
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
-  // `exact`, because the row's stepper buttons carry the name too ("Remove one …").
+  // On whichever page its name puts it (#317); `exact`, because the row's
+  // stepper buttons carry the name too ("Remove one …").
+  await openListAt(page, "/inventory?tab=display-items", STAND);
   await expect(page.getByRole("cell", { name: STAND, exact: true })).toBeVisible();
 
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const items = (await (await api.get("/display-items")).json()) as DisplayItem[];
   const stored = items.find((i) => i.name === STAND);
   expect(stored, "the item reached the API").toBeTruthy();
@@ -77,9 +80,9 @@ test("the Display tab adds an item, and blank optional fields store as null", as
 
 test("an order line creates a display item and stocks it on receive", async ({ page }) => {
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
 
-  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "New retailer" }).click();
   await page.getByPlaceholder("New retailer name").fill(SHOP);
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByPlaceholder("New retailer name")).toHaveCount(0);
@@ -88,7 +91,7 @@ test("an order line creates a display item and stocks it on receive", async ({ p
 
   // The picker's create-new branch: display is the only type showing all three.
   await page.getByPlaceholder("Search display items…").fill(SCENERY);
-  await page.getByRole("button", { name: `＋ Create new display item “${SCENERY}”` }).click();
+  await page.getByRole("button", { name: `Create new display item “${SCENERY}”` }).click();
   await page.getByPlaceholder(/^Category \(required\)/).fill("scenery");
   await page.getByPlaceholder("Manufacturer", { exact: true }).fill("Tomytec");
   await page.getByPlaceholder("Scale, e.g. 1/144").fill("1/144");
@@ -97,7 +100,7 @@ test("an order line creates a display item and stocks it on receive", async ({ p
   await page.getByRole("button", { name: "Record order" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   let items = (await (await api.get("/display-items")).json()) as DisplayItem[];
   let created = items.find((i) => i.name === SCENERY);
   expect(created, "the line created the catalog row").toBeTruthy();
@@ -122,7 +125,7 @@ test("an order line creates a display item and stocks it on receive", async ({ p
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const shop = retailers.find((r) => r.name === SHOP);
   if (shop) {

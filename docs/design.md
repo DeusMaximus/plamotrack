@@ -1,6 +1,6 @@
 # plamotrack — Design Notes
 
-**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 29/08/2026
+**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 20/09/2026
 
 ---
 
@@ -52,13 +52,15 @@ else's UI. This is the same app, owned outright.
 
 ### 1.1 Goals
 
-- ✅ A drag-and-drop Kanban board for build status (Pre-ordered → Ordered → In Transit
-  → Backlog → Building → Complete), not a static view.
+- ✅ Build status at a glance (Pre-ordered → Ordered → In Transit → Backlog → Building
+  → Complete), not a static view.
   *(Revised 06/08/2026: the original design had separate In Hand and Backlog statuses.
   They turned out to be the same pile with two names, and were merged — Backlog now
-  means "in hand, not started" and occupies In Hand's old pipeline position. The board
-  defaults to a Build view of Backlog/Building/Complete; an Orders view shows the
-  ordering states with everything received rolled into one aggregate column.)*
+  means "in hand, not started" and occupies In Hand's old pipeline position. Revised
+  again 10/09/2026, #233: the drag-and-drop Kanban board this goal was first met with
+  was drawn for a dozen kits and scrolled past usefulness at fifty; Home replaced it
+  (§13.2) — the bench, the backlog and the shelf as capped strips with true counts, the
+  orders in the mail as cards, and every status change through the kit dialog.)*
 - ✅ Full CRUD via the web UI, without touching a database or an app-builder tool
 - ✅ MCP-native: agents can add orders, update build status, and adjust stock without a
   human touching the UI
@@ -70,10 +72,12 @@ else's UI. This is the same app, owned outright.
   source catalogue and fallback, reviewed language contributions, locale-aware
   presentation, a Settings page, structured REST/import diagnostics, and logical RTL
   layout utilities. No non-English translation is required to complete the foundation
-- 🔨 **Planned (M6)** Authenticated remote access for the web UI, REST API, and MCP,
-  including OAuth-compatible MCP clients and a tested VPS deployment path
-- 🔨 **Planned (M6.1)** Dual-era MCP compatibility, adding `2026-07-28` without
-  dropping clients on the current protocol generation
+- ✅ **M6** Authenticated remote access for the web UI, REST API, and MCP — a single
+  owner login (password or OpenID Connect), scoped personal access tokens,
+  OAuth-compatible MCP clients, and a tested TLS deployment path (§5; v0.3.0-alpha,
+  08/09/2026)
+- ✅ Dual-era MCP compatibility: `2026-07-28` beside the handshake era, from one
+  endpoint, negotiated per request (§7.1; M6.1, v0.4.1-alpha, 15/09/2026)
 - 🔨 **Planned (M7)** Photo gallery per kit
 - 🔨 **Planned (M8)** A public-facing, read-only showcase page suitable for linking
 - Genuinely reusable by someone who isn't the author — this is a public repo, not a
@@ -374,6 +378,66 @@ a gamble that remembering which ones pack properly has real value.
 | currency_code | text | ISO 4217 |
 | shipped_at | timestamp (nullable) | null = not marked shipped; a pure timeline record plus the in_transit kit advance — **never** a stock proxy (#95) |
 | received_at | timestamp (nullable) | null = pending (not yet arrived) — see §3.9 |
+| notes | text (nullable) | what no other field holds about this purchase: how it was paid, a substitution, a partial refund, a damage claim (#348). Read by nothing but the person reading it, so no state refuses an edit to it. Every writer stores what the importer's `parse_text` would read (`services/text.stripped_or_none`): no surrounding whitespace, blank is null, so its own export re-imports as no change (rule 10). Not on the starter sheet, whose rows are lines and would each have to say it |
+
+### 3.8a `order_adjustments` ✅ (#350, 12/11/2026)
+
+| Field | Type | Notes |
+|---|---|---|
+| id | uuid | |
+| order_id | uuid FK | cascades with the order |
+| label | text | what it was, in the buyer's words: "Gift card", "SPRING10". Never blank |
+| amount_minor | int | positive, in the order's own `currency_code`. Being an adjustment is what makes it a deduction |
+| position | int | where it sits among the order's adjustments, lowest first. Not unique; `id` breaks a tie |
+
+A discount, a promo code, a voucher or a gift card applied to an order. Before this
+there was nowhere to put one, so an order could not say what was paid, and the
+workaround was to lower a line's price until the sum came out. That corrupts per-kit
+price history and retailer comparisons, and an even split gives the cheaper kit the
+bigger cut. So:
+
+- **It belongs to the order, never to a line.** `unit_price_minor` stays what the shop
+  charged for each thing. Nothing allocates an adjustment across lines. If a per-kit
+  effective cost is ever wanted, allocate at read time, in proportion to line value,
+  with largest-remainder rounding so the shares sum exactly, and store none of it.
+- **A list, not a single discount field,** because shops stack them: a promo code and
+  a gift card on one order.
+- **What was paid is derived, never stored.** Every order read carries `totals`
+  (`services/order_totals.py`): per currency, the lines at shelf price, shipping,
+  adjustments and `paid_minor`. An edit to a line cannot leave a stale total behind.
+  Per currency because an order is: a line has its own `currency_code` (§6), nothing
+  here converts, and shipping and adjustments are in the order's currency alone.
+- **Adjustments never exceed what they came off** (owner's call, 05/11/2026): together
+  they may not come to more than the order's lines *in the order's currency* plus its
+  shipping, so `paid_minor` is never negative. Lines in another currency do not count:
+  a deduction in dollars cannot come off a price in yen. It is one predicate
+  (`order_totals.adjustment_overrun`) asked of the order **as it will be stored**, by
+  `create_order` and `update_order` and by the importer's preview (§12.5a), since a
+  cheaper line, a removed line, a dropped shipping cost and a changed order currency
+  break it without the adjustments being mentioned. The database cannot hold it; it
+  spans three tables. All three writers refuse with `order.adjustments_exceed_total`.
+- **A stated list replaces the set.** On an update, omitted means leave them, a list
+  is all of them in order, and an empty list removes them. A list that restates what
+  is stored writes nothing, so the rows keep their ids and the next export is the last
+  one (rule 10). The order editor sends the list only when it was touched (the #358
+  class), or when the order's currency was, since the amounts on screen are in the
+  currency now chosen.
+- **No balances.** Nothing tracks a card's remaining value, its expiry, or which
+  order drew it down.
+- **Spend reporting is unchanged** (owner's call, 05/11/2026). There is none today:
+  `get_summary` counts kits and orders, not money. When there is, it reads shelf
+  prices, not what was paid.
+- **In the archive** as `order_adjustments.csv`, one row each, matched without an id
+  on order + label. The amount is not part of the match, so a corrected amount updates
+  the row and cannot land as a second deduction; two adjustments under one label on
+  one order need ids. The `export_version` stays 2: no release was published
+  between #349 and this, so no reader of version 2 exists that lacks the file, and a
+  version-1 reader already refuses the archive.
+
+One thing the Orders list does not do: the converted sub-line under an order's total
+(§6) is still the lines' entry-time snapshots summed, at shelf price. With an
+adjustment on a foreign-currency order it sits under a paid total and is not reduced
+by it, because an adjustment has no snapshot of its own.
 
 ### 3.9 `order_items`
 
@@ -383,8 +447,9 @@ The dispatch point between orders and the catalog tables.
 |---|---|---|
 | id | uuid | |
 | order_id | uuid FK | |
-| item_type | enum | kit / tool / consumable / upgrade / display |
-| catalog_ref_id | uuid (nullable) | points at a row in one of the catalog tables (null for kit-type, since kits are spawned fresh) |
+| item_type | enum | kit / tool / consumable / upgrade / display / other |
+| catalog_ref_id | uuid (nullable) | points at a row in one of the catalog tables (null for kit-type, since kits are spawned fresh, and for `other`, which is tracked nowhere) |
+| description | text (nullable) | what an `other` line bought; set on those lines and on no others (#349) |
 | quantity | int | **semantics differ by item_type** — see below |
 | unit_price_minor | int | |
 | currency_code | text | ISO 4217 |
@@ -399,6 +464,32 @@ to be explicit in code and not merely documented:
 - `item_type = tool/consumable/upgrade/display` → quantity **increments**
   `quantity_on_hand` on the referenced catalog row, **when the order is received** —
   not at entry
+- `item_type = other` → quantity is **only a number on the receipt**: nothing is
+  created and nothing is counted, at entry or on receipt
+
+**Untracked lines (#349, 12/11/2026).** An order used to hold only things the
+collection tracks, so a mixed basket (a kit and a magazine, a tool and a carry bag)
+could not be entered as bought, and its total never matched the receipt. An `other`
+line is the rest of the basket: a `description`, a quantity and a price. It dispatches
+nothing, so it is legal in every state a kit line is (it may join an order that is
+already received, and an import may receive an order whose only non-kit lines are
+`other` ones), and the stock rules read "a line that points at a catalog row", never
+"a line that is not a kit". Three things were decided with it:
+
+- **No conversion.** `item_type` stays immutable in both directions. Something bought
+  untracked is tracked later by removing the line and adding a kit or catalog line.
+  The order editor already does that when the type select changes.
+- **The description belongs to the type.** Required on an `other` line, refused on
+  every other, by the request schema, the importer and two CHECK constraints. A kit
+  line is named by its kits and a catalog line by its catalog item; a third,
+  free-text name on those would be one more thing to drift.
+- **It counts toward the order's total and toward nothing else.** There is no spend
+  reporting today (`get_summary` counts kits and orders, not money). When there is,
+  untracked lines stay out of collection spend (owner's call, 05/11/2026).
+
+It is also why the archive's `export_version` is 2: a version-1 reader meets an
+`item_type` outside its vocabulary and refuses the row cell by cell, which blocks the
+import without saying the reader is simply older than the archive (§12.1).
 
 **Order lifecycle (revised 06/08/2026).** Orders are pending → received. The original
 design incremented stock at entry, which meant plamotrack would cheerfully report five
@@ -589,9 +680,14 @@ Standard CRUD plus a few purpose-built endpoints.
 
 **Built ✅**
 
-- `GET/POST /kits`, `GET/PATCH/DELETE /kits/{id}` — PATCH handles Kanban drag (status
-  change). Order-spawned kits refuse direct deletion (409) — undo happens at the order
-  line, so purchase records and the collection can't drift apart
+- `GET/POST /kits`, `GET/PATCH/DELETE /kits/{id}` — PATCH is the status change too
+  (the kit dialog's status field, an agent's `update_kit_status`). Order-spawned kits
+  refuse direct deletion (409) — undo happens at the order line, so purchase records
+  and the collection can't drift apart
+- `GET /summary` (#233, §13.2) — kits per status and orders per stage from one
+  `REPEATABLE READ` snapshot; Home's heading counts, and the totals the list pages
+  show behind its *view all* links. Every order row carries a derived `stage`
+  (`received`, `in_transit`, `pre_ordered`, `ordered`) from the same predicate
 - `GET /kits/series` — distinct series spellings, most frequent first, for the
   select-or-create control
 - `GET/POST /tools|/consumables|/upgrades|/display-items` + `PATCH/DELETE /{id}` on each — deletes are
@@ -637,6 +733,10 @@ Standard CRUD plus a few purpose-built endpoints.
 - `GET /kits/{id}/photos`, `POST /kits/{id}/photos` (multipart upload) — **M7**, blocked
   on the §9.2 storage decision. Not implemented; the `kit_photos` table exists but
   nothing writes to it
+- `GET /auth/session`, `POST /auth/setup`, `POST /auth/login`, `POST /auth/logout`,
+  `/auth/oidc/*`, `/auth/tokens*` — **M6**, the route families in §5.5. The same
+  milestone moves `GET /meta`, `/openapi.json` and the docs pages behind
+  `collection:read` and hides `/readyz` from the ingress. Not implemented
 - `GET /public/kits`, `GET /public/kits/{id}` — **M8**, read-only, no auth, powers the
   showcase page (§5). Not implemented; there is currently no `/public/*` namespace at all
 
@@ -648,33 +748,1232 @@ timeline is planned, only that the columns are cheap now and expensive to retrof
 
 ---
 
-## 5. Auth, Remote Access & Public Mode 🔨 **Planned (M6 + M8) — none of this exists yet**
+## 5. Auth, Remote Access & Public Mode ✅ **Built (M6, v0.3.0-alpha, 08/09/2026) — threat model recorded 02/09/2026; §5.9 items 1–11 shipped between 03/09 and 08/09/2026 (#186, #187, #188 + #204, #189, #190, #191, #192, #193, #194, #195, #221); the public read-only mode is 🔨 Planned (M8)**
 
-Nothing in this section is implemented. Today every endpoint is unauthenticated and
-every endpoint can write. See §10 for what that means for running an alpha instance.
+Every item of §5.9 is built and shipped as v0.3.0-alpha (08/09/2026): the Host/Origin
+guard, the ingress topology and the proxy-trust posture (#186); the principal model,
+the route policy registry and the default-deny dependency (#187); the owner's setup,
+login, session cookie and CSRF controls, with the shipped app enforcing (#188), and
+the pre-routing gate that closes family 13 (#204); personal access tokens as the
+bearer on REST and MCP with per-tool scope (#189); the compatibility spike (#190);
+browser OIDC (#191); MCP OAuth (#192); audit, rate limiting and log hygiene (#193);
+the reference TLS deployment and the operations rewrite (#194); the release itself
+(#195); and the availability bounds the release candidate's security scan asked for
+(#221). §5.1 records the pre-M6 state the model started from, and §10 says
+what running an alpha means. The rest of the section is the M6 threat model and route
+authorization matrix (#29): the actors, the trust boundaries, the deployment modes
+supported, what every route family requires from whom, which layer enforces it, how
+it fails, and the tests that had to exist before the documentation could recommend
+widening `WEB_BIND` — every one of which now exists and passes (§5.8). The credential
+architecture — which login mechanisms, the token format, the OAuth machinery — was
+#30's decision, closed with the release, and appears here only where the threat
+model constrains it. What this section still holds as 🔨 **Planned** is M8's public
+read-only mode: family 12 in §5.5, absent until then.
 
-The intended shape has three genuinely separate access surfaces, not a UI toggle over
-one path:
+Why this exists before any code: the SPA, the REST API and the MCP endpoint share one
+ingress and one process, so a login screen bolted onto the SPA would leave every other
+door open. The matrix in §5.5 is what an implementation issue is checked against, and
+the enumeration test in §5.8 is what stops a new router or tool quietly landing outside
+it.
 
-- **Browser admin path** — an authenticated, single-owner web session. The schema does
-  not preclude multi-user later, but v1 has exactly one owner. **M6.**
-- **REST and MCP path** — bearer-token authentication with separate read and write
-  scopes. Remote MCP clients authenticate via the MCP OAuth contract; browser sessions
-  do not double as MCP credentials. **M6.**
-- **Public/read path** — `/public/*` routes, no auth, and no write capability reachable
-  from them at all. Genuinely separate route handlers, not client-side filtering over
-  the same ones. **M8.**
+### 5.1 What exists today (02/09/2026)
 
-That separation must be enforced at both the application and ingress layers. Separate
-`/public/*` handlers are necessary, but they do not make a showcase safe if the same
-public reverse proxy also exposes unauthenticated `/kits`, `/orders`, or `/mcp`. M6
-protects the admin surfaces before M8 makes the instance deliberately public.
+Recorded so the matrix reads as a diff against reality rather than a description of it.
 
-MCP tools always operate through the authenticated path — no public or anonymous MCP
-access. The implementation should use a maintained OAuth/OIDC provider or proxy rather
-than inventing an authorization server inside plamotrack. A remote deployment also needs
-token expiry and revocation, host/origin validation, rate limiting, and useful audit
-logs; "a login page exists" is not the completion criterion.
+> **Superseded in part by M6-1 (#186, 03/09/2026).** The first three bullets below
+> describe the tree before item 1 of §5.9 shipped. Since then: `app/ingress.py`
+> derives one `IngressPolicy` from `PUBLIC_BASE_URL`, `ALLOWED_HOSTS`,
+> `ALLOWED_ORIGINS`, `TRUSTED_PROXIES` and `WEB_BIND`; the REST middleware and
+> FastMCP's guard in strict mode both read it (421 / 403 with the envelope);
+> `redirect_slashes=False` on both routers; uvicorn runs with `--no-proxy-headers`
+> and the forwarded address lands in `request.state.client_address`; `/readyz`
+> answers the raw loopback peer only; nginx is an envsubst template
+> (`frontend/nginx/`) with a default-deny 421 server whose names come from the same
+> keys, the `/api/mcp`, `/api/.well-known`, `/api/openapi.json` and `/api/readyz`
+> rejections ahead of the generic location, exact root `.well-known` locations, the
+> security headers and a CSP for the bundle, forwarding `$http_host` so the app's
+> same-origin rule sees the port. The remaining bullets — no authentication, four
+> writers with no principal, the incidental cross-origin picture — still describe the
+> code.
+
+- **One process, one port.** FastAPI serves the REST routers at `/` and FastMCP is
+  mounted as an ASGI sub-application at `/mcp` (§2). There is no middleware of any
+  kind: no authentication, no CORS policy, no Host or Origin validation, no rate
+  limiting, no security headers. FastMCP 3.4.5 ships a Host/Origin guard, but it is
+  opt-in (`host_origin_protection` defaults to `False`) and `mcp.http_app()` is
+  called without it (#39). FastAPI's generated `/openapi.json`, `/docs`, `/redoc` and
+  `/docs/oauth2-redirect` are plain Starlette routes installed with `add_route`; an
+  app-level `dependencies=[…]` never runs for them (probed on the pinned FastAPI
+  0.141.1: 401 with one dependency call for an ordinary route, 200 with zero calls for
+  all four), and `/api/docs/oauth2-redirect` — Swagger's unused OAuth helper — answers
+  200 HTML through the ingress today. The route table declares nothing about exposure:
+  15 top-level entries, eight of them FastAPI's `_IncludedRouter` wrappers without a
+  `path`, expanding to 57 effective routes plus the MCP mount; `/docs` and
+  `/openapi.json` are the same route type with the same flags yet have different
+  external spellings, and so are `/healthz` and `/readyz` (Codex's findings 8 and 9 on
+  PR #185).
+- **Redirects are request-derived.** Both routers keep Starlette's default
+  `redirect_slashes=True`, and Starlette 1.4.0 builds that redirect's `Location` from
+  the request's scheme and Host, query string included: `GET /kits/` answers 307 to
+  `http://<Host>/kits`, which through the ingress drops the `/api` prefix and lands on
+  the SPA (probed in-process, 03/09/2026; Codex's finding 6 on PR #185).
+- **The packaged ingress is nginx** (`frontend/nginx.conf`), the only published
+  service. `server_name _` accepts any Host and forwards it verbatim. `location /` is
+  the SPA fallback, so *any* unknown path — `/.well-known/anything` included — returns
+  `index.html` with a 200. `location /api/` proxies to the API with the prefix
+  stripped, which makes `/api/docs`, `/api/redoc`, `/api/healthz` and `/api/readyz`
+  reachable from outside; `location = /openapi.json` proxies the schema at the root.
+  Because that `/api/` rewrite is generic, `/api/mcp/` reaches the MCP handler and
+  returns a fresh session id — as do `/api//mcp/`, `//api/mcp/`, `/api/%6dcp/` and
+  `/api/mcp%2f` once nginx has merged slashes and percent-decoded — and
+  `/api/openapi.json` serves the schema byte-for-byte (replayed against the packaged
+  stack, 02/09/2026; Codex's finding 1 on PR #185) — the rewrite makes **every** root
+  path of the API process reachable under `/api/`, which is the class both aliases
+  belong to. `/mcp` and `/mcp/` proxy to the
+  MCP app with buffering off. nginx sets `X-Forwarded-For` and `X-Forwarded-Proto`.
+  Nothing in the app reads them, but uvicorn 0.52.1's proxy-headers middleware is on
+  by default and trusts `127.0.0.1` only, so today it ignores nginx's headers and
+  would start rewriting `request.client` from them the moment nginx's address were
+  added to its trust list (§5.6, proxy trust).
+- **Binding.** `WEB_BIND:WEB_PORT` → nginx:80, default `127.0.0.1:8080`. `api` and
+  `db` are not published. The compose file's own comment calls `WEB_BIND` "the whole
+  access-control story until M6", which is accurate.
+- **Source-run development** is uvicorn on `127.0.0.1:8000` and Vite on
+  `localhost:5173`; Vite proxies `/api` with `changeOrigin: true`, so the API sees
+  `Host: 127.0.0.1:8000` and `Origin: http://localhost:5173` on the same request. MCP
+  in development is reached directly at `:8000/mcp/`. The Playwright suite runs
+  through that proxy.
+- **Four writers, no principal.** The UI, REST clients, MCP agents and the CSV importer
+  all reach the service layer with no identity attached; no service takes a caller
+  argument. `POST /import/apply` with `mode=replace_all` deletes the collection. Since
+  #41 the `plan_hash` from a preview is mandatory on apply (`importing.py` refuses an
+  empty one), which closes the blind cross-origin drive-by #39 found — a page on
+  another origin can *send* the multipart request but cannot *read* the preview
+  response that carries the hash. That is a data-integrity control that happens to
+  help; §5.6 does not let CSRF protection rest on it.
+- **Cross-origin, incidentally.** With no CORS middleware, every JSON write fails the
+  browser's preflight, and a JSON body smuggled in as `text/plain`, as a form, or with
+  no `Content-Type` at all is not parsed as JSON by FastAPI and 422s (probed on
+  02/09/2026). `multipart/form-data` is CORS-safelisted, which makes
+  `POST /import/preview` and `POST /import/apply` the only two routes a hostile page
+  can reach with a body the handler accepts. Preview is read-only and does not take
+  the write gate (rule 7.1).
+
+### 5.2 Assets
+
+What an attacker would want, roughly in the order the owner would mind losing it:
+
+1. **The collection's integrity and availability** — kits, orders, catalog stock,
+   retailers, applications, settings. A hobby collection is not secret; its purchase
+   history is mildly private (prices, retailer accounts, order and tracking numbers).
+   Destruction and silent corruption matter more than disclosure, which is why the
+   destructive paths get their own tier in §5.5.
+2. **Credentials, once they exist** — the owner's password hash or OIDC binding,
+   session records, personal-token digests, the MCP OAuth proxy's client
+   registrations and refresh tokens, the signing and encryption keys, and the Postgres
+   password already in `.env`.
+3. **The owner's browser** as a vehicle — any page the owner visits can make their
+   browser send requests to a loopback or LAN instance. This is the one attacker class
+   that reaches a default install today.
+4. **The host.** No code path evaluates input (CSV cells are stored and exported
+   verbatim, §12.8; nothing templates user data server-side), so the realistic
+   host-level threat is resource exhaustion, not code execution. Out of scope beyond
+   rate limiting.
+5. **Backups and archives.** The full CSV archive is the whole collection in one file;
+   after M6 a `pg_dump` also holds credential digests. Neither holds the env secrets.
+
+### 5.3 Actors and trust boundaries
+
+| Actor | Trust | Notes |
+|---|---|---|
+| **The owner, in a browser** | Trusted human, untrusted context | Exactly one owner (§9.4). The browser also runs other sites' pages, so "the owner's browser" and "the owner" are different principals — the gap CSRF lives in. |
+| **Scoped REST clients** | Hold a credential the owner minted | Scripts, spreadsheets, home automation. Damage is bounded by scope, not by trust in the code. |
+| **Remote MCP clients** (Claude, ChatGPT, agents) | Trusted credential, untrusted decision-maker | The model reads retailer names, order emails and CSV cells it did not write, and can be steered by them. Scope is the bound; import and export have no tools (§12.7) and never will. |
+| **Anonymous showcase visitors** (M8) | Untrusted | Reach only `/public/*` handlers that do not exist yet. Listed so the matrix reserves the namespace. |
+| **The TLS / reverse proxy** | Trusted only when declared | Forwarded headers are believed only from `TRUSTED_PROXIES`, and the app never derives its own origin from them (§5.6, proxy trust). The bundled nginx is a trusted hop by construction: it is the API's only peer on the compose network. |
+| **Compose-network neighbours** (`api`, `db`, `migrate`) | Trusted | Same host, same operator, private network. |
+| **The host operator** (`docker compose exec`, the log stream, `.env`) | Root of trust | Break-glass recovery lives here and nowhere reachable over the network. |
+| **A network client** that can reach the published port | Adversary | The LAN in mode P, the internet in mode R. |
+| **A page in the owner's browser** | Adversary | Reaches loopback and LAN instances the network client cannot. |
+
+Adversary classes the controls are designed against: **(A)** a network attacker with
+reachability and no credential; **(B)** a web attacker — a page in the owner's browser
+— whose tools are CSRF, DNS rebinding and clickjacking; **(C)** a credential-holding
+attacker — a leaked or stolen token, a compromised MCP client; **(D)** a
+prompt-injected agent holding a legitimate credential; **(E)** a failed or hostile
+upstream identity provider (OIDC mode only).
+
+Out of scope, explicitly: compromise of the host, the container runtime or Postgres
+itself; a malicious owner; physical access; supply-chain attacks on images or
+dependencies (M9 territory); and denial of service beyond per-client rate limits.
+
+### 5.4 Deployment modes
+
+The model is defined per mode because the live adversaries differ. Every mode
+authenticates — §5.6 (route bypass) says why no unauthenticated mode ships.
+
+| Mode | Configuration | Reachable by | Live adversaries | Supported for |
+|---|---|---|---|---|
+| **L — loopback** (default) | `WEB_BIND=127.0.0.1`, plain HTTP, `PUBLIC_BASE_URL` unset or `http://localhost:8080` | The host only | B | Everything, local MCP clients included. The install path stays `docker compose up -d --build --wait` followed by one setup form (§5.7). |
+| **P — private network** | `WEB_BIND=<VPN or LAN address>` (or `0.0.0.0` on a network the owner trusts), plain HTTP, `PUBLIC_BASE_URL=http://<name>:<port>`, `ALLOWED_HOSTS` naming every name it is reached by | Every device on that network | A (on that network), B | Home use over a WireGuard-class mesh, where the tunnel supplies confidentiality. On a raw LAN the session cookie and bearer tokens cross the wire in clear; the docs say so and leave it the operator's call. The credential itself is required since #188/#189; confidentiality on the wire is what this mode lacks. |
+| **R — remote, behind TLS** | `WEB_BIND=127.0.0.1` on the same host as a TLS-terminating proxy (the reference configuration is Caddy → nginx → api, with the certificate from Let's Encrypt through Cloudflare's DNS-01 challenge — what the gate exercises, #194; Caddy's default challenge is the documented variant), `PUBLIC_BASE_URL=https://…`, `TRUSTED_PROXIES=127.0.0.1` (in the bundled stack a loopback entry also trusts the Compose gateway, which is where a host process arrives from). **The tunnel variant** (#194): a Cloudflare Tunnel whose connector runs on another host — `WEB_BIND` on the address the connector reaches, `PUBLIC_BASE_URL=https://<public name>`, `TRUSTED_PROXIES` naming the connector; the hop between them is plain HTTP on the operator's own network, mode P's assumption. | The internet | A, B, C, D, E | The only mode the README may describe as internet deployment, and only once every test in §5.8 passes against it — the docs site's deployment pages describe it as two of the four ways (Caddy on the host; a tunnel), both run through the gate. |
+| **Dev — source-run** | uvicorn on `127.0.0.1:8000`, Vite on `:5173`, no nginx | The developer's machine | B | Development and the e2e suite. Loopback origins are accepted against loopback hosts (§5.6, host and origin), so the Vite proxy trap recorded on #29 needs no permanent exception. |
+
+**Unsupported, and the docs will say so:** `WEB_BIND=0.0.0.0` on a public interface
+without TLS; publishing `api:8000` directly (the ingress's route separation and
+default-deny are part of the control set, and the API's own controls assume nginx is
+its peer); a proxy in front of the stack that is not named in `TRUSTED_PROXIES`
+(forwarded headers are then ignored — rate limits key on the proxy's address and the
+audit log records it: a degradation, not a bypass); and changing `PUBLIC_BASE_URL` on an
+instance with linked MCP clients without relinking them (§5.6, safe failure).
+
+### 5.5 Route families and the authorization matrix
+
+**Principals.** Every request resolves to exactly one:
+
+| Principal | How it arrives | Scopes held |
+|---|---|---|
+| `anon` | No credential | none |
+| `owner` | Session cookie, **plus** the CSRF token on unsafe methods | `collection:read`, `collection:write`, `instance:admin` |
+| `pat:read` / `pat:write` | `Authorization: Bearer` personal access token | `collection:read` / `collection:read` + `collection:write` |
+| `mcp` | `Authorization: Bearer` access token issued by the MCP OAuth path (OIDC mode only), audience-bound to `/mcp` | `collection:read` **and** `collection:write` — a fixed mapping, not per-grant OAuth scopes (the scope vocabulary on that path is the identity provider's; #190 spike 7c, #192); never `instance:admin` |
+| `internal` | A request whose **raw TCP peer** — the socket's, read before any forwarded-header processing — is loopback inside the API's own network namespace: the container healthcheck, source-run development | Readiness only; grants nothing else |
+
+Three scopes, one implication (`write` implies `read`). `instance:admin` is held by the
+owner's browser session and by nothing else in M6: no admin tokens are minted, so a
+leaked bearer cannot erase or reconfigure the instance, and there is no third token
+tier to build UI, tests and a footgun for. Everything that needs it — `replace_all`
+import, settings, credential management, recovery — is something a person does in
+Settings, not something a script needs. If a scripted admin action ever has a real
+case, it is a scope added deliberately, with the "conspicuous opt-in" Codex proposed
+on #30. A personal access token is valid on both REST and MCP because it is the
+owner's own credential; an MCP OAuth token is a delegated grant with the MCP resource
+as its audience and is refused by REST. A credential that is *presented* and fails —
+expired, revoked, malformed, or valid for another audience — is 401 on every route the
+app's dependency covers, the anonymous families included; only an *absent* credential
+resolves to `anon`. Nothing is silently downgraded: a stale bearer on
+`POST /api/auth/login` is 401, and retrying without it enters the normal login flow. The
+dependency covers families 2–7 and 9–13. Family 8 is FastMCP's and authenticates OAuth
+*clients* its own way — the resource-bearer dependency does not wrap it, and its
+handlers ignore a stray bearer (the pinned token handler answers `invalid_grant` for a
+bad code with or without one).
+
+**Route families.** Paths are as a client sees them at the ingress; the app sees
+`/api/…` with the prefix stripped, and the MCP app sees `/mcp/…` as `/…`.
+
+| # | Family | Paths | `anon` | `owner` | `pat:read` | `pat:write` | `mcp` | App enforces | Ingress adds |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | SPA shell and assets | `/`, `/board`, `/kits`, `/orders`, `/inventory`, `/retailers`, `/more` (§13.7), `/settings/*`, `/data`, `/assets/*`, `/favicon*`, and the home-screen install files `/manifest.json`, `/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png` (§13.7); `/setup` and `/login` from M6 | allow | allow | — | — | — | nothing: static files, served by nginx (by Vite in dev) | security headers — `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, a CSP for the bundle |
+| 2 | Auth bootstrap | `GET /api/auth/session` | allow | allow | allow | allow | 401 (presented, wrong audience) | returns `{state: unclaimed \| anonymous \| owner, interface_language, formatting_locale}` and, for `owner`, the CSRF token. No version, no collection data. `Cache-Control: no-store`. | rate limit |
+| 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/oidc/start`, `GET /api/auth/oidc/callback` — the password actions exist in local mode only and the OIDC pair in OIDC mode only, each answering **404** (`auth.not_in_this_mode`) in the other, registered rather than absent so the anonymous fallback cannot turn a mode into a challenge | allow, by necessity | logout only | 403 | 403 | 401 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC; a wrong password or setup token is **403** (`auth.login_failed` / `auth.setup_token_invalid`), not 401 — a 401 owes a challenge and these routes accept no HTTP scheme | rate limit |
+| 4 | Collection reads | `GET` on `/api/kits*`, `/api/orders*`, `/api/tools*`, `/api/consumables*`, `/api/upgrades*`, `/api/display-items*`, `/api/retailers*`, `/api/catalog/search`, `/api/settings`, `/api/meta`, `/api/export/*` | 401 | allow | allow | allow | 401 | `collection:read`; `Cache-Control: no-store` | — |
+| 5 | Collection writes | `POST`/`PATCH`/`DELETE` on the family-4 resources; `POST /api/catalog/{id}/adjust`, `/api/upgrades/{id}/apply`, `/api/orders/{id}/receive`, `/api/orders/{id}/ship`; `POST /api/import/preview`; `POST /api/import/apply` with `mode=merge` or `mode=add_only` when the plan's mutations touch collection tables only | 401 | allow (+ CSRF + Origin) | 403 | allow | 401 | `collection:write`; Origin check when the principal is cookie-borne | — |
+| 6 | Instance administration | `PATCH /api/settings`; `POST /api/import/apply` with `mode=replace_all`, or in **any** mode when the plan updates `instance_settings`; `/api/auth/tokens*` (mint, list, revoke); credential change and OIDC rebind | 401 | allow (+ CSRF + Origin) | 403 | 403 | 401 | `instance:admin`; an import's privilege is decided on the **plan's mutations** — an `UPDATE` action on `instance_settings`, not the presence of a settings sheet, so an archive whose settings row is unchanged or skipped needs no admin — checked after the re-plan and before any row is written; `replace_all` keeps `confirm=REPLACE` and the mandatory `plan_hash` on top | — |
+| 7 | MCP transport | `POST`/`GET`/`DELETE` `/mcp/`; bare `/mcp` is an **ingress-only** spelling — nginx rewrites it to `/mcp/` internally (§8), and with slash redirects off the source-run app treats it as family 13: 404 to a signed-in caller, 401 to `anon` (#204) | 401 + `WWW-Authenticate: Bearer` | **401** — a cookie is never a credential here, a valid one included | allow; write tools refused | allow | allow per scope | bearer only; Host/Origin guard (421/403); per-tool scope check in the tool wrapper; no tool holds `instance:admin` | buffering off, long timeouts (§8); the Host allowlist; **one spelling** — `/api/mcp` and `/api/mcp/*` return 404 from an exact-prefix `location` placed before the generic `/api/` one, matched after nginx's normalisation (slashes merged, percent-decoded), so the alias cannot shed these settings or family 8's limits |
+| 8 | OAuth / OIDC protocol routes (OIDC mode only; 404 in local mode) | at the root, **installed by the parent app** with FastMCP's `get_well_known_routes(...)` — for `base_url=…/mcp` the helper emits exactly `/.well-known/oauth-protected-resource/mcp/` (trailing slash — the resource is `…/mcp/`), `/.well-known/oauth-authorization-server/mcp`, `/.well-known/openid-configuration/mcp` and the bare `/.well-known/openid-configuration` — **pruned too**: FastMCP adds it for root deployments and prefix-stripping proxies, and this installation is neither; its document declares `issuer=…/mcp`, which a bare-root lookup cannot match (RFC 8414 §3.3, OIDC Discovery §4.3), so it stays off unless the spike shows a client that needs it, and the spike records each named client's version and the discovery URLs it actually requests — and **not** the bare `oauth-authorization-server`, so three root documents are served; under the mount, generated by the child: `/mcp/authorize`, `/mcp/token`, `/mcp/register`, `/mcp/consent`, `/mcp/auth/callback`, and `/mcp/revoke` when the upstream offers revocation. The child also generates `/mcp/.well-known/oauth-authorization-server` and `/mcp/.well-known/oauth-protected-resource/mcp/`; those are **pruned before mounting** and never forwarded. Read by mounting a probe on FastMCP 3.4.5 / MCP SDK 1.29.0 (02/09/2026); the spike snapshotted the raw route set and the set nginx exposes, and #192 pins both by test (`tests/test_route_policy.py`'s mounted snapshots per mode; `backend/ingress_matrix.py`'s `--mode`). **Shipped (#192):** the same nine paths exist in local mode and answer their own 404 naming the mode, so a mode is never a challenge; the child routes' method metadata is cleared and the registry's `RouteBinding` is their verb boundary as for the transport (an undeclared verb is its 405 with `Allow` and `no-store`, the family-8 sibling of #206 closed here); the pre-routing gate passes the whole `/.well-known/` namespace through unresolved, route or no route, and the registry refuses any non-protocol route under it | allow, by protocol | allow | — | — | — | FastMCP's handlers; PKCE; the redirect-URI binding per client kind (§5.6); **one downstream client contract** — every dynamically registered client is public (`none` + PKCE) whatever it asked for and the registration response says so (a registration asking for `private_key_jwt` is refused by MCP SDK 2 before this server's registration runs — 400 `invalid_client_metadata` — accepted as the contract with FastMCP 4, #243), a CIMD client authenticates as its document says (`none` or `private_key_jwt`) on `/token` and `/revoke` alike with the assertion bound to the endpoint, a public client sends no secret, a failed client authentication is `401 invalid_client` on both endpoints, discovery publishes exactly those two methods for both endpoints and `RS256` (rounds 4–5), an unrecognised `token_type_hint` is ignored (RFC 7009 §2.2), and the boundary is owned field by field — the assertion's claims judged before the SDK spends its `jti`, registration metadata canonicalised and stored as returned, a repeated parameter refused and an empty one omitted, an omitted PKCE method read as `plain` and refused, the recovery URL the root document (round 6); admission, decoding, cardinality and the SDK hand-off one decision — every body representation guarded and a non-form body refused, `resource` a set collapsed and judged by the proxy's own predicate with `invalid_target` in each endpoint's form, a NumericDate within ±2^53, one client-authentication mechanism per request and the registered method required for an assertion, the `WWW-Authenticate` challenge on a 401 to a header-authenticating client, `jwks` with `jwks_uri` refused (round 7); a request admitted once — the resource compared on the whole URI by this server's own rule at both endpoints, only recognised parameters judged for multiplicity, every `Authorization` occurrence inventoried and any one refused, one client snapshot per request (round 8); the resource judged against RFC 3986's grammar before it is parsed and the inline key set's shape checked before it is read (round 9); the selected key's `alg`/`use`/`key_ops` enforced through FastMCP's own verification on both key paths (round 10), the record carried by the `kid` the selection used and the inline set filtered by the remote path's usability predicate (round 11), a named `kid` that matches nothing refused on both paths and the single-key fallback only for a header naming none (round 12), the fallback counting the set's usable records rather than a cache's slots, one rule for both paths (round 13), the SDK's cache built from those same records rather than the raw array (round 14); the upstream authorization request is the proxy's, not the client's — the endpoint, `client_id` and callback from configuration, `state` and PKCE the proxy's own, the scope always `openid` and the Google pair, and **nothing of the client's request**: its RFC 8707 `resource` names this server, whose authorization server is the proxy, and a provider that implements RFC 8707 refuses a resource it does not know (Pocket ID's `invalid_request`), while a client that omitted `scope` would have asked the provider for nothing (#294); the upstream identity must equal the bound owner, checked **at issuance** (`exchange_authorization_code` — a stranger gets `invalid_grant`, an audit row and nothing minted); the verified `(iss, sub)` is then **grant state**, carried in every token the proxy issues and compared with the owner row on every request, so a rebind ends the grant at the next request, and held on the **grant record** itself as the binding every refresh is checked against: the record gate admits a refresh's upstream set — the client's exchange or the transparent refresh behind a request — only with an identity that binding names (the id_token already verified, or a new one verified in full and naming the same `(iss, sub)` the record holds — continuity with the identity that authorized the grant, not merely the owner now, the two differing for the length of a rebind), else the grant ends with `auth.mcp_grant_revoked` naming the upstream; the id_token is never re-expired, and one validly omitted carries the binding forward (Codex #212 rounds 1–3); a token without `sub` refused; **one transition per grant** — issuance, the refresh exchange, the transparent refresh and revocation serialize on a Postgres advisory lock per grant, so a second redemption is `invalid_grant` whichever process it lands on and a revocation and a refresh never interleave; **revocation is the grant's** — either half presented at `/revoke` is **located, not authorized** (the proxy's own signature and the JTI mapping, the provider asked nothing, no owner row read: the SDK's handler finds a token through the bearer path otherwise, and a provider whose keys could not be fetched turned that into a silent 200 with the grant standing — round 3), ends the whole grant locally first and asks the provider, best effort, to revoke its refresh token (`auth.mcp_grant_revoked`); the issued token is the proxy's own HS256 pair (`MCP_OAUTH_SIGNING_KEY`), `iss=…/mcp`, `aud=…/mcp/`, one hour, bounded by the provider's own token, which is refreshed against the provider transparently | **exact** `location` blocks at the root for the three documents and a 404 for the slash-less resource path (nginx would otherwise 301 it — the one ingress redirect stays `/api`), one family-8 `limit_req` budget for the three documents and six protocol routes (10 r/s, burst 20), keyed after the trusted-proxy walk; the family-7 `/api/mcp/*` rejection covers their aliases, and `/api/.well-known` is rejected the same way — the parent-root registration is otherwise reachable under `/api/`, which pruning the child cannot prevent |
+| 9 | Liveness | `GET /api/healthz` | allow | allow | allow | allow | 401 | `{"status":"ok"}` and nothing else | rate limit |
+| 10 | Readiness | `GET /readyz` in-container; `GET /api/readyz` at the ingress | `internal` only; any other peer 404 | 404 | 404 | 404 | 404 | the raw TCP peer must be loopback — the healthcheck is `python -c … 127.0.0.1:8000/readyz` inside the container, and nginx arrives from the compose network | `location = /api/readyz { return 404; }` — the same decision, duplicated |
+| 11 | Schema and docs | `/openapi.json`, `/api/docs`, `/api/redoc`; `/api/docs/oauth2-redirect` (Swagger's OAuth helper) is **disabled** — 404 everywhere | 401 | allow | allow | allow | 401 | `collection:read` — FastAPI's generated handlers are disabled (`openapi_url`, `docs_url`, `redoc_url` set to `None`) and re-registered through the route policy registry as guarded routes, because the app-level dependency never runs for `add_route` handlers (§5.1); the OAuth2 helper is not registered | passes; `/openapi.json` keeps its root location and is the only spelling — `/api/openapi.json` returns 404 at the ingress |
+| 12 | Public read (M8) | `/api/public/*` | allow | allow | allow | allow | — | separate handlers (rule 8); **absent until M8** — an M6 test asserts no route under `/public` | its own `location`, so it can be the only thing a showcase proxy forwards |
+| 13 | Everything else under `/api/` | unrouted paths, wrong verbs | 401 | 404 / 405 | 404 / 405 | 404 / 405 | 401 | an anonymous client gets 401 for an unrouted path, not 404, so the route table cannot be enumerated without a credential | the default `server` block answers 421 for a Host outside the allowlist before any `location` is considered |
+
+Notes on the table:
+
+- **The application is authoritative; the ingress duplicates and never grants.**
+  Nothing is "protected by nginx". Development runs without nginx, a careless override
+  could publish `api:8000`, and an operator may put a different proxy in front — so
+  every deny in the table exists in FastAPI or FastMCP, and nginx repeats the ones that
+  are cheap to repeat (the Host default-deny, `/api/readyz`, rate limits) or that only
+  it can do (security headers on static files, the `.well-known` routing). Family 10
+  is the one place the two layers reason differently, and both conclusions are "deny
+  from outside". An ingress *alias* is the one shape this rule does not catch on its
+  own: `/api/mcp/` reaches the very same handler as `/mcp/` under the very same
+  app-level policy, so the app cannot tell them apart and nothing is granted — what the
+  alias sheds is the per-family ingress configuration (buffering, timeouts, rate
+  limits). So the ingress owns a second rule, **one spelling per family**: the paths in
+  the table are the only ones nginx forwards to that handler, every other spelling is
+  404 before the generic `location`, and T2 proves it with the doubled-slash and
+  percent-encoded forms as well as the literal one. The class is every root namespace
+  of the API process whose canonical spelling is not under `/api/` — `/mcp`,
+  `/.well-known`, `/openapi.json`, `/readyz` — and the rejection list is not
+  hand-maintained: it is generated from the route policy registry's declared
+  spellings, so a new root route without a declaration fails the enumeration test
+  rather than waiting for a reviewer. T2 carries the positive controls beside the
+  negative ones — `/api/docs` and `/api/healthz` stay usable by their principals while
+  `/api/openapi.json`, `/api/.well-known/*` and `/api/readyz` are rejected — because
+  rejecting every parent-root path under `/api/` would take the docs and liveness
+  down with them. Since the default-deny flip those positives want the owner, so
+  T2 signs in first — in CI with the setup token read from the API container's
+  log, which makes the first-run claim itself part of what the packaged stack
+  proves — and keeps an anonymous row beside them: the dependency's 401 through
+  nginx, distinct from the ingress's own 403/404/421. The externally observable surface is five things — parent routes,
+  child routes, the `/api/` rewrite's aliases, router-generated redirects, and nginx's
+  own prefix redirect — so T2 snapshots *responses*, status and `Location` both, never
+  a route table alone. And it snapshots them **per layer**: one registry drives both
+  T1 and T2, but the URLs and expected responses differ by layer — `/api/kits/` is 404
+  at the ingress while `/kits/` there is the SPA's 200; bare `/mcp` reaches the bearer
+  challenge through nginx and is 404 source-run — so T2's rows are the ingress
+  spellings, not T1's copied across.
+- **Default deny, explicit allow, declared once, enumerated by test.** Authentication
+  is a single app-level dependency, not a per-route decoration a new router can forget
+  (the #25 envelope lesson, applied to auth). What it reads is a **route policy
+  registry** — the rule-9 shape, declare once and everything reads it, applied to
+  routes. For every effective route and mount (FastAPI's included-router wrappers
+  expanded, the MCP mount traversed) the registry declares: the family; the
+  credential policy — anonymous, principal plus scope, `internal`, or for family 8 a
+  **protocol role** (transport bearer; public discovery; registration; authorization
+  with client and PKCE validation; consent transaction with its own cookie and form
+  token; callback transaction with binding cookie and upstream result; token with
+  client, grant and PKCE validation; revocation) — "FastMCP-owned" names who
+  implements a route, not what it accepts, so each child route carries its own role;
+  the effective **methods**, declared so that a library release adding `OPTIONS` or
+  `HEAD` fails the test instead of being accepted; the **modes** in which the route
+  exists — local, OIDC, or both; the permitted external spellings — `/api/<path>`,
+  root, an ingress-only alias, or internal-only; the serving layer; the allowed
+  redirect destinations — none, self, the configured provider endpoint, or a client
+  URI bound by its client kind's declared rule (§5.6, proxy trust); and the
+  **response profile** — cookie emission and attributes, caching, authentication
+  challenge, CORS and HTML security headers. The dependency
+  enforces the credential policy, matched on the **resolved endpoint**, never on the
+  URL string, so no encoding, doubled slash or traversal can select a different policy
+  than the handler it reaches; scope is a second dependency on the route or tool; the
+  ingress template's rejection list is generated from the declared spellings; T1 and
+  T2 are generated from the registry and assert the response profile as well as
+  status and `Location`. The enumeration test walks the effective route
+  table and the MCP tool registry and fails on anything undeclared — which is what
+  makes the M8 `/public/*` handlers a deliberate act. "Root-canonical" and
+  "internal-only" are declarations, not properties an unannotated route table can
+  infer (§5.1); the registry is where that policy lives. FastAPI's generated schema and
+  docs handlers sit outside the dependency (§5.1), so they are disabled and
+  re-registered through the registry as guarded routes, and the Swagger OAuth2 helper
+  is not registered at all. Routes that are *meant* to answer 404 in some mode —
+  family 8 in local mode — are registered and return 404 themselves, so the anonymous
+  fallback does not turn them into 401 and leak the mode.
+- **Family 4 includes `GET /meta` and `GET /export/*`.** `/meta` moves from public to
+  `collection:read`: the SPA's anonymous bootstrap becomes `GET /auth/session`
+  (family 2), which carries what a login page needs — the instance's interface
+  language and formatting locale — and nothing else. Version disclosure is a small
+  thing (the repo is public and the bundle is inspectable) and still not worth
+  advertising to a scanner. The export archive is the whole collection in one request,
+  but a `collection:read` principal can page through every list route and assemble
+  the same thing, so it is not a new class and does not earn a scope of its own.
+- **Family 5 puts `import/preview` and `mode=merge` under `collection:write`, not
+  admin.** Preview parses an untrusted file and writes nothing; merge is a bulk write
+  that never invents stock (rule 10) and is bound to its preview by `plan_hash`. A
+  write token doing a nightly merge from a spreadsheet is a legitimate automation.
+  `replace_all` is the wipe, and it is admin-only. The mode is not the whole
+  authorization, though: the archive's `instance_settings` sheet is importable (§6.1)
+  and `apply_import` applies every planned update in every mode, so a write token
+  could reconfigure the instance through a merge — the family-6 boundary crossed by a
+  side door (Codex, PR #185). Authorization is therefore decided on the **plan's
+  content**: a plan whose mutations include an `UPDATE` of `instance_settings` requires
+  `instance:admin` whatever the mode, refused after the re-plan and before any row is
+  written; a collection-only `merge` or `add_only` stays `collection:write`, and so
+  does an archive whose settings sheet is present but unchanged or skipped — the
+  privilege follows the mutation, not the sheet. Preview is unaffected — it writes nothing, and a
+  write token seeing a settings diff it cannot apply learns nothing the same token
+  cannot `GET /settings`.
+- **Family 7's 401 for a session cookie is the design, not a limitation.** MCP clients
+  are bearer-only by contract; a cookie that could authenticate `/mcp` would make every
+  MCP write CSRF-able and would let a page in the owner's browser drive an agent's tool
+  surface. The handler does not parse cookies.
+- **Family 8 keeps the OAuth operations under the MCP namespace** and reserves only
+  the RFC 8414 / RFC 9728 discovery documents at the root (Codex's qualification on
+  #30). `/authorize`, `/token` and `/register` do not leave the SPA's path space. The
+  browser OIDC login callback (family 3, `/api/auth/oidc/callback`, Authlib) and the
+  MCP proxy's upstream callback (family 8, `/mcp/auth/callback`, FastMCP) are
+  different routes for different flows and stay different. The discovery topology has
+  two halves and both are explicit: the parent FastAPI app installs the root discovery
+  routes with FastMCP's `get_well_known_routes(...)` — an nginx `location` can route to
+  them but cannot create them, and a child mounted at `/mcp` does not put them at the
+  root on its own — and the child's generated `/mcp/.well-known/*` aliases are pruned
+  before mounting, so there are fewer public spellings and the `/api/mcp/.well-known/*`
+  alias dies with them.
+- **What changes for existing clients.** `/api/meta`, `/openapi.json` and the docs
+  pages stop answering anonymously; `/api/readyz` stops answering from outside; `/api/mcp/` and `/api/openapi.json` stop answering at all (use `/mcp/` and `/openapi.json`); trailing-slash spellings of REST paths answer 404 instead of a 307 that already led to the SPA; `/api/docs/oauth2-redirect` goes away; a source-run MCP client must use `/mcp/` with the slash (through nginx both spellings keep working); every
+  REST and MCP call needs a credential; an MCP client configured as
+  `http://localhost:8080/mcp/` needs a token added (the `mcp-remote` bridge passes
+  headers). Release notes lead with the `ALLOWED_HOSTS` lockout risk (§5.6) and then
+  with this list.
+
+### 5.6 Threats and controls
+
+Each row names the control, the layer that owns it, and the §5.8 tests that prove it.
+"Both" means FastAPI/FastMCP enforce and nginx duplicates.
+
+| Threat | Modes | Control | Layer | Tests |
+|---|---|---|---|---|
+| **CSRF** against cookie-authenticated writes, the CORS-safelisted multipart routes included | all | Three independent controls, any one of which defeats a simple request: (1) the session cookie is `SameSite=Lax`; (2) every unsafe method whose principal is cookie-borne — and every family-3 action, session or not — requires an `Origin` header (`Referer` as the fallback) matching the canonical origin from `PUBLIC_BASE_URL` or an entry in `ALLOWED_ORIGINS`, and a missing one is denied; (3) a session-bound CSRF token in `X-CSRF-Token`, obtained from `GET /auth/session`. Bearer-borne requests skip (2) and (3): a browser never attaches a bearer to a cross-site request without a CORS preflight, and no CORS allow-origin will ever be emitted for families 2–7. **CSRF protection does not rest on `plan_hash`**; the multipart routes get their own hostile-origin tests. | app | T3, T4 |
+| **Host spoofing and DNS rebinding** — a page whose hostname resolves to the instance, so `Origin` and `Host` are both the attacker's | L, P, Dev | A Host allowlist: the host of `PUBLIC_BASE_URL`, the loopback names, the bind address, and `ALLOWED_HOSTS`. A miss is `421 Misdirected Request` with a body naming the setting. Applied to REST and MCP alike; FastMCP's guard runs in `strict` mode with the same lists, because the MCP transport specification requires Origin validation on the MCP app itself. Loopback origins are accepted against loopback hosts — the rule FastMCP already applies — which is what lets the Vite proxy (`Origin: localhost:5173` against `Host: 127.0.0.1:8000`) work with no permanent development exception. The REST middleware applies the same three-way rule as that guard — an origin in the list, loopback-to-loopback, or an `Origin` equal to the request's own origin for any allowed Host — and the canonical origin from `PUBLIC_BASE_URL` is always in the list: behind TLS the app sees `http` while the browser sends `https://…`, which is exactly the entry the canonical origin supplies (probed on the pinned guard: an allowed `https://app.example` passes with an `http` ASGI scheme). `ALLOWED_ORIGINS` is needed only for a non-canonical alias reached over a scheme the app does not see. **This is the one control that can lock an operator out** (#39): anything reached by a LAN hostname, a container name or a proxy has to be in the list. The setting, a default that covers the loopback names and the bind address, the 421 body and the release note ship together, and the change ships as its own release so nobody upgrading for a data fix meets it by surprise. | both — nginx's default `server` returns 421 before any `location`; the app repeats it | T3 |
+| **Clickjacking** of the SPA | P, R | `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on the SPA; the API sets both on the few HTML responses it has (docs pages, OAuth consent) | ingress for static files, app for its own HTML | T2 |
+| **Brute force** against login, setup and token endpoints | P, R | Argon2id for the local password; a per-IP rate limit at the ingress; at the app a failure ladder per action and client address with exponential delay — the guesser's own address is slowed, never the owner's, and a ladder decays after a quiet period rather than re-arming its ceiling on every failure (the instance-wide ladder it replaced could be held shut by one wrong password per interval, the 0.3.0 scan's finding; #221 item 4) — beside one verification budget for the instance that bounds the Argon2 work a distributed guesser can cause, and a **reserved** verification budget for a login that presents a session cookie the instance has ever stored — live, expired or revoked; unforgeable, and not something a flood holds — so a browser that still holds such a cookie — one whose session idled out, or that a host-side reset or revocation ended — is admitted within a stated bound however many fresh addresses are failing (Codex #222 round 1, f1: a CPU ceiling and owner admission are two properties, and the general bucket alone let a one-request-per-refill stream of fresh addresses hold the owner out); a browser that signed out normally holds no cookie (logout clears it, on purpose), one past the cookie's thirty days or that cleared its cookies holds none either, and one restored from an older dump may hold a cookie the database no longer recognises — those compete with the flood during a sustained distributed one, and the operator's ingress is the boundary there, stated in the runbook rather than papered over (round 2, f4: the runbook had promised the reserved path to "the browser you signed in with", which after a normal logout holds nothing); the reserved path also needs the address's ladder open — everyone behind one resolved address shares it — and capacity in the reserved or the general bucket; the setup token and the OIDC start spend neither bucket (their comparison is cheap; the expensive work behind a correct token is gated by its entropy); identical response and timing for "no such user" and "wrong password" (there is one user); a high-entropy single-use setup token; an audit event per attempt naming which budget spoke. The app's budgets are in-process, which is correct while the API runs one worker, as it does; more workers means a shared store, and the Dockerfile is where that is pinned. | both | T8 |
+| **Credential and token leakage** | all | Bearer tokens only in the `Authorization` header — never a query parameter, which lands in access logs and `Referer`; PATs shown once, stored as digests, looked up by a public prefix, compared with `hmac.compare_digest`; session ids opaque, only a digest stored; `Cache-Control: no-store` on every authenticated response and on every OAuth transaction and credential response — the consent page and its form result, the callback, the token endpoint, failures included: the MCP SDK sets it on token, authorize-error and *successful* revoke responses, but FastMCP's consent page, consent redirect and callback redirect carry no `Cache-Control` at all and revocation's own error paths carry none either (read from the pinned handlers 03/09/2026, the revocation fact measured by the #190 spike), so plamotrack stamps it from the registry's declaration on every mounted route's own send (the `RouteBinding`, M6-2's mechanism — #192 declares the six protocol routes `no-store`), while public discovery keeps its declared `public, max-age=3600`; no credential or token in any log line, enforced by a test that greps captured logs; the setup token printed to the API's log at startup while the instance is unclaimed and nowhere else (the log stream is the host operator's, §5.3); the CSV archive **never** carries auth tables — rule 9's registry does not gain them, so an export cannot become a credential dump; a backup of auth state is **two** things — the database, which since #192 also holds the OAuth proxy's state (`mcp_oauth_state`, a table Alembic owns, every value Fernet-encrypted under a key derived from `MCP_OAUTH_SIGNING_KEY`, so a dump never carries an upstream token in clear), and `.env` with its secrets; restoring without the secrets yields intact data with credentials to re-mint and MCP links to re-establish, and restoring a dump alone yields intact data, sessions and PATs with the same relinking (the #190 spike chose the Postgres adapter over FastMCP's default file tree for exactly this: no second volume, no second restore step); the three restores are the gate's `t13` phase (#194), run with the documented commands verbatim against a client linked through the chain. | app | T10, T11, T13 |
+| **Session fixation and theft** | P, R | Session id rotated on login; `HttpOnly`; `Secure` and the `__Host-` prefix when `PUBLIC_BASE_URL` is `https`. On plain HTTP — modes L and P — the cookie cannot be `Secure` (Chrome 152 and Firefox 153 store a `Secure` cookie set over `http://localhost` and `http://127.0.0.1`; WebKit 26.5 does not — WebKit bug 232088, still open), so its name changes with the scheme and its confidentiality rests on the network being the owner's own; the startup log says which it is. Idle and absolute expiry; logout, credential change, OIDC rebind and a start in the other authentication mode revoke every session, and a session is refused under any mode but the one that minted it (`session.auth_mode`). | app | T7 |
+| **Proxy-header trust** | R | The app's own identity — scheme and host for cookies, redirect URIs, the OAuth issuer and resource — comes from `PUBLIC_BASE_URL` and never from `X-Forwarded-*` or `Host`. Forwarded headers influence only the client address used for rate limiting and audit, and are honoured only from `TRUSTED_PROXIES`; the bundled nginx is a trusted hop by construction. In the bundled stack a loopback `TRUSTED_PROXIES` entry also trusts the Compose network's gateway: a proxy on the host reaches nginx from that address (docker-proxy or the kernel's MASQUERADE for loopback-originated traffic), never from `127.0.0.1`, so the entry alone would match nothing and every visitor would key the limits and the audit address on the gateway — the degradation §5.4 names, silently, from the line every proxy guide tells an operator to write (#194). `PUBLIC_BASE_URL` is installation identity: changing it invalidates every linked MCP client (the issuer changed) and is documented as a migration, not a config edit. uvicorn is started with `--no-proxy-headers`: its default middleware is on, trusts `127.0.0.1`, and replaces `request.client` from `X-Forwarded-For` for any address added to its trust list — so wiring `TRUSTED_PROXIES` through it would let a trusted proxy forge the loopback peer that `internal` reads. The app's own middleware resolves the forwarded client address into a separate scope key and leaves the raw peer alone. Router-generated slash redirects are **off** on both the parent and the child (`redirect_slashes=False`): Starlette 1.4.0 builds a slash redirect's `Location` from the request's scheme and Host and keeps the query string, so `/mcp/auth/callback/?code=…` would otherwise bounce an authorization code to `http://…` from behind TLS. A non-canonical spelling is 404, never 3xx; the redirects that remain are classified by destination, and only *request-derived* ones are forbidden: **self** URLs — consent, callbacks, a login return — are built from `PUBLIC_BASE_URL`; the **provider's** authorization endpoint comes from configuration validated at startup (discovery or explicit), never from a request; a **client's** redirect URI is bound **per client kind**, and that binding is a plamotrack policy constraint on FastMCP, not something registration supplies on its own: a DCR client may be sent only to a URI it registered — exact match, with RFC 8252 §7.3's loopback-port exception for native clients; an operator allowlist, if configured, narrows what may be registered and does **not** replace the registration binding (FastMCP 3.4.5 checks the patterns *instead of* the registration once patterns are set); the client FastMCP synthesises for the **upstream client id** — created with `allow_unregistered_redirect_uris=True`, so anyone who knows the public upstream id can be sent to an arbitrary destination carrying `error=access_denied` and their state (probed at `9e72a77`: 302 to consent for an unregistered URI, where an unknown client id is 400) — is refused or given an explicitly configured callback; CIMD and any static client get their own declared binding, subject to #30's compatibility ceiling. An unbound `redirect_uri` is 400 with no `Location`. **Measured and shipped (#190, #192):** MCP Inspector is a DCR client (loopback callback, the port-varies exception is what it relies on); Claude web and ChatGPT web are **CIMD** clients (an `https` client id naming a metadata document; callbacks `https://claude.ai/api/mcp/auth_callback` and `https://chatgpt.com/connector/oauth/<id>`), so CIMD stays enabled and the document's `redirect_uris` are their binding; nobody used the synthesised upstream-id client, so it is refused outright (`get_client` answers "unknown client" for the upstream id). The operator allowlist (`MCP_OAUTH_ALLOWED_REDIRECT_URIS`) is FastMCP's rule for **every** kind — it narrows what a DCR client may register (and, through `BoundDCRClient`, never replaces the registration) and it also has to admit a CIMD client's declared callback, so an operator who lists only loopback locks the web clients out; the documentation says so rather than the code special-casing CIMD, because FastMCP also re-checks the stored transaction's redirect URI against the allowlist at the callback, where the client kind is no longer known. The two producers of request-derived redirects — Starlette's slash fallback and uvicorn's forwarded-scheme rewriting — are both off. nginx's own prefix redirect (`/api` → `/api/`, 301) is relative (`absolute_redirect off`) and is retained deliberately as the one ingress-produced redirect, listed as such in T2. | both | T9 |
+| **Route bypass and exposed admin** | all | Default deny with an enumerated allowlist (§5.5); policy matched on the resolved endpoint; `api:8000` unpublished; the `.well-known` and `/api/readyz` locations exact; **no unauthenticated mode in the shipped image** — there is no `AUTH_MODE=disabled`, and the test suites use an in-process principal injection the packaged image does not contain (the alternative, "refuse to start when auth is off and the bind is not loopback", still ships the bypass and relies on a check being right); auth configuration is env-only and never a settings row, so the Settings page cannot grow a "disable auth" toggle; `/public/*` absent until M8. | both | T1, T2 |
+| **Scope escalation** | R, and any leaked token | One principal shape for REST and MCP; scope checks in the route dependency and the tool wrapper through the same helper, so a tool cannot be more permissive than its REST twin; a PAT cannot mint a PAT; MCP OAuth grants never include `instance:admin`; the enumeration test pairs every write tool with `collection:write`; an import's required privilege is read off its plan's content, so the mode cannot smuggle an admin-owned table past a write token. | app | T1, T6 |
+| **Prompt injection through an agent** (adversary D) | any mode with MCP | Not solvable in the server; bounded instead: scope, no import or export tools ever (§12.7), no admin tools, the rule-2 guards on destructive order edits, `remove_missing_lines` (§7), and audit lines naming the credential so a rogue session can be found and revoked. | app | T6 |
+| **Open redirect and code interception** in OIDC flows | R | The browser login's `state` and `nonce`; exact redirect-URI matching; PKCE on the MCP proxy path — the client's, verified by the proxy, and the proxy's own, forwarded upstream; the upstream identity required to equal the bound `(issuer, subject)`; a non-owner identity refused with an audit event and no session — and on the MCP path refused **at issuance**, before any token is minted, because a verifier that refuses only per request would still have handed a stranger a token pair (#190 spike 7a); the proxy's consent transaction carries its own state cookie and form token, and the provider's return is accepted only from the browser that consented (FastMCP's binding cookie, proven on). | app | T6, T7 |
+| **Version and topology disclosure** | R | `/meta`, the OpenAPI schema and the docs pages behind `collection:read`; anonymous unrouted paths answer 401 rather than 404; `/healthz` says only `ok`. | app | T2 |
+| **Log and audit hygiene** | all | Audit events for: setup claimed, login success and failure, logout, session revoked, PAT minted, revoked and used after revocation, an MCP OAuth grant issued, refused and revoked, OIDC rebind, authentication mode changed (the previous mode's sessions revoked at start), recovery run, Host/Origin rejection. Each carries the principal id, credential kind, client address and route or tool — never a secret, never a request body. A pre-routing refusal earns its own row within a budget — ten per address and sixty per instance a minute, the rest counted and written as one summary row with the next recorded refusal (#210; #221 item 3) — so a flood cannot grow the table by a row per request. Retention is a table with a documented prune, by hand or on a schedule (`AUDIT_RETENTION_DAYS`). Collection-change auditing is not M6. | app | T10 |
+| **Denial of service** | P, R | Out of scope beyond: per-IP `limit_req` at the ingress on families 2, 3, 8 and 9; the app's failure ladders and verification budget; **body budgets** on every anonymous route that takes a body (#221 item 1) — declared in the route policy registry (`max_body_bytes`: 32 KiB for the family-3 actions, 16 KiB for the protocol routes), enforced before any parser by the pre-routing gate and the protocol guards, and duplicated at nginx as `client_max_body_size` on exact locations generated from the same declaration, the server-wide 32 MiB kept for imports; **bounded client records** (#221 item 2; registrations only since #242) — a registration lives a day unless a grant links it, the collection is capped, an address has a registration quota, expired rows are culled from the anonymous entry points and where a record is created, and a CIMD client is no record at all: resolved from its document through FastMCP's in-memory cache on every lookup, which is bounded (`CIMD_CACHE_ENTRIES`) and is the one bound on that side — a row a 0.3.x/0.4.0 instance persisted for one is the fallback until its document is refreshed, then deleted; readiness hidden from outside so strangers cannot probe the database. | both | T2, T8 |
+
+**Safe failure.** The first rule is that a failure denies; the second is that it denies
+*new* things and leaves the owner's existing access alone where it can.
+
+- **Identity provider unavailable** (OIDC mode): new browser logins fail with a clear
+  message; existing sessions, PATs and issued MCP access tokens continue; MCP refresh
+  may fail and require relinking after a long outage. The auth mode does not fall back
+  to local on its own — a mode change is an explicit operator action.
+- **Database unavailable:** `/readyz` fails, and every authenticated route returns 503,
+  because a session or token that cannot be looked up is not a session or token. No
+  cached allow.
+- **Unclaimed instance** (a fresh install, or an upgrade onto M6): every collection
+  route is 401, `GET /auth/session` reports `unclaimed`, the SPA shows the setup form,
+  and the API log prints the setup token at each start until it is claimed, so an
+  operator who missed it restarts the container rather than editing the database.
+- **Host not in the allowlist:** 421 with the setting named in the body. Recoverable by
+  editing `.env` and `docker compose up -d`; nothing is written.
+- **Secrets lost or rotated** (the OAuth signing key `MCP_OAUTH_SIGNING_KEY`): every
+  MCP link invalid — the issued tokens fail their signature and the state rows no
+  longer decrypt, so a client's refresh is `invalid_client` and it re-registers and
+  re-consents — all data intact, sessions and PATs survive (digests, not signatures;
+  the browser session holds no signing secret at all).
+- **OAuth state store lost** (the `mcp_oauth_state` rows): MCP clients must relink;
+  data, sessions and PATs are untouched. Proved by `tests/test_mcp_oauth.py`'s
+  restart rows (T13): a second process on the same database and key accepts and
+  refreshes the first's tokens with no registration; one with another key reads
+  nothing and the client relinks.
+- **Identity provider unavailable, on the MCP path:** discovery still answers
+  (nothing upstream in it); a new authorization is sent back to the client with
+  `temporarily_unavailable`; an issued token keeps working until the provider's
+  own token needs a refresh the provider cannot give (the owner binding is grant
+  state, not a re-verified id_token); a refresh exchange fails and the client
+  relinks later; a revocation ends the grant locally whatever the provider is
+  doing, then asks the provider through the browser login's own client
+  (`OidcProvider.revoke_token`: the app's httpx, the client secret as HTTP Basic, as
+  the code exchange authenticates) — never through FastMCP's upstream OAuth client,
+  whose FastMCP 4 replacement has no revoke method (#241; the catch-all that hid
+  that is gone — a provider outage or refusal is best effort, anything else is the
+  binding's 500 after the local end). The provider's endpoints are a view of the browser login's cached
+  discovery document — every reader, FastMCP's included, sees the same one — and
+  every entry point that needs them fetches first, so a provider that is down at
+  start never fails the start and a restart mid-flow (between the consent page and
+  its approval, between the approval and the provider's return) completes on the
+  fresh process.
+- **Credentials lost:** a host-side command resets the local password or rebinds the
+  OIDC identity, revokes every session and purges the MCP OAuth grants, asking the
+  provider to revoke what they held (#214); it is never an HTTP endpoint.
+
+### 5.7 What the loopback install keeps
+
+The low-friction path survives M6 as: `docker compose up -d --build --wait`, then
+`docker compose logs api` to read a one-time setup link, one form to set the owner's
+credential, done. No TLS, no identity provider, no extra container, no certificate
+authority. Sessions are long-lived on the owner's own machine. A local MCP client —
+Claude Code, or Claude Desktop through `mcp-remote` — pastes a personal access token
+minted in Settings; that paste is the whole cost. The LAN and mesh cases (mode P) add
+`PUBLIC_BASE_URL` and `ALLOWED_HOSTS` to `.env` and nothing else.
+
+### 5.8 The tests that gate the documentation
+
+The README and the docs site's deployment pages may recommend a `WEB_BIND` other than loopback, and
+may describe mode R at all, only when every one of these exists and passes. They are
+listed so the implementation issues can be checked against them rather than against a
+feeling.
+
+| # | Test | Where it runs |
+|---|---|---|
+| T1 | **The matrix, app layer.** One table of (family, method, principal, mode) → status and response profile (cookies, caching, challenge, security headers), driven by injected principals through the ASGI client, with each route's effective methods compared against its declaration and local-versus-OIDC as an explicit axis; family 8's rows drive each protocol role with its own state — a transaction, a binding cookie, a registered client — because one injected `anon` cannot exercise them; plus the enumeration test: every route in `app.routes` and every registered MCP tool is allowlisted or scoped, or the test fails naming it — the rows are generated from the route policy registry, and an undeclared effective route or mount (included routers expanded) fails before any row runs. Imports carry a plan-mutation axis across all three modes: a collection-only `merge` and an `add_only` upload succeed for `pat:write`, as does an archive whose settings sheet is present but unchanged; a plan with an `instance_settings` `UPDATE` is refused for `pat:write` before any row is written and succeeds for `owner`. | pytest |
+| T2 | **The matrix, ingress layer.** The same table through the packaged nginx: `/api/readyz` 404, `/openapi.json` 401 anonymous, `/.well-known/oauth-*` 404 in local mode, the SPA fallback still 200 for `/orders`, security headers present, `/api/../mcp` and `//api` normalised, one spelling per family — `/api/mcp/`, `/api//mcp/`, `//api/mcp/`, `/api/%6dcp/`, `/api/mcp%2f` and `/api/openapi.json` all 404 while `/mcp/` and `/openapi.json` answer; the mode axis is `--mode`: in local mode the three root documents and the six protocol routes answer their own 404 naming the mode; in OIDC mode the three root documents answer 200 with `public, max-age=3600` and this instance's issuer, the protocol routes are FastMCP's (a bare authorize 400, a bare token request 401, a bare registration 400, each `no-store`) and the anonymous MCP challenge carries the `resource_metadata` pointer; in both modes the bare `/.well-known/openid-configuration` is 404, the slash-less `/.well-known/oauth-protected-resource/mcp` is nginx's 404 and not its 301, an undeclared verb on a protocol route is the app's 405 with `Allow` and `no-store`, and `/mcp/.well-known/*`, `/api/mcp/.well-known/*`, `/api/.well-known/oauth-protected-resource/mcp/`, `/api/%2ewell-known/…` and `/api//.well-known/…` are 404; the rejection list is generated from the registry's declared spellings, with positive controls (`/api/docs` and `/api/healthz` answer for their principals) beside the negative ones; `/api/docs/oauth2-redirect` 404; bare `/mcp` reaches the bearer challenge as an ingress-only spelling; no response in the matrix carries a `Location` header except the auth flows' own and nginx's relative `/api` → `/api/` 301, and `/api/kits/` and `/mcp/auth/callback/?code=x&state=y` are 404 with none; the rows are the ingress spellings, not T1's copied across, and they assert the response profile and the declared methods as T1 does; collection-route and MCP positives sit beside `/api/docs` and `/api/healthz`, since two positives are not exhaustive protection against an over-broad `location`; and the CI job's existing MCP `tools/list` probe now carrying a token. | CI Integration, against `docker compose up` |
+| T3 | **Hostile Host and Origin.** For MCP initialize, a JSON write, `POST /import/preview` and `POST /import/apply` (multipart, both modes): hostile Host → 421; hostile Origin → 403; missing Origin on a cookie-borne write → 403; loopback origin against a loopback host → 200; a name in `ALLOWED_HOSTS` → 200. At both layers. | pytest + CI Integration |
+| T4 | **CSRF.** A valid session without the CSRF token → 403; the token with a hostile Origin → 403; a bearer with a hostile Origin → 200; the multipart routes named individually. | pytest |
+| T5 | **MCP never takes a cookie.** A valid session cookie and no bearer → 401 with `WWW-Authenticate: Bearer` and the resource-metadata pointer; the same request with a PAT → 200; an MCP OAuth token on a REST route → 401. | pytest |
+| T6 | **Scope.** `pat:read` on every family-5 and family-6 route → 403 and on every write tool → tool error; `pat:write` on every family-6 route → 403; an MCP grant requesting `instance:admin` is not issued; a non-owner OIDC identity is refused; a `pat:write` merge whose plan updates `instance_settings` → 403 with the settings row unchanged. | pytest |
+| T7 | **Lifecycle.** Logout, PAT revocation, credential reset, OIDC rebind and a start in the other authentication mode each invalidate exactly what §5.6 says; an expired session or token is 401; an unclaimed instance is 401 on every collection route; the setup token works once and 410s after. | pytest + e2e (real login and logout) |
+| T8 | **Brute force.** N failures → delay or 429 and audit rows; identical body and status for the two failure kinds; the setup token's length asserted; one address at the ceiling does not exclude another; a ladder decays; the verification budget refuses before the work, with a short `Retry-After`. **Resource bounds** (#221): a body one byte past a route's budget is 413 at the gate and at the guards, exactly the budget reaches the route; a refusal flood writes the bound and one summary row; a registration expires unless linked, the collection is capped, the quota and the cull hold. | pytest; the matrix at the packaged layer |
+| T9 | **Proxy trust.** A spoofed `X-Forwarded-For` from an untrusted peer is ignored for rate-limit keying and audit; from a `TRUSTED_PROXIES` peer it is honoured; `X-Forwarded-Host` never changes a redirect or a cookie; a `TRUSTED_PROXIES` peer sending `X-Forwarded-For: 127.0.0.1` still gets 404 from `/readyz`; every **self** `Location` names `PUBLIC_BASE_URL`'s scheme and host; a provider redirect names the configured endpoint and carries the canonical callback as its `redirect_uri`; a client redirect obeys its kind's binding, each kind its own row — a DCR client to a registered URI only (a different port on a registered loopback URI allowed, a different host refused), a DCR client under an operator allowlist needing both the allowlist and its registration, the synthesised upstream-id client refused or held to its configured callback, CIMD per its declaration; a forged `X-Forwarded-Host` changes none of them; an unbound `redirect_uri` is 400 with no `Location`; and a trailing-slash spelling of a callback or authorize path is 404 with no `Location` and no query string echoed. | pytest |
+| T10 | **Leakage.** Captured logs contain no token, password or session id across a full login, PAT and MCP run; `Cache-Control: no-store` on families 2–7 and on family 8's transaction and credential responses — consent GET and POST, callback, token, revoke, and their failure paths — with discovery asserted to carry its declared public caching instead; the archive's table registry contains no auth table (a rule-9 spec test); `GET /auth/session` and `/healthz` carry no version. | pytest |
+| T11 | **Timing shape.** An unknown token prefix and a wrong secret produce identical status and body; the compare is `compare_digest` by construction, and the test asserts the code path, not a stopwatch. | pytest |
+| T12 | **The deployment path.** The documented Caddy + compose configuration on a fresh VM: TLS, setup, login, a PAT REST call, MCP initialize through the proxy with a stream held open past 60 s, OAuth discovery through Caddy → nginx → api, `/api/readyz` 404 from outside, an `ALLOWED_HOSTS` lockout and its recovery. Scripted where possible; results recorded in the release notes. **Scripted (#194):** `backend/deployment_gate.py` runs it from a workstation over ssh — the matrix over https with the legacy stream held on both `/mcp` spellings and its longest inter-byte gap reported (the SDK pings every 15 s, so a hold that only waited would prove nothing), both mode-R lockouts, the `TRUSTED_PROXIES` observation, the OIDC-mode matrix signed in, and the tunnel variant — and prints the results block the release notes carry. **Its modern twin (#244), the `modern-hold` phase:** with the stack armed by `PLAMOTRACK_ENABLE_TEST_HOLD` (an isolated test instance), a `2026-07-28` `tools/call` SSE is held past the ping interval and aborted on both spellings, and the held database backend is then gone in `pg_stat_activity` — the era's cancellation (there is no session to DELETE) and connection cleanup. | release gate |
+| T13 | **Recovery.** The break-glass reset revokes sessions and restores access; a restore from the complete set — database (the OAuth state is a table in it, #192) and `.env` — brings back sessions, PATs and an *existing* MCP link — proved through public behaviour: the old client's refresh token returns 200 from `POST /mcp/token`, the access token completes an MCP initialize, and zero registrations occur after the restore; a restore without the env secrets leaves data intact and credentials re-mintable; a restore without the store — a dump taken before the link, or a signing key rotated — leaves data, sessions and PATs intact and MCP links to re-establish, as documented; `tests/test_mcp_oauth.py` proves the store-and-key rows in-process. **Scripted (#194):** the `break-glass` and `t13` phases of `backend/deployment_gate.py` — the reset and the revocation from the host, then a real DCR client linked through the chain and the three restores with the documented commands verbatim, each asserted through public behaviour (the old refresh token's status, an initialize with the new access token, the registration count). | release gate |
+
+### 5.9 Implementation split
+
+The bounded issues this model produces, in dependency order. Each closes against the
+matrix rows and tests it names; the credential decisions inside them are #30's.
+
+1. **Ingress identity and the Host/Origin guard** — `PUBLIC_BASE_URL`, `ALLOWED_HOSTS`,
+   `ALLOWED_ORIGINS`, `TRUSTED_PROXIES`; the 421/403 guard on REST and on FastMCP in
+   strict mode; nginx moved to the `envsubst` template mechanism with a default-deny
+   `server`, the `/api/readyz` block, the `.well-known` locations and the security
+   headers; one spelling per family (`/api/mcp`, `/api/mcp/*`, `/api/.well-known` and
+   `/api/openapi.json` rejected before the generic `/api/` location — typed in this
+   item, generated from the route policy registry once item 2 lands, with the positive
+   controls for `/api/docs`, `/api/healthz`, the collection routes and `/mcp/` from the start — the release ships its own ingress tests: the four forbidden namespaces with their normalised variants, and the permitted canonical routes); `redirect_slashes=False`
+   on both routers, nginx's relative `/api` → `/api/` 301 retained; uvicorn
+   started with
+   `--no-proxy-headers` and the app-side forwarded-address middleware that keeps the
+   raw peer; `/readyz` restricted to `internal`. Absorbs #39. **Its own release**, for
+   the lockout reason. No authentication yet, so the only client-visible change is the
+   alias spellings going dark. (T2, T3, T9.)
+   **Shipped 03/09/2026 (#186)**, with two calls the item's wording left open,
+   recorded so a later item does not re-derive them. (a) An unsafe request carrying
+   *neither* `Origin` nor `Referer` passes. What carries this is browser behaviour,
+   not the absence of cookies: a browser cannot omit `Origin` on a cross-origin unsafe
+   request — the Fetch algorithm sends `null` at worst, from a sandboxed or
+   no-referrer page, and `null` is refused — so the omission can only come from a
+   non-browser client, and refusing it would refuse every script and MCP client for
+   no gain (the PR #196 review probed 36 multipart shapes across Chromium 151,
+   Firefox 153 and WebKit 26.5, including forms, beacons, workers, sandboxed frames,
+   307/308 redirects and an extension, and every one carried an `Origin`). §5.6's
+   CSRF row conditions the missing-`Origin` denial on a cookie-borne principal, and
+   item 3 tightens the absent case when the session cookie arrives; the claim is not
+   proved for every legacy engine or privileged extension, which is one more reason
+   the credential-aware rule follows. (b) `TRUSTED_PROXIES` originally shipped as
+   the mechanism alone. **Resolved by item 8:** the bundled nginx now performs the
+   trusted-proxy walk for both its per-client limit key and audit, then overwrites a
+   private client-address header on every proxied path; the unpublished API accepts
+   that header only under a compose-only flag. A source-run API leaves the flag false
+   and continues to resolve `X-Forwarded-For` directly from `TRUSTED_PROXIES`.
+   Each walked hop is parsed and canonicalized before it becomes the resolved
+   address. A malformed or empty hop stops the walk at the last verified address;
+   it cannot become the address or be skipped to reach text farther left. IPs may
+   carry a numeric port; bracket suffixes, invalid ports and interface scope ids
+   are refused as forwarded addresses. The same parser validates the bundled
+   private header, and neither path changes the raw socket peer. This
+   avoids pretending the compose network has a static CIDR and prevents a caller from
+   supplying the private header through nginx. Also: T2's rows are typed in
+   `backend/ingress_matrix.py` (CI Integration runs it against the packaged stack)
+   until item 2's registry generates them.
+2. **Auth foundation** — owner, credential, session, personal-token and audit tables;
+   the principal model; the app-level default-deny dependency with the anonymous
+   allowlist; the route policy registry — family, credential policy, external spellings, serving layer and redirect destinations per effective route and mount — that the dependency, the ingress template and T1/T2 all read; the response profile applied adjacent to the router that selects the route — by the innermost middleware for the app's own routes, and by a binding on each mounted route (landed here rather than with item 7) that also enforces the transport's declared verbs in front of the SDK; the scope helper shared by routes and tools; the import-apply privilege check on plan content; the enumeration test, which also refuses a route graph no declaration can describe (a shadowed dispatch entry, a shared endpoint, an unknown route type) and pins the raw transport's accepted verbs behaviourally;
+   in-process principal injection for pytest; an e2e bootstrap that claims the owner
+   and reuses storage state. (T1, T10.)
+3. **Local owner authentication** — setup token and claim, login and logout, session
+   cookie and CSRF token, the failure budget, `/auth/session`, the SPA's setup and
+   login screens, the host-side recovery command, `/meta` and the docs moved behind
+   `collection:read` — FastAPI's generated schema/docs handlers disabled and
+   re-registered as guarded routes, the Swagger OAuth2 helper dropped. (T4, T7, T8,
+   T11.) **Shipped (#188):** the shipped `app` is default-deny (`create_app(
+   authorization=True)`); `Principal.via` distinguishes cookie-borne from bearer, and
+   the CSRF controls (Origin presence + session-bound `X-CSRF-Token`) apply to a
+   cookie-borne unsafe request only; `apply_import` reads `plan_requires_admin` off the
+   re-planned outcome. Two calls the item left open, recorded so a later item does not
+   re-derive them. (a) **A non-resolving session cookie resolves to `anon`, not 401**
+   (a deliberate narrowing of §5.5's "presented-and-failed → 401"): the cookie is
+   `HttpOnly`, so a browser cannot clear a stale one, and a 401 on a cookie the client
+   cannot drop would wedge `GET /auth/session` — the endpoint the SPA bootstraps and
+   recovers through — in a loop; treating a stale cookie as absent keeps recovery
+   automatic and the next login overwrites it. The strict rule stands for the **bearer**
+   (#189), where the client owns the header. (b) **Two disclosure-hardening items from
+   the family-13 row were deferred to a follow-up:** an unrouted `/api/*` path answered
+   `404` for everyone (not `401` for `anon`), and a malformed body to a protected route
+   was parsed to `422` before the dependency ran — both need auth to run *ahead of*
+   Starlette routing / FastAPI body parsing (a middleware-level check), which the
+   app-level dependency cannot do. **Shipped as M6-3b (#204):** the pre-routing gate
+   (`app/auth/prerouting.py`), one middleware directly above the response-profile
+   layer and inside the ingress guards, resolves the principal **once** per request the
+   REST app owns — stashed on the request state, so the dependency reads it rather than
+   resolving again (a second lookup and `last_used_at` touch per request; the count is
+   pinned by test) — and refuses `anon` before the router runs wherever the router would have
+   answered 404, 405 or the dependency's 401, reading what the request *would* reach
+   from the registry's own dispatch walk, never the URL string. It never grants: the
+   dependency stays the authority on every matched route, so a disagreement between the
+   gate's view of dispatch and the router's could only cost disclosure, and a test pins
+   the two agree route by route. Calls the item's wording left open, recorded here: (i)
+   **the anonymous families keep their own 405 and 422** — a wrong verb on `/healthz`, a
+   malformed login body — because there is no credential to gate on; a path is passed
+   through when *every* route matching it is `ANONYMOUS`. (ii) **`INTERNAL` is admitted
+   on a full match and refused on a partial one**: `GET /readyz` still self-guards on
+   the raw peer (family 10) and answers the outside peer 404, while `DELETE /readyz` is
+   401 to `anon` — a 405 there would name the route. (iii) **The `/mcp` mount is the
+   child's**: the gate resolves no principal for a request the mount claims, so a
+   cookie still never reaches FastMCP and `/mcp/<unrouted>` stays the child's 404. (iv)
+   **Bare `/mcp` at the source-run app is a family-13 spelling** — the mount does not
+   claim it, so it now reads 401 to `anon` and 404 to a signed-in caller (the family-7
+   row); through nginx it is still rewritten to `/mcp/` and reaches the bearer
+   challenge. (v) The wrong-verb refusal carries **no `Allow`**, and every gate refusal
+   carries the family-13 profile (`no-store`) stamped by the gate itself, since the
+   innermost middleware has no endpoint to read when the router never ran. (vi) **Family
+   8's namespace is the protocol's**: under `/.well-known/` with no route registered —
+   local mode — the router's 404 stands for everyone and no principal is resolved,
+   because discovery is anonymous by protocol and a `Bearer` challenge on a discovery URL
+   would be a claim about the resource; the namespace is `PROTOCOL_NAMESPACES`, derived
+   from the same family-8 declaration the ingress alias rejection reads, and the T2 rows
+   for the three root documents (404 until M6-7) are what found the first head's 401. What the
+   gate does not change: a presented-and-failed bearer is still the resolver's 401
+   `auth.bearer_invalid` on an unrouted path as on a routed one, and a stale cookie is
+   still `anon` (call (a)). The **e2e suite and CI Integration** need the auth
+   adaptation the flip requires (a Playwright global-setup that claims the owner and
+   reuses storage state, and auth on the specs' own API contexts); until that lands the
+   Integration job is red by construction.
+4. **Personal access tokens** — mint, list and revoke under Settings; bearer validation
+   on REST and MCP; per-tool scope enforcement; `mcp-remote` documentation. (T5, T6.)
+   **Shipped (#189):** `ptk_<12 hex>_<secret>`, digest of the whole token stored,
+   looked up by the public id, compared with `compare_digest` — against a dummy digest
+   when the id names no row (T11); one helper, `services/tokens.resolve_bearer`, behind
+   both the REST resolver and the FastMCP `TokenVerifier` on the mount; the per-tool
+   check is one FastMCP middleware on `tools/call` reading `MCP_TOOL_SCOPES`, refusing
+   before arguments are parsed; management is family 6 (`/auth/tokens`, the
+   `auth-tokens` tag); audit events `auth.token_minted`, `auth.token_revoked`,
+   `auth.token_use_after_revoke`; `WWW-Authenticate` on **every** 401 the app produces
+   (bare `Bearer` for an absent credential on a scoped route, `error="invalid_token"`
+   for a presented one, on REST and MCP alike) — which is why the family-3 form failures
+   (a wrong password, a wrong setup token) are now **403**, `CredentialRejectedError`:
+   RFC 9110 §15.5.2 makes a 401 owe a challenge applicable to the resource, those routes
+   refuse the only scheme the app speaks, and a challenge-less 401 was the round-1
+   narrowing Codex overruled (rounds 1–2, f2/f4). The codes are unchanged. Calls the
+   item's wording left open, recorded here: (a) **no
+   `resource_metadata` pointer in local mode** — there is no protected-resource
+   document until M6-7 (family 8 is OIDC-only), and a pointer at a 404 would be worse
+   than none; T5's "resource-metadata pointer" lands with item 7. (b) **A bearer on a
+   family-3 action is 403** by a route-policy flag (`bearer_refused`), not by a change
+   to the anonymous credential policy: the actions stay anonymous for browsers and
+   refuse tokens; `GET /auth/session` admits a token and reports the instance state
+   with no CSRF token. (c) **The tool list is not filtered by scope** — a `pat:read`
+   client sees the write tools and is refused at the call, with a message naming the
+   scope; hiding them would make an agent's failure silent. (d) **Revoked rows are
+   kept and listed**, so the owner can see when a leaked token was last used; nothing
+   deletes a token row. (e) **A wrong secret or an unknown id writes no audit row** —
+   it is a guess, and a row per bad request would be write amplification an
+   unauthenticated caller controls; a revoked token presented with its *correct*
+   secret does (that is a leak or an un-rotated client). The login failure budget
+   does not cover bearers — item 8's ingress `limit_req` is the brute-force control
+   for a 256-bit secret. (f) **The mount is built through
+   `create_streamable_http_app` directly**, because `FastMCP.http_app` reads the
+   provider off the shared server object and the pre-auth app (`create_app()`, the
+   harnesses) must keep an open mount in the same process; and the transport route's
+   `methods` — which FastMCP declares once a provider is set — are cleared, so the
+   registry's `RouteBinding` stays the one verb boundary (item 2's round-3 design)
+   rather than a Starlette 405 in a different shape without the profile. (g) T5's
+   "an MCP OAuth token on a REST route → 401" has no token to present until item 7;
+   the resolver's strictness on *every* failed bearer is what will make it true.
+   (h) The in-memory MCP client the tests use carries no header, so the tool-scope
+   middleware reads an injected principal off the server object **only when no HTTP
+   request is in flight** — the `app.state` seam's twin, unreachable from the wire.
+   (i) **The token value is normalised in the shared helper** (`resolve_bearer` strips
+   it): the REST parser and FastMCP's bearer backend cut the header differently
+   (`Bearer  <token>` reached the verifier with a leading space), and the one-helper
+   invariant has to hold at the value, not the call (round 1, f1). (j) **A live token
+   travels only in headers, in the tests and the matrix too**: request URIs are what
+   uvicorn's and nginx's access logs record, so the matrix's query-string row carries a
+   fake token — as does the unit query-string test — and CI scans the packaged stack's
+   `api` and `web` output for the real one after the run, refusing a vacuous scan by
+   first requiring an access record from each service (rounds 1–2, f3/f5); the unit
+   T10 attaches its capture to every logger, propagating or not, and says what it
+   cannot see (no access log exists under ASGITransport).
+5. **MCP OAuth compatibility spike** — the pinned FastMCP against Google and one
+   self-hosted OIDC provider, Claude web, ChatGPT web and MCP Inspector; the exact
+   generated route table snapshotted; each named client's version and the discovery
+   URLs it requests recorded; proxy-state persistence (a named volume or an
+   adapter) and the explicit signing key decided on evidence, and whichever store is
+   chosen joins the documented backup set — the backup contract is storage-independent.
+   Spike before schema; the failure rule from #30 applies verbatim.
+   **Done (#190, 04/09/2026; evidence on the issue):** Keycloak 26.6 and Google as
+   providers; MCP Inspector (DCR), Claude web and ChatGPT web (both CIMD) as clients,
+   nobody using the upstream-id client or the bare OpenID document, ChatGPT reading
+   the path-aware one; the **Postgres adapter** for proxy state, the table owned by
+   Alembic; an **explicit** `MCP_OAUTH_SIGNING_KEY` of 32 random bytes (FastMCP's
+   default store cannot even take random bytes — it decodes them as UTF-8 — and a
+   key derived from the client secret would empty the store on a secret rotation);
+   `verify_id_token=True` as the one verifier shape (Google's access tokens are
+   opaque); the MCP scope vocabulary is the provider's, so the collection scopes are
+   a fixed mapping; Google needs `access_type=offline&prompt=consent` for a refresh
+   token and `openid` alone as the required scope. Nothing measured needed protocol
+   code — every adapter is a documented extension point.
+6. **Browser OIDC** — the Authlib discovery flow, `state` and `nonce`, owner binding to
+   `(issuer, subject)`, rebind recovery, the mutually exclusive `local`/`oidc` mode
+   switch. (T6, T7.)
+   **Shipped (#191):** `AUTH_MODE=local|oidc` with `OIDC_ISSUER`, `OIDC_CLIENT_ID`,
+   `OIDC_CLIENT_SECRET` (env-only; `PUBLIC_BASE_URL` required in OIDC mode, since the
+   one registered redirect URI, `<PUBLIC_BASE_URL>/api/auth/oidc/callback`, is built
+   from it and never from `Host`); discovery from `<issuer>/.well-known/openid-
+   configuration`, refused unless its `issuer` equals the setting, fetched lazily and
+   cached so a provider outage is a 503 on new logins and nothing else (§5.6 safe
+   failure); the authorization code exchanged server-side (`client_secret_basic`,
+   PKCE S256) and the id_token verified against the provider's JWKS for signature,
+   `iss`, `aud`, `exp` and the transaction's `nonce`; the owner bound at the callback
+   to `(issuer, sub)`, a token without `sub` refused (the spike's Keycloak finding);
+   `recovery rebind-oidc` clears the binding, revokes every session and purges every
+   MCP OAuth grant, asking the provider to revoke what they held (#214). Calls the
+   item's wording left open, recorded here: (a) **`start` is a `POST` returning the
+   authorization URL as JSON, not a redirecting `GET`** — the setup token an unbound
+   instance needs travels in a body, never a query string (T10), the unsafe method
+   gets the Origin guard, and the SPA navigates; the transaction is a database row
+   (`oidc_login`, digests of `state` and of a browser-binding cookie, the `nonce`,
+   the PKCE verifier, ten minutes, single use) rather than a signed cookie, because
+   the app holds no signing secret and sessions are opaque rows already. (b) **The
+   claim in OIDC mode is the setup token plus the first provider login**, the same
+   single-use token local mode uses, and "unbound" — a claimed owner with no
+   `(issuer, subject)`, which is what a switch from local mode or a rebind leaves —
+   is reported as `unclaimed` and prints a token at start, so one mechanism serves
+   the fresh install, the mode switch and the recovery, and the operator never types
+   a subject. (c) **The transaction is consumed before the network calls**, so a
+   replayed callback finds it used and the write gate is never held across the
+   provider round trip; every refusal clears the binding cookie and sends the browser
+   to the SPA root with `?auth_error=<code>` (a word, never a description), while
+   the refusal itself is the audit row. (d) **The id_token is verified with joserfc**,
+   not Authlib's `jose` module, which the pinned Authlib deprecates in its favour; the
+   two HTTP calls are plain httpx — nothing Authlib-specific was needed. (e) The
+   registry's `modes` field declares which mode each family-3 action exists in; the
+   routes of the other mode are registered and answer 404 themselves. Two calls
+   from the Codex review of #209 (round 1): (f) **the id_token claim contract is one
+   explicit validator** (`validate_id_token_claims`), applied after the signature —
+   each claim's type before its value: `iss` and `sub` as strings; `aud` exactly this
+   client, as the string or a single-member array, an additional audience refused
+   as untrusted whatever `azp` says; `azp`, when present, the client id; `exp`, `iat`
+   (required) and `nbf` as **finite** numbers against the clock with one leeway —
+   NaN and the infinities are floats Python's JSON parser admits and JSON forbids,
+   and a comparison against NaN is always false (round 2); `nonce` the
+   transaction's string, not a list holding it. A generic JWT claims registry read a
+   list as *containing* the expected value and knew none of the OIDC-specific rules,
+   so a signed token naming another client as its authorized party opened a session.
+   (g) **A browser session is authority only in the mode that minted it**:
+   `session.auth_mode` is stamped at mint, the resolver refuses a session presented
+   under the other mode (the stale-cookie rule, so `anon`), and the API's start in a
+   new mode revokes every live session of the old one with an `auth.mode_changed`
+   audit row — the local→oidc switch signs everyone out as the operations doc
+   already said, the reverse switch does too, and switching back cannot resurrect a
+   cookie, because the revocation is a row, not an inference from the owner's
+   current columns.
+7. **MCP OAuth** — the FastMCP proxy wired with the spike's decisions, owner
+   restriction, scope mapping, persistence, the root discovery routes installed on the
+   parent app, the child's `/mcp/.well-known/*` aliases pruned, the per-route
+   protocol-role, method, mode and response-profile declarations for the child's
+   routes (the `no-store` stamp on the mount already lands with item 2; the
+   protocol routes' own profiles are declared there as they arrive), the client-redirect
+   binding per client kind (DCR exact with the loopback-port exception, an allowlist
+   narrowing registration rather than replacing it, the synthesised upstream-id client
+   refused or pinned to a configured callback, CIMD declared), and snapshots of both
+   the raw route set and the set nginx exposes, trailing slashes included. (T2, T5,
+   T6, T9, T10, T12.)
+   **Shipped (#192):** `app/auth/mcp_oauth.py` — a `PlamotrackOAuthProxy` over
+   FastMCP's `OAuthProxy`, built in OIDC mode on the enforced app and reading the
+   provider off `app.state`; the registry's `DISCOVERY_ROUTES` (three root documents,
+   family 8, `public, max-age=3600`) and `MCP_OAUTH_ROUTES` (six protocol routes with
+   a `ProtocolRole`, `no-store`), declared by path because the same paths exist in
+   both modes; `mcp_oauth_state` (migration `d5e9362140ea`) behind the
+   `py-key-value-aio` Postgres adapter under a Fernet wrapper; `MCP_OAUTH_SIGNING_KEY`
+   and `MCP_OAUTH_ALLOWED_REDIRECT_URIS` in `.env`. Calls the item's wording left
+   open, recorded here: (a) **OIDC mode requires an `https` `PUBLIC_BASE_URL`, or
+   `localhost`/`127.0.0.1`** — the MCP OAuth issuer is `<PUBLIC_BASE_URL>/mcp`, RFC
+   8414 requires https and the MCP SDK enforces it at route creation, and an
+   authorization server on plain http would hand bearer tokens to clients in the
+   clear; so a plain-http private-network deployment (§5.4 mode P) stays on local
+   mode, and the settings validator says so at start rather than the SDK at app
+   build. (b) **The proxy is an `OAuthProxy`, not an `OIDCProxy`**, because the
+   latter fetches discovery synchronously at construction and a provider down at
+   start would fail the start (§5.6); the three upstream-endpoint attributes are
+   **properties over `OidcProvider.cached_metadata`** — a name that resolves
+   nowhere until the document is fetched, the document's endpoints after — so no
+   reader in FastMCP can hold a stale copy, and each entry point that reaches the
+   provider fetches first (Codex #212 round 1 reproduced a restart between the
+   consent page and its approval: FastMCP's consent submission read the placeholder
+   the first head had left as a plain attribute). (c) **The mount requires no OAuth scope**:
+   the verifier declares none and the proxy advertises `openid` through
+   `valid_scopes`, which is what keeps a personal access token valid on `/mcp/` in
+   OIDC mode — `load_access_token` routes a `ptk_` bearer to the token verifier
+   unchanged — while an issued token maps to the fixed collection scopes by its
+   `kind`. (d) **The owner binding at issuance reuses the browser login's claim
+   validator** with `nonce=None` — the proxy's upstream request carries no nonce,
+   its transaction being bound by `state`, PKCE and the consent cookie — so one
+   contract decides what an id_token is on both paths; an identity that is not the
+   owner is `auth.mcp_identity_refused` with a subject fingerprint, a token that
+   fails the contract is `auth.oidc_login_failed` on `/mcp/token`, and a grant is
+   `auth.mcp_grant_issued` with a client fingerprint. The verified `(iss, sub)` is then
+   **grant state** (Codex #212 round 1, f3): carried under the proxy's own signature
+   in every token it issues (`upstream_claims`) and compared with the owner row on
+   every request, never re-derived from the stored id_token — FastMCP kept that
+   id_token as the thing verified per request, and a standards-conforming refresh
+   that omits a new one (OpenID Connect Core §12.2) left a freshly issued grant
+   refused once the old token's `exp` passed. A refresh that brings a new id_token
+   verifies it in full and requires the same owner — and (round 2, f7) the check
+   sits where the provider's response **becomes** the grant's upstream set, not
+   after it: the binding lives on the grant record too (`GrantRecord.owner`, the
+   digest of the id_token last verified), and the record gate (`GrantRecords`)
+   admits a refresh's set, on the client's exchange or the transparent refresh
+   behind a request, only with an identity that binding names; a stranger's, or an
+   owner-shaped token under the wrong key, ends the grant (`auth.mcp_grant_revoked`
+   with `ended_by=upstream_refresh`, beside the refusal) and stores nothing —
+   FastMCP persisted the set first and asked the hook afterwards on the exchange,
+   and never asked on the transparent path, so a refused set was the active one the
+   moment it arrived. Round 1's retry after such an answer is withdrawn: a provider
+   that answers a refresh with another identity is not one to retry against, and
+   restoring the previous upstream refresh token is unsafe once the provider may
+   have rotated it. And (round 3, f10) "the same owner" is the **record's** `(iss,
+   sub)`, not the owner row's: the owner check answers who the owner is, the
+   record answers who authorized this grant, and between a transition's owner
+   check and its write the two differ for the length of a rebind — the reviewed
+   head's gate verified a refresh's new id_token against the current owner and
+   adopted it, moving the record's binding from the old owner to the new one and
+   minting the new owner a successor on the old owner's grant. A candidate that
+   verifies and names the owner now but not the record's identity ends the grant
+   (OpenID Connect Core §12.2: a refreshed id_token keeps the issuer and
+   subject). (e) **`/revoke` is registered
+   unconditionally** and resolves to the provider's endpoint, or to none, on first
+   use, so the route table does not depend on the provider's document — and
+   **revocation is the grant's** (round 1, f1): FastMCP's own handler deleted a
+   refresh token's hash entry, left every access mapping to its TTL and posted the
+   `AccessToken.token` field upstream, so a revoked access token stayed usable for
+   the hour; now either half presented ends the grant record locally first, then
+   the provider is asked, best effort — through the browser login's provider client
+   since #241, never FastMCP's upstream client — to revoke *its* refresh token, and
+   `auth.mcp_grant_revoked` names the client. And the
+   presented token is **located, not authorized** (round 3, f9): the SDK's
+   revocation handler finds a token through the provider's `load_access_token`,
+   which on this proxy is the bearer path — the upstream set read and refreshed
+   when near or past expiry, a new id_token verified against the provider's keys,
+   the owner row consulted — and a lookup that answers `None` is, to the handler,
+   a token it does not hold: RFC 7009's silent 200 with nothing revoked. A provider
+   whose signing key had rotated while its JWKS was unreachable produced exactly
+   that — an `unavailable` verdict, rightly leaving the verified grant standing for
+   a *request*, and a revocation that reported success over a live grant. The
+   `/revoke` route is now built over `RevocationLookup` (the SDK's handler and
+   client authenticator, given a provider whose access-token lookup is
+   `locate_access_token`: the proxy's signature, the client id and binding from
+   its claims, the JTI mapping — the provider asked nothing, no owner row read),
+   so the locked ending runs whatever the provider is doing, and a grant the
+   owner row no longer names can still be ended by its client. The policy for an
+   access token past its own hour (round 4's measurement): its JTI mapping lives the
+   same hour and expires under a second after the JWT, so an expired access token is
+   unknown to revocation — RFC 7009 §2.2's permitted 200 — while the grant record
+   and the refresh token remain; the refresh token is the handle that ends the
+   grant, and its revocation removes the record. No claim is made that the two
+   expire in the same instant or that an expired access token can reach the grant.
+   (f) The
+   issued access token lives **one hour** whatever the provider's `expires_in`
+   (Keycloak's 300 s would have some clients re-authorising every idle period);
+   what bounds a grant is the provider's own token — re-read on every request,
+   refreshed 30 s ahead of its expiry, and the end of the grant when the provider
+   cannot refresh it. (f′) **One redemption per grant handle** (round 1, f2):
+   FastMCP's get→mint→delete of a code and get→refresh→rotate of a refresh token
+   are not atomic across requests or processes, so both minted twice under a
+   concurrent double redemption; every redemption of one handle now runs under a
+   transaction-scoped Postgres advisory lock — the write gate's shape — and the
+   second redeemer reads the first's deletion and gets `invalid_grant`. (f″) **One
+   transition per grant, revocation included** (round 2, f6): the lock is the
+   grant's — its record id once one exists, the code before — and revocation takes
+   it too, so a refresh that holds the provider's answer and a revocation never
+   interleave; whichever lands first, the record is gone afterwards. The reviewed
+   head's revocation deleted the record while a refresh writer — the client's
+   exchange under its per-token lock, the transparent refresh under FastMCP's
+   in-process one — wrote it back through the store's upsert. Every write to the
+   record now passes one gate; a writer this module has not enumerated meets the
+   same rule or fails loudly; and the transparent refresh, which the SDK answers
+   from the set it had already loaded when its refresh fails, leaves what it learned
+   on the transition for `load_access_token` to refuse the request. (g) `access_type=offline&prompt=consent` are forwarded to **every**
+   provider: Google issues no refresh token without them, an unknown parameter is
+   ignored (RFC 6749 §3.1), and a re-consent prompt at the rare moment of linking a
+   client is acceptable. (h) In local mode the nine paths are `NotInThisMode`
+   routes answering the `auth.not_in_this_mode` envelope, the family-3 shape;
+   T2's rows that expected the router's plain 404 "until M6-7" now expect that.
+   (i) FastMCP hands the *upstream* access token back in `AccessToken.token`; the
+   proxy replaces it with a digest reference on the request scope, as the token
+   verifier does for a PAT's public id. (j) **The binding owns a protocol route's
+   failure too** (round 1, f4): an exception escaping a mounted handler is the
+   `RouteBinding`'s 500 with the declared profile, not the child error layer's
+   plain text without it; a registration body that is not JSON is RFC 7591's
+   `invalid_client_metadata` in front of the SDK's unconditional `request.json()`;
+   and nginx's own `limit_req` refusal carries the envelope and `no-store`, with the
+   packaged matrix bursting the limiter to prove it. The sweep found the REST half
+   of the same class — an exception no handler caught is rendered by the parent's
+   `ServerErrorMiddleware`, above the profile layer, as a plain-text 500 with no
+   `Cache-Control` — closed by the app's own `Exception` handler, which stamps every
+   500 `no-store`. Not done here: a `resource_metadata`
+   pointer on the source-run bare `/mcp` 401 (still item 3(b)(iv)'s developer-only
+   gap; the packaged stack rewrites it); the CIMD fetch is not exercised
+   end-to-end in pytest (the SSRF guard refuses anything a test could serve — the
+   fetch is played, the manager's client construction and the binding are real).
+   (k) **One downstream client contract** (Codex #212 round 4, f11–f13) — the
+   same in the registration response, the stored client, the code exchange, the
+   refresh and the revocation, and tested from the wire (`tests/test_mcp_oauth_clients.py`:
+   the forms and headers a client sends, built by hand, never through the SDK's
+   models or the lifecycle suite's helpers). **Every dynamically registered client
+   is a public client** — `token_endpoint_auth_method=none`, PKCE — whatever it
+   asked for, and the registration response says so with no `client_secret` and no
+   `client_secret_expires_at` (RFC 7591 §3.2.1: substituted metadata, described
+   truthfully). The choice is one of scope, not a claim that a secret would protect
+   nothing — a confidential registration's secret would guard that registration's
+   stolen refresh token (round 5's correction) — but the measured clients (#190) are
+   a public DCR client and two CIMD clients, and confidential DCR would mean storing
+   and comparing shared secrets, repairing the SDK authenticator's Basic branch and a
+   second lifecycle matrix, for clients nobody has brought; the authority remains the
+   owner's upstream login and the grant machinery. The
+   reviewed head answered `client_secret_post` (the SDK's default for an absent or
+   null method) and a generated secret while storing a public client, so a client
+   held a credential the server never read. Both MCP SDK clients adapt: they send a
+   secret only when the response carries one, by its method (the Python client's
+   *request* defaults to `client_secret_post`, which is why the method is
+   substituted rather than refused). **A CIMD client authenticates as its document
+   says** — `none`, or `private_key_jwt` with the document's keys — on `/token` and
+   on `/revoke` alike, each assertion bound to the endpoint it is sent to (RFC 7523
+   §3) and usable once **per process** (the SDK validator's replay cache is in
+   memory: a restart or a second API process accepts an assertion again — RFC 7523
+   §3 makes replay tracking optional, and the grant itself is still redeemed once
+   under its lock whatever the process; round 5 measured both); the reviewed head's
+   `/revoke` used the plain SDK authenticator, which refused the method the client
+   had linked with. **The wire forms**: `client_id` in the form on both endpoints for
+   every kind — RFC 6749 §3.2.1 requires it of a public client; beside an assertion
+   it is a **compatibility restriction of this server** (RFC 7521 §4.2 makes it
+   optional; FastMCP's token endpoint requires it and the revocation endpoint
+   matches) — no secret from a public client (one sent anyway is ignored, as the
+   SDK does), the assertion fields for `private_key_jwt`; the SDK's revocation form
+   model made `client_secret` a required field, so the public form was `400
+   invalid_request` — and the suite's own helper had been sending an empty secret on
+   every revocation, adapting every test to the defect. A failed client
+   authentication is `401 invalid_client` on either endpoint (RFC 6749 §5.2, adopted
+   by RFC 7009 §2.2.1; the SDK's token handler said so and its revocation handler
+   said `unauthorized_client`). There are no `client_secret_*` clients under this
+   contract, so the SDK authenticator's Basic branch — which wants the client id in
+   the form beside the header — is unreachable. **Discovery says the same** (round
+   5, f14): the two authorization-server documents — the RFC 8414 spelling and its
+   OpenID alias under `/mcp` — are built here (`discovery_metadata`: the SDK's
+   `build_metadata` for the endpoints, PKCE, scopes and grant types, FastMCP's CIMD
+   flag, then the contract) and publish exactly `none` and `private_key_jwt` for the
+   token endpoint *and* for the revocation endpoint, and `RS256` as the one assertion
+   algorithm the pinned verifier accepts (an ES256 assertion under the document's own
+   EC key is refused — measured); the SDK's metadata had advertised both shared-secret
+   methods at the token endpoint, *only* the shared-secret methods at the revocation
+   endpoint, and no algorithm, so a client choosing from discovery had no usable way
+   to revoke. **And every field's value space is the protocol's**, unrecognised
+   values included (round 5, f15): a `token_type_hint` the server does not know is
+   ignored (RFC 7009 §2.2), never refused — the form's two-value enum had turned a
+   valid, authenticated revocation into `400 invalid_request`. **The boundary, field
+   by field** (round 6, f16–f19 — fixing the one field a review names leaves its
+   siblings inherited, so each of these has an owner): *assertion claims* —
+   `ClientAssertionAuthenticator` on both endpoints runs
+   `validate_client_assertion_claims` on the assertion *before* the SDK's validator
+   (RFC 7523 §3, RFC 7519 §4.1: an advertised `alg`, an object payload, string
+   `iss`/`sub`/`jti`, `aud` a string or a list of strings, `exp` required, every
+   NumericDate finite and never a boolean, `nbf` honoured with the SDK's 30 s skew),
+   so a refusal is `401 invalid_client` and spends nothing — the same assertion is
+   accepted once its `nbf` arrives; the SDK's validator never checked `nbf`, took
+   booleans and strings for dates, and used the raw `jti` as a dictionary key (a 500
+   for a list); *registration* — `register_client` canonicalises the admitted
+   metadata once and stores that same object (a `null` redirect list refused where
+   FastMCP invented `http://localhost/`; `response_types` and `grant_types` what the
+   server offers; a blank or padded `scope` the default; the display and software
+   fields kept); *request decoding* — `ProtocolRequest`, an ASGI guard on
+   `/authorize`, `/token` and `/revoke` (RFC 6749 §3.1–§3.2): a repeated parameter
+   is `invalid_request` before anything is redeemed, redirected or spent (the SDK's
+   `dict(form)` kept the last value), an empty value is an omitted one, a
+   `grant_type` the server does not offer is `unsupported_grant_type`, and an
+   omitted `code_challenge_method` is `plain` (RFC 7636 §4.3), which the SDK's
+   S256-only model then refuses as it refuses `plain` — an error redirect for a
+   registered client (RFC 7636 §4.4.1), where its default had read the omission as
+   `S256` and opened a transaction; *the generated URL* — `UnregisteredClientGuidance`
+   points an unknown client at the root authorization-server document, where FastMCP
+   named the child alias this instance prunes. **Admission, decoding, cardinality and
+   the SDK hand-off are one decision** (round 7, f20–f24 and f26 — round 6's guard had
+   chosen *whether to run* by a case-sensitive prefix of the media type, applied one
+   multiplicity rule to a field the protocol lets a client repeat, and let the SDK
+   select an assertion beside a second credential or, on a public client, ignore it):
+   *the body* — the media type is read as HTTP defines it (RFC 9110 §8.3.1) and a POST
+   whose body is anything but `application/x-www-form-urlencoded` is `400
+   invalid_request` before the SDK parses it (RFC 6749 §4.1.3), where
+   `Application/X-Www-Form-Urlencoded` and `multipart/form-data`, both of which the
+   SDK parses, had reached the handlers unguarded; *`resource` is a set* (RFC 8707 §2)
+   — exempt from the repetition rule, identical values collapsed, every member judged
+   by the proxy's own `accepts_resource` (FastMCP's comparison at `/authorize` as a
+   predicate), a set naming only this server one effective target, a set naming any
+   other target `invalid_target` — at `/authorize` the SDK's error redirect to the
+   registered callback, which the proxy's `authorize` renders itself because the SDK's
+   response vocabulary lacks the code and its catch-all had said `server_error`; at
+   `/token` a direct 400, where the SDK reads the field and judges nothing, so a foreign
+   target had been accepted there — and a value that does not parse refused directly;
+   handing the SDK the last value alone would discard the other requested target;
+   *a NumericDate's range* — ±2^53 (RFC 7493 §2.2), judged on the parsed value before
+   any float conversion, where `math.isfinite` on a 401-digit integer overflowed into a
+   500; *one mechanism per request* — an assertion beside a `client_secret` or an
+   `Authorization` header is `401 invalid_client` (RFC 6749 §2.3, RFC 7521 §4.2.1)
+   before the SDK selects anything, the same assertion then usable on a corrected
+   request, and a 401 to a client that used the header carries `WWW-Authenticate` in
+   its scheme (RFC 6749 §5.2); *the registered method* — an assertion from a client not
+   registered for `private_key_jwt` is refused, where the SDK's `none` branch accepted
+   the request with the assertion unread (so "judged in full whatever its method" had
+   been true of a private client only); *the metadata's cross-field rule* — `jwks` and
+   `jwks_uri` together are `invalid_client_metadata` (RFC 7591 §2). **And a request is
+   admitted once** (round 8, f27–f30): each of round 7's decisions had been a
+   refuse-only precheck in front of something that decided again — a comparison
+   borrowed from FastMCP that erased the fragment and the path's `;parameters`
+   before comparing (`…/mcp/#other` and `…/mcp/;different-resource` were this server,
+   and the guard's hand-off at `/authorize` was re-judged by that same normaliser); a
+   repetition rule over every name where RFC 6749 §3.1 (erratum 5708) limits it to the
+   parameters the protocol defines and says to ignore the rest; an authenticator that
+   read one `Authorization` occurrence and returned to an SDK branch that read none
+   (a public client with `Basic`, `Bearer` or an unknown scheme beside its valid
+   handle succeeded); and a client looked up twice, so a document served with
+   `no-store` could say `private_key_jwt` to the precheck and `none` to the SDK, which
+   accepted an assertion under a key the document never published. The invariant: a
+   request is admitted once, from its recognised fields and every credential
+   occurrence, against one client snapshot, with the resource decision carried through
+   the hand-off. *The resource* — `resource_identity` is this server's comparison: a
+   fragment (any `#`) or a missing scheme is malformed (a direct 400 on both
+   endpoints), otherwise scheme, authority and the whole path with its parameters,
+   with two equivalences and no other — a trailing slash ignored, the query not
+   compared (RFC 8707 says a client should not send one; FastMCP allows those that
+   do) — the scheme case-folded (RFC 3986 §6.2.2.1; `urlsplit` and FastMCP's
+   `urlparse` both fold it — round 9's correction of "as written") and the authority
+   as the protected-resource document spelled it; `authorize` applies it again behind
+   the hand-off, so FastMCP's looser check decides nothing (it cannot refuse what this
+   accepted). *And parsing is not validation* (round 9, f31–f32): the value is judged
+   against RFC 3986's `absolute-URI` grammar (`ABSOLUTE_URI`, Appendix A's rules) on
+   the decoded string before `urlsplit` — a parser, which admitted a tab in the
+   authority, a carriage return in the path and a leading NUL (some silently stripped),
+   and never looked at the query the comparison ignores (an invalid percent-escape, an
+   unescaped space) — with a valid percent-escape admitted; and the inline key set of a
+   CIMD document has a contract where FastMCP's extraction read it (`keys` must be an
+   array, entries that cannot be processed are ignored as RFC 7517 §5.1 says, and a
+   set with no usable entry is a client refusal), where a `keys` object or string or a
+   null entry had been a 500 on both endpoints — round 9 filtered a copy of the record
+   in front of the SDK's extraction; since round 11 the validator's own inline
+   selection owns usability and selection together, as the SDK's remote path does,
+   and the copy retired. *And the selected key keeps its authorization* (round 10, f33): a
+   JWK's `alg`, `use` and `key_ops` are the key's authorization for an operation (RFC
+   7517 §4.2–§4.4; RFC 8725 §3.1 requires the key–algorithm association checked), and
+   FastMCP converted the JWK it selected to a PEM before verifying, on the inline and
+   the fetched path alike, so a mathematically valid RS256 signature authenticated
+   under a key published as `alg: RS512`, `use: enc` or `key_ops: ["sign"]`. The
+   repair keeps one cryptographic validator and the SDK's selection: the JWK whose
+   material the SDK selected — identified by the PEM the SDK produced from it, which
+   is the same whatever metadata the JWK carries — is handed to FastMCP's verifier in
+   place of that PEM (`RestrictedKeyAssertionValidator` for the inline set,
+   `RestrictedKeyVerifier` for the fetched one, keeping the JWKs beside the SDK's own
+   PEM cache and so within its cache lifetime), and joserfc enforces the restrictions
+   in the very decode that verifies the signature. A set publishing one material
+   twice is judged by its first entry; a set changed after it was fetched is seen at
+   the cache's expiry, as key material would be. *Round 11 (f34–f35) withdrew the
+   first-entry rule:* the record is carried by the identity the selection used — the
+   assertion's `kid`, or the only key when it names none — so two `kid`s publishing
+   one material are two records, each judged by its own metadata (the SDK's cache
+   keeps them by `kid` too; the inline selection is written out by the SDK's rule and
+   returns the record it selects; a fetched record whose material is not the PEM the
+   SDK selected is refused as a disagreement, never degraded to the PEM); and the
+   inline set is filtered by the remote path's own usability predicate — an object
+   whose material FastMCP cannot import is ignored, as RFC 7517 §5 says — before the
+   single-key fallback counts it, where counting it had denied that fallback to an
+   assertion naming no `kid` inline while the fetched path allowed it. *Round 12 (f36)
+   made the rule the SDK's remote one on both paths:* a named `kid` that matches nothing
+   is a refusal, and the single-key fallback is for an assertion naming none — absent or
+   empty, the SDK's remote reading of both — where the SDK's inline extraction, which
+   round 11 had written out, fell back to the only key whenever no record matched, so an
+   assertion signed by the only published key but naming a `kid` the set does not hold
+   authenticated inline and was refused fetched; a `kid` that is not a string is refused
+   by joserfc's decode of the header on both paths, in the call that verifies the
+   signature, and no type guard stands in front of that decision as a second owner. *Round
+   13 (f37) stated the rule once, over usable records:* `select_records` is the selection
+   for both paths — a named `kid` the records carrying it, none a refusal; no `kid` the
+   only usable record, two an ambiguous set — before either representation is consulted;
+   the fetched path keeps every usable record of the fetch in the set's order, where it
+   had kept them by the SDK's cache slots (`kid or "_default"`) and a fallback that
+   counted slots saw one key where the set held two unnamed records, accepting fetched
+   what the inline set refused; the SDK's own selection runs behind it, able to refuse
+   but not to admit, its PEM the disagreement check and the tie-break where one `kid` is
+   published twice (the last, its cache's; the inline set's first — the documented
+   boundary, unchanged). *Round 14 (f38) closed the representation below the rule:* the
+   SDK consumes the same records — `_fetch_jwks` hands it the usable-record list in the
+   document's place, where the raw array had reached the SDK's own skip loop, which the
+   inline path never runs, and an unusable record whose `kid` was a list choked it
+   (`skipped_kids.add`), refusing fetched a set the inline path accepted; every consumer
+   of the set now consumes the records the rule is stated over. *The recognised fields* —
+   `RECOGNISED_PARAMETERS` per endpoint; an unknown parameter is discarded before its
+   multiplicity is judged, a recognised credential repeated is still refused. *The
+   credential inventory* — every raw `Authorization` occurrence counts, and any one is a
+   failed HTTP attempt (`invalid_client`, the challenge in its scheme) since no HTTP
+   scheme is admitted, with or without an assertion; a `client_secret` beside an
+   assertion is the second mechanism; a stray one with no assertion is ignored as the
+   SDK ignores it. *One snapshot* — `ClientAssertionAuthenticator` is the SDK's base
+   class with admission written out: the client resolved once, the method it names,
+   the document whose keys verify the assertion (FastMCP's own validator, unchanged)
+   and the authenticated client the handler receives all that record. **Who owns what,
+   per endpoint** (the audit the round asked for; a documented extension point says
+   where code runs, not what surrounds it): the **request decoding** of the three
+   client-driven endpoints — ours (`ProtocolRequest`: the body representation, the
+   recognised fields, multiplicity, the `resource` set, emptiness, the protocol's own
+   errors, the PKCE default); **client authentication** — ours end to end
+   (`ClientAssertionAuthenticator`: the credential inventory, the claim contract, one
+   snapshot, dispatch by its method), signature, key, issuer, audience, lifetime and
+   replay the SDK's validator behind it; the **resource decision and its
+   `invalid_target` redirect** — ours (`resource_identity`, `authorize`), the client and
+   redirect-URI validation before it the SDK's; the **challenge** on a 401 — ours; the
+   **inline key set's shape and selection** — ours (the validator's own inline
+   selection); the **selected key's
+   authorization** — ours in the sense that the JWK itself reaches the verifier
+   (`RestrictedKeyAssertionValidator`, `RestrictedKeyVerifier`), the selection, the
+   fetch, the cache and the signature FastMCP's and the restriction check joserfc's
+   (round 10); the **discovery documents** — ours
+   (`discovery_metadata`, served through the SDK's `MetadataHandler` on the routes
+   `get_routes` rebuilds; the root documents are that list filtered), the
+   protected-resource document FastMCP's; `/register` — validation the SDK's handler (metadata
+   model, grant and response types, scopes), persistence FastMCP's `register_client`
+   under the proxy's override that canonicalises the whole object before it is
+   stored or returned and stores that object (pinned by the contract suite, field
+   for field), the response the SDK's from that same object, the non-JSON body
+   ours (`guard_registration_body`), the unregistered-client guidance's discovery
+   URL ours (`UnregisteredClientGuidance`); `/authorize` — client lookup
+   and redirect binding ours (`get_client`, `BoundDCRClient`, the CIMD document),
+   PKCE and the transaction FastMCP's, endpoint resolution ours; `/consent` and
+   `/auth/callback` — FastMCP's, with the resolution and the 503 ours; `/token` —
+   client authentication FastMCP's `PrivateKeyJWTClientAuthenticator` (`none`,
+   `private_key_jwt`; the shared-secret branches unreachable), the form the SDK's
+   token models, grant lookup and issuance FastMCP's inside the proxy's transitions
+   (owner check, lock, record gate, minting hook), errors the SDK's; `/revoke` —
+   client authentication the same class bound to the revocation URL
+   (`_revocation_authenticator`), the form ours (`RevocationForm`), the steps the
+   SDK's in the SDK's order (`GrantRevocation`), token lookup ours
+   (`RevocationLookup`, `locate_access_token`, the SDK's refresh-token hash lookup),
+   revocation ours under the grant lock; `/mcp/` — bearer authorization ours over
+   FastMCP's token swap (`load_access_token`), the transparent refresh a transition;
+   the response profile everywhere the `RouteBinding`'s.
+8. **Audit, rate limiting and log hygiene** — the event table and its prune, ingress
+   `limit_req`, the app's budget, the log-grep test. (T8, T10.) **Shipped (#193):**
+   security events are appended through `services/audit.py`; state-changing events
+   share the mutation transaction, while pre-routing Host/Origin refusals own a small
+   transaction because no request-scoped session exists yet. Each row carries the
+   principal kind and credential id when one exists, the resolved client address and
+   path/tool, with fixed structured detail only — no request body, query string or
+   secret. OAuth client ids and refused OIDC subjects are external opaque values:
+   `audit.external_reference` serializes them as a fixed-size SHA-256 fingerprint,
+   not a partially displayed URL that may still carry secrets in its path/userinfo.
+   The whole identifier participates, so hidden query/fragment differences remain
+   correlatable. Protocol identifiers and verified principal ids stay unchanged.
+   Browser provider errors become fixed `access_denied` / `missing_code` / `other`
+   categories; token-exchange logs retain HTTP status without raw provider payloads.
+   This controls newly emitted metadata; it does not rewrite historical rows. The
+   bundled nginx's outer unknown-Host 421 necessarily remains an access-log event
+   because it refuses the request before the API; the app's repeated Host check
+   is the database-audited event. The host-side `prune-audit --older-than-days N`
+   command uses a strict cutoff and records its own result. OIDC recovery emits
+   `auth.oidc_rebind` alongside its session-revocation and recovery events. Four independent nginx zones key
+   families 2, 3, 8 and 9 by `$binary_remote_addr` after the trusted-proxy walk; their
+   maps read a server-rewrite snapshot of nginx's normalised `$uri`, taken before the
+   generic `/api/` location strips the prefix; raw `$request_uri` lets alternative
+   spellings bypass the key, while live `$uri` has already lost the prefix by the limit
+   phase. Family 8 subsumes the three OAuth-specific limits introduced in #192;
+   discovery and all six protocol endpoints share that budget, with no location-level
+   overrides. Every 429 retains #212's no-store envelope, security headers and
+   Retry-After. Uvicorn stays at one worker while the
+   login/setup failure budget is in process. CI drives setup, sign-out, a real password
+   login, PAT mint/use/revoke, REST and MCP, proves all four zones eventually return
+   429, requires access records from both containers, and scans their complete output
+   for the run's password, PAT and session value. After #192, T10 also sends
+   synthetic OAuth code/state and Referer values through normal and throttled
+   callback requests. Uvicorn strips queries in its access-record policy installed
+   before constructing the app's authentication libraries; authentication-library records retain severity/source but
+   omit opaque messages, arguments and tracebacks (the SDK logs failed callback
+   state and provider errors). The application's own safe auth diagnostics and
+   audit events remain. nginx logs the original public path without queries or
+   headers. nginx's unformattable request-error diagnostics are discarded because
+   they echo those credentials too; status and upstream timing remain in the access
+   log, and startup/configuration failures still reach stderr.
+9. **Reference TLS deployment and documentation** — the Caddy configuration,
+   `docs/operations.md` rewritten around the modes and its backup section around the
+   two-part set (database — the OAuth state is a table in it since #192 — and
+   `.env`), the README's alpha warning
+   rewritten, the `.env.example` keys. (T12, T13.)
+   **Shipped (#194, 07/09/2026):** `deploy/caddy/` — the reference Caddyfile (Let's
+   Encrypt through Cloudflare's DNS-01 challenge, no `log` directive) and the systemd
+   drop-in that supplies the token; `docs/operations.md` rebuilt around the four ways
+   to run it (a private network, an operator's own proxy as a contract, a Cloudflare
+   Tunnel, Caddy on a VPS) and the two-part backup set; the README's alpha warning
+   rewritten; `backend/deployment_gate.py` (T12/T13) with its host fixture under
+   `.agents/deployment-gate/`, run green against a fresh Debian LXC through Caddy and
+   through a Cloudflare Tunnel before the docs described either (§5.4, §5.8). Two
+   calls, recorded in §5.6 and AGENTS rule 12: in the bundled stack a loopback
+   `TRUSTED_PROXIES` entry also trusts the Compose gateway, and both `/mcp` spellings
+   at nginx carry the family's settings.
+10. **Release** — notes leading with `ALLOWED_HOSTS`, then the client-visible changes
+    in §5.5; the upgrade path for existing instances (they come up unclaimed and fail
+    closed until the setup token is used).
+    **Shipped (#195, v0.3.0-alpha):** the minor version moved because
+    every caller's contract changed — a request that answered 200 on 0.2.10 answers
+    401 on 0.3.0 without a credential. The notes lead with the upgrade path (back up,
+    `up --build`, read the setup token from the API log, claim, mint a token for every
+    script and MCP client), then the §5.5 client-visible changes, the features, and
+    the deployment gate's results block as observed against the tagged tree on the
+    #194 host; the four migrations since 0.2.10 are additive and each states what its
+    downgrade discards; #206 is recorded as a known limitation rather than fixed, and
+    the release candidate's security scan added item 11 before the tag (#221, which
+    closed #210); #30 closed with the release, its evidence being §5.8's tests and the
+    gate — rerun on the tree that carries item 11.
+11. **Availability bounds from the 0.3.0 scan (#221)** — the owner's full-repository
+    security scan of the release candidate (three source passes at `ed48038`) found
+    no bypass and four medium availability findings, fixed before the tag on one
+    branch: (1) body budgets on every anonymous route that takes a body, declared
+    once (`RoutePolicy.max_body_bytes`), enforced by one bounded reader
+    (`app/auth/body.py`) in the pre-routing gate and the protocol guards before any
+    parser, duplicated at nginx from the same declaration (a second generated region
+    of the template), 413 in the envelope; (2) client records in `mcp_oauth_state`
+    written with a day's lifetime until a grant links them (`ClientRecords`,
+    FastMCP's own writes included), a cap on live records, a per-address registration
+    quota, expired rows culled from the two anonymous entry points (the adapter never
+    deleted them), FastMCP's CIMD document cache bounded; (3) the refusal budget on
+    the audit recorder and optional automatic retention (#210 closed with it); (4)
+    the failure ladders per action and client address with decay, and the
+    instance-wide verification budget. Calls recorded here: a refusal is answered
+    whatever the refusal budget says — only its row is in question; a suppressed
+    count is written with the first recorded refusal of a later window, so a flood
+    that stops leaves its count unwritten until the next refusal; the registration
+    CIMD lookup at the cap is an unknown client rather than a 500; the collection's
+    cap refuses new keys only, so a full collection never breaks a client that
+    exists; the
+    registration cap is checked before the write, without a lock, and a race can
+    overshoot it by the registrations in flight at once (nginx's per-address burst
+    bounds each address, not the aggregate), which is the bound accepted; the
+    verification budget bounds the worker's Argon2 work and, on its own, would let a
+    stream of fresh addresses hold the owner out — so a browser that still holds a
+    session cookie the database recognises is admitted from a reserved bucket
+    (Codex #222 round 1, f1), and a browser without one — signed out normally, past
+    the cookie's thirty days, cleared, or restored past its row — during a sustained
+    distributed flood is explicitly *not* bounded by the app: the operator's ingress
+    is (round 2, f4 qualified the promise to exactly that; a persistent device
+    capability that would survive a normal logout is a separate product contract, #227,
+    not folded in here); the cheap paths — the setup token,
+    the OIDC start — spend no verification token; a client record is created in one
+    place (`ClientRecords.put` on a new key), so that is where the collection's
+    expired rows are culled, whichever route materialised the client — `/mcp/token`
+    and `/mcp/revoke` look clients up without reaching the guard or `authorize`
+    (f2); and a body whose client disconnects before its last message is neither
+    replayed nor answered (f3) — the server's framing decides where a body ends,
+    a declared length shorter than it is the server's to refuse.
+    **Restated with FastMCP 4 (M6.1, #242):** the client-record bounds describe
+    dynamically registered clients only. FastMCP 4 resolves a CIMD client (Claude
+    web, ChatGPT web) through its in-process document cache on every lookup and
+    persists nothing — a row an earlier version stored is the fallback until the
+    document has been refreshed, then deleted (`OAuthProxy.get_client`) — so the
+    lifetime, the cap and the cull above count registrations, the cull at creation
+    has one caller (the registration), and a flood of registrations costs a web
+    client nothing, where the call above ("a CIMD lookup at the cap is an unknown
+    client") locked the web clients out of a full collection. The bound on the
+    CIMD side is the document cache (`CIMD_CACHE_ENTRIES`, tighter than FastMCP
+    4's own thousand, and its store path writes through it). Once no row stands
+    behind a web client, its own exchanges depend on its document: while the
+    document's host cannot be reached and the cache holds no fresh copy — an hour
+    by default, `max-age` and `Expires` honoured from receipt (a response already
+    aged upstream keeps a full lifetime, the fetcher reading neither `Age` nor
+    `Date`: #249, inherited from 3.4.5, held by a strict xfail), a document served
+    `no-store` never kept, a fresh process holding none — that client's
+    `/mcp/token` and `/mcp/revoke` are `401 invalid_client`
+    at the SDK's client-authentication step, the provider asked nothing, nothing
+    spent and nothing ended, while the grant's access token keeps working and the
+    transparent refresh behind a request proceeds (that path never looks the
+    client up), and the same refresh token and revocation succeed once the host
+    answers. Real 0.4.0 rows loaded by 4.0.3 validate as they are (the model
+    gained `application_type`, with a default) in both lifetimes; an expired one
+    backs nothing and waits for the cull (`tests/test_mcp_oauth_registrations.py`).
+
+M6.1's protocol work stays separate (§7.1). Where a target MCP client turns out to need
+the newer protocol before it can be tested, that is recorded as a dependency, not folded
+in.
+
+**Superseded by this section:** the earlier §5 statement that remote MCP clients
+authenticate "via the MCP OAuth contract" is narrowed — token-capable clients use a
+personal access token in any mode, and the OAuth path exists only in OIDC mode, per
+#30's product boundary; §8's "M6 supplies a tested VPS deployment path" now means mode
+R exactly as §5.4 defines it; and the compose file's "`WEB_BIND` is the whole
+access-control story" stops being true at item 1 above.
 
 ---
 
@@ -878,7 +2177,11 @@ is `/mcp/` on the API port (streamable HTTP).
   served by the same function as REST's `GET /meta` so the two cannot disagree.
   What `create_order`'s "omit currency_code" advice used to point at as a `meta`
   resource that never existed
-- `list_kits(status?, grade?, series?)`
+- `get_summary()` (#233) — the collection at a glance: kits per pipeline status,
+  orders per stage; the same function as REST's `GET /summary`, so the counts an
+  agent reads are the counts Home shows. Rows come from the list tools, and every
+  order row carries its `stage`
+- `list_kits(status?, grade?, series?, sort?, limit?)` — `sort` is `created` (oldest first), `newest` (most recently added first), `recent` (the status clock, newest first), `started` or `completed` (the build's own date, newest first, undated kits last — #247) or `name`; `limit` the first N of that order (§13.4)
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before
   writing a spelling nobody uses
@@ -924,12 +2227,22 @@ is `/mcp/` on the API port (streamable HTTP).
   of them that every new column would have to be added to twice. `update_catalog_display`
   says in its description that display items carry no kit link, so an agent doesn't go
   looking for one or improvise a structured note (§3.5a)
-- `create_order(retailer, date, items[], order_number?, tracking?, received?,
-  received_at?, shipped_at?)` — the items array drives the same fan-out/increment
-  dispatch as the REST endpoint; retailer matched by name case-insensitively,
-  created if new; `received_at` backdates an arrival logged after the fact (§3.9);
+- `create_order(retailer | retailer_id, date, items[], order_number?, tracking?,
+  notes?, received?, received_at?, shipped_at?)` — the items array drives the same
+  fan-out/increment dispatch as the REST endpoint; the shop is named by exactly one
+  of `retailer_id` (strict: an unknown id is not found, and nothing is created) or
+  `retailer`, a name matched case-insensitively and created if new. A `retailer`
+  that parses as an id is refused (`name.is_id`), even where a stored shop carries
+  that string as its name: the tool once had no id field, and an agent holding an
+  id from `list_retailers` got a shop named after it (#289) — the two fields' value
+  spaces are disjoint, so an id can never become a name. The importer's
+  `retailer_name` keeps its select-or-create without that refusal: its preview
+  lists the shop it would create before anything is written, which is the signal
+  the tool lacked, and an archive from an instance that already holds such a row
+  must still import.
+  `received_at` backdates an arrival logged after the fact (§3.9);
   `shipped_at` (#95) needs no flag and lands spawned kits in_transit
-- `list_orders(pending_only?)` — find the order a shipping or arrival email belongs to
+- `list_orders(pending_only?, sort?, limit?)` — find the order a shipping or arrival email belongs to; `sort` is `placed` (newest order date first) or `recent` (the last status change: received, else shipped, else placed, a placement date read as its midnight in the instance's time zone); `limit` the first N
 - `get_order(id)` — one order in full, line ids and spawned kits included; the read an
   edit starts from (#97)
 - `update_order(id, changes, remove_missing_lines?)` — header corrections and/or the
@@ -977,19 +2290,80 @@ skills (the first covers Gunpla) that teach an agent the naming and classificati
 conventions plamotrack deliberately doesn't encode. The app stays generic (§9.1);
 the genre knowledge lives with the agent that applies it.
 
-### 7.1 Protocol modernisation 🔨 **Planned (M6.1)**
+### 7.1 Protocol modernisation ✅ **Built (M6.1, v0.4.1-alpha, 15/09/2026)**
 
-The current server uses the handshake/session-era MCP implementation. The `2026-07-28`
-revision changes the transport substantially: a stateless core, discovery in place of a
-required initialize handshake, standard routing headers, cache hints, and hardened OAuth
-behaviour. Plamotrack's tool handlers are already application-stateless — each call gets
-its durable state from Postgres — so the product architecture does not need to change.
+Since the FastMCP 4 bump (#243, on the M6.1 integration branch) the server serves two
+protocol eras from the one `/mcp` endpoint, decided per request from
+`MCP-Protocol-Version`: the handshake era — initialize, a session id, the standalone
+SSE channel — for every client on the current generation, and the `2026-07-28`
+revision, which changes the transport substantially: a stateless core, discovery
+(`server/discover`) in place of a required initialize handshake, standard routing
+headers (`Mcp-Method`, `Mcp-Name`), cache hints, and hardened OAuth behaviour. Plamotrack's
+tool handlers are already application-stateless — each call gets its durable state from
+Postgres — so the product architecture did not change; what changed is the surface every
+control on the mount is measured against: `tests/test_mcp_eras.py` drives the bearer
+refusal, the per-tool scope hook, the verb binding, the body budget and the per-request
+owner comparison on a proxy token through the modern era, and the in-memory client
+through both. The refusal contract on the mount is the RFC 6750 challenge in both eras
+(a bare `Bearer` for an absent credential — `resource_metadata` added in OIDC mode —
+and `error="invalid_token"` for a failed one, with `no-store` and no session, each pair
+byte-identical across the eras), never REST's envelope — the spike's brief assumed
+otherwise and its four probes were corrected, not the server. The bump also moves the
+MCP proxy's provider exchange, both refresh paths and a fetched client-assertion JWKS
+onto httpx2 and the system trust store (truststore) beside the CIMD fetch; the browser
+login and the provider revocation stay on the app's own httpx. Compatibility with a
+deployed provider's certificate chain behind a private CA is #244's to measure, not
+something this bump proved inert (Codex #246 round 1).
 
 M6.1 adds the modern protocol only through an SDK/framework release that serves modern
 and legacy clients from the same endpoint. Completion means conformance coverage plus a
 small client matrix, not merely raising a dependency version. Tasks, multi-round-trip
 requests, subscriptions, and MCP Apps are not roadmap items: the current short,
 transactional tools do not need them.
+
+**Sequencing (11/09/2026).** FastMCP 4.0 (GA 31/08/2026) is the framework release the
+paragraph above waits for: one endpoint serves the `2026-07-28` era and the handshake era,
+negotiated per connection. A compatibility spike (08/09/2026, Codex; re-verified) showed
+the tool and service model survives the bump unchanged and found three things a bare bump
+would get wrong: the provider-side revocation of an MCP OAuth grant silently stops, because
+FastMCP 4's upstream client has no revoke method and the best-effort catch-all hides the
+error (#241); CIMD clients are no longer persisted, which §5.6's client-record contract
+assumed (#242); and a dynamic registration asking for `private_key_jwt` is refused by the
+SDK before this server's canonicalisation runs (#243). The work lands in that order —
+#241 on `main` first, a 3.x fix that ships alone; then the bump (#243), the CIMD contract
+(#242) and the gate (#244) on the integration branch `m6.1-fastmcp4`, released together
+(the rule is in AGENTS.md → Git conventions).
+
+**The gate (#244).** Completion is coverage of both eras with real clients, not the version
+bump. What proves it: `tests/test_mcp_eras.py` drives every control on the mount through the
+modern era and the in-memory client through both; `tests/test_mcp_modern_hold.py` and the
+deployment gate's `modern-hold` phase are the modern twin of the legacy held-stream — the
+`2026-07-28` era commits `text/event-stream` and keepalive-pings a handler that runs past the
+ping interval even with no notification (`json_response=False`), so a held modern SSE is
+observed, aborted, and its server-side cancellation and connection cleanup verified on both
+`/mcp` spellings (the mount exposes no long-running tool, so the hold is built around an
+existing `get_meta` call made to wait by env-gated test instrumentation,
+`app/mcp_hold_probe.py`, off in the shipped image — the same class of test-only seam as the
+principal injection of §5.5); CI lists the tools through nginx with a 4.0.3 client in both
+`auto` (modern) and `mode="legacy"` and with a frozen FastMCP 3.4.5 / SDK 1.29.0 client; and
+a real-client acceptance matrix (MCP Inspector, Claude web and ChatGPT web through the
+provider's OAuth, Claude Desktop and Claude Code by PAT, a conformance run) plus the packaged
+deployment gate (T12/T13, both auth modes) is recorded in the release notes as observed. The
+marker above, README's roadmap row and §11 flip to Built **in the release PR** that lands the
+branch on `main` — after that gate and matrix pass — never with the dependency version.
+
+**Built (15/09/2026).** The acceptance matrix ran on 15/09/2026 against a v0.4.1 candidate
+on the gate host through a Cloudflare Tunnel, in OIDC mode: a fresh v0.4.0-alpha install,
+Claude web (CIMD), ChatGPT web (CIMD), Gemini Spark (DCR) and Mistral (DCR) linked by the
+owner, then the documented upgrade and the documented restore, each followed by a round of
+real calls — every grant continued, no re-registration or re-consent, the two persisted CIMD
+rows retired at the first document fetch as §5.6 specifies; MCP Inspector 2.6.0 by DCR;
+Claude Code 2.1.270 and `mcp-remote` 0.14.2 by PAT; the 4.0.3 client in both modes; the
+modern hold through Cloudflare on both spellings. Eras as observed: Claude web and Claude
+Code `2026-07-28`, the rest `2025-11-25`. The conformance runner (0.1.16) has server
+scenarios for the handshake revisions only, and its tool-call scenarios cannot pass an
+unauthenticated build because the per-tool middleware refuses anonymous calls in every mode;
+its transport scenarios pass. The release notes carry the block as observed.
 
 ---
 
@@ -1007,12 +2381,30 @@ services:
 
 Only `web` is published; the API and database stay on the Compose network, so an
 instance has one door and it binds to `127.0.0.1` — a convenient install is not
-accidentally an internet deployment. `docker compose up -d --build --wait` is the
-supported empty-instance path, and it exits non-zero if anything fails to come up.
+accidentally an internet deployment. `docker compose up -d --no-build --wait` is the
+release-bundle empty-instance path, and it exits non-zero if anything fails to come up.
 
-Images build from source in-repo. Publishing to a registry belongs with the rest of
-release automation in M9; until then an install needs no registry, no tags, and no
-multi-architecture story — the machine doing the installing builds for itself.
+**Release packaging (#278)** separates the build from promotion. The candidate
+workflow builds API and web once for linux/amd64 and linux/arm64, records their
+multi-platform digests and the source commit, and generates a pull-only Compose
+bundle with the PostgreSQL digest pinned too. Native runners exercise those same
+artifacts through CI, including fresh migrations and the packaged ingress/MCP
+matrix, with no registry credentials. Promotion copies the tested manifests to
+explicit version tags and attaches the unchanged bundle and skill ZIP to a draft
+release, then downloads the draft and verifies what a user gets — GitHub renames an
+asset whose name starts with a period, which is how v0.5.1-alpha's `.env.example`
+failed its own checksums and why the template ships as `env.example`; it never
+rebuilds. Version tags/assets are immutable by policy, no moving
+channel ships, and supported installation guidance selects an explicit version.
+
+Source development/review uses `docker-compose.build.yml`: local image names and
+`pull_policy: build` cannot silently substitute a registry release. Source-mode
+CI and the deployment harness opt in explicitly. The repository's pull-only base
+has an unpublished placeholder until given image references; the downloadable
+Compose file contains literal digests. Until the first packaged release is
+published, source installation requires the build override and `--build`.
+Published images avoid the historical LXC build path; its failure's cause remains
+unestablished. The release runbook is `.agents/releases.md`.
 
 **Migrations are their own container**, gating the API through
 `service_completed_successfully`. Running them from the API's entrypoint would turn a
@@ -1039,11 +2431,18 @@ rather than reasoning:
 
 `/mcp` without the trailing slash is served rather than redirected. A 307 in answer to
 a POST is a real hazard, not a cosmetic one, because not every client re-sends the body.
+Since #194 the bare spelling carries every per-location setting the canonical one does
+(buffering off, the 1 h timeouts, `Connection ""`): it is the same family at this layer,
+and Claude web posts to it (#190). The timeouts are the family's settings, not a
+measured need — the SDK's streams ping every 15 s, so nginx's 60 s default never fired
+in practice; recorded here so nobody removes them on the strength of that.
 
-M5 does **not** make the stack internet-safe. M6 supplies a tested VPS deployment path
-with authentication and a reference TLS/reverse-proxy configuration (for example Caddy),
-while leaving operators free to use Traefik, nginx, or a tunnel. The base Compose file
-does not bundle a certificate authority or a heavyweight identity platform.
+M5 did **not** make the stack internet-safe; M6 did, as far as its threat model goes
+(§5): authentication, and a reference TLS deployment — Caddy on the same host with the
+certificate through Cloudflare's DNS-01 challenge — plus a tested Cloudflare Tunnel
+variant, with operators free to put Traefik, nginx or another proxy in front under the
+contract the docs site's reverse-proxy page states. The base Compose file still bundles no certificate
+authority and no identity platform.
 
 ---
 
@@ -1100,12 +2499,18 @@ the remaining gaps become things to disclose rather than things to hide.
 
 **What "alpha" honestly means here — the things to disclose:**
 
-- **No auth on the write path** (M6). Anyone who can reach the API can write to it. Run
-  it on a network you trust — LAN, VPN, localhost. Do not put it on the public internet.
+- **Transport security is the operator's choice, and the docs say what was tested**
+  (M6). The owner login gates the browser and a personal access token gates every
+  REST script and MCP client (§5.9 items 3–4); the reference TLS deployment (§5.9
+  item 9, #194) — Caddy on the same host with a DNS-01 certificate — and a Cloudflare
+  Tunnel variant were run through the deployment gate (§5.8 T12/T13) before
+  `docs/operations.md` described them. On plain HTTP — the loopback default, a mesh,
+  a LAN — a device on the network path can still read the session cookie or a token
+  in transit, and the docs leave that call with the operator rather than hiding it.
 - **The packaged stack binds to loopback by default** (M5). `docker compose up -d`
   brings up the whole thing, but that default is a convenience, not a security
-  boundary — moving the published port does not make an unauthenticated instance
-  safe to expose.
+  boundary — moving the published port does not make a plain-HTTP instance safe to
+  expose.
 - **Only `en-AU` ships today** (M5.1). The interface, diagnostics, direction metadata,
   and locale-aware presentation are ready for reviewed catalogues, but no non-English
   catalogue has been contributed. Amounts still use plamotrack's ISO 4217 exponent,
@@ -1151,8 +2556,9 @@ Unchanged from the original plan:
    ahead of the rest to make a public alpha honest (§10)
 6. → **Public alpha here.** Everything below happens in the open.
 7. ✅ **M5 — Installability:** full local Docker Compose stack, controlled migrations,
-   safe loopback defaults, health checks, and backup/upgrade documentation (§8,
-   `docs/operations.md`). This improves adoption without claiming the unauthenticated
+   safe loopback defaults, health checks, and backup/upgrade documentation (§8; the
+   operator documentation has since moved to https://docs.gunp.la). This improves
+   adoption without claiming the unauthenticated
    stack is internet-safe. The configurable reference currency was pulled forward from
    M5.1 and shipped here — it is a schema migration, not translation work, and its
    compatibility cost grows with every archive exported under the old column name
@@ -1162,20 +2568,42 @@ Unchanged from the original plan:
    structured REST/import diagnostics. No non-English translation is required
 9. 🔨 **M6 — Secure remote access:** single-owner browser authentication, scoped
    REST/MCP bearer tokens, OAuth-compatible MCP access, and a tested TLS/VPS deployment
-   path. This is the gate for deliberately exposing an instance
-10. 🔨 **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
-    generation and `2026-07-28`, with conformance and real-client coverage
-11. 🔨 **M6.5 — UI redesign:** move off the stock Tailwind look; direction still
-    under exploration, deliberately undecided (21/08/2026). Sequenced after M5.1 so
-    the Settings surface isn't styled twice, and before M7/M8 so the gallery and
-    the showcase are built in the new look once. Board interaction gaps deferred
-    from the #120 consolidation (#122) land here
-12. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
+   path. This is the gate for deliberately exposing an instance. The threat model and
+   route authorization matrix are in §5 (02/09/2026, #29); the implementation split
+   is §5.9
+10. ✅ **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
+    generation and `2026-07-28`, with conformance and real-client coverage (§7.1;
+    `m6.1-fastmcp4` = #241–#244, v0.4.1-alpha, 15/09/2026)
+11. ✅ **M6.5 — UI redesign:** move off the stock Tailwind look. Direction
+    **decided 09/09/2026 — Workbench, §13** — after three directions were drawn on
+    the same screens; the build is split in §13.6 and **complete on the integration
+    branch (10/09/2026, #231–#234)**, landing on `main` as v0.4.0-alpha. Sequenced after M5.1 so the
+    Settings surface isn't styled twice, and before M7/M8 so the gallery and the
+    showcase are built in the new look once. Board interaction gaps deferred from
+    the #120 consolidation (#122) land here: Home replaces the board (§13.2)
+12. ✅ **M6.6 — Phone and tablet UI:** the interface's own layout below 1280 px —
+    a bottom tab bar on a phone, an icon rail on a tablet and in a narrow window,
+    the desktop untouched (but for the Orders table folding to its box, §13.7) —
+    before M7 because the phone is the camera the photos will come from. Decided
+    17/09/2026 (§13.7); four issues, each shippable alone to `main` (#257–#260):
+    the three shells, touch sizes and home-screen install; card rows, the filter
+    sheet and the table folds; dialogs as sheets; Home, Settings and the sign-in
+    screens, and the phone shell under a large browser font — built 17–20/09/2026,
+    v0.5.0-alpha
+13. **M6.7 — Easy hosted deployment and public sandbox (planned, 20/09/2026):**
+    public versioned images and release assets, one recommended platform template,
+    one portable VPS path, a Pocket ID compatibility investigation, guided first
+    run and assistant connection, and tested updates/backups/recovery. A separate
+    public sandbox allows real collection editing against invented data reset
+    daily. Issues #278–#287; sequencing and boundaries in §11.1. Release packaging
+    and the supported deployment guides move here from M9, before M7/M8
+14. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
     §9.2 storage decision closed before implementation
-13. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
+15. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
     shareable frontend, built only after the admin and MCP surfaces are protected
-14. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
-    compatibility/support matrix, and deployment documentation polish
+16. 🔨 **M9 — Open-source operations:** contribution guide and the broader
+    compatibility/support matrix; release packaging, distribution automation and
+    the supported deployment guides move to M6.7
 
 **Between M5 and M5.1 — the hardening passes (complete).** An external review of
 v0.2.3-alpha (11/08/2026) was triaged into a run of small GitHub milestones named
@@ -1194,6 +2622,86 @@ been fiction, and the two milestones shipped together as the single **v0.2.7-alp
 (owner's call, 21/08/2026). M5.1 followed them and is itself complete; the open work
 now starts at M6. This paragraph is history — the live issue list is on GitHub.
 
+### 11.1 M6.7 — Easy hosted deployment and public sandbox (planned, 20/09/2026)
+
+The intended owner is a Gunpla builder who wants an instance reachable from the
+internet and can pay a hosting provider for it. They should be able to follow a
+short guide from a new hosting account to their first kit, then keep the instance
+updated and recover it without having to assemble an operations manual themselves.
+Each private installation remains single-owner, controlled and paid for by that
+owner. The project is not becoming a multi-tenant hosting service.
+
+The [milestone](https://github.com/DeusMaximus/plamotrack/milestone/18) has ten issues:
+
+| Issue | Deliverable | Sequencing |
+|---|---|---|
+| [#278](https://github.com/DeusMaximus/plamotrack/issues/278) | Versioned public images, release files and skill ZIP | Start first; gate the distributed artifacts |
+| [#279](https://github.com/DeusMaximus/plamotrack/issues/279) | Select one supported quick-deploy platform through a working deployment | Investigate alongside packaging |
+| [#280](https://github.com/DeusMaximus/plamotrack/issues/280) | Verify Pocket ID for browser login, assistant OAuth and recovery | Decided 25/09/2026: an optional supported provider |
+| [#281](https://github.com/DeusMaximus/plamotrack/issues/281) | Recommended platform template | Uses #278 and the #279/#280 decisions |
+| [#282](https://github.com/DeusMaximus/plamotrack/issues/282) | Portable VPS setup and guide | Uses #278 and the #280 decision |
+| [#283](https://github.com/DeusMaximus/plamotrack/issues/283) | Guided claiming and initial regional settings | Validate on both deployment paths |
+| [#284](https://github.com/DeusMaximus/plamotrack/issues/284) | Assistant connection and compatible skill download | Follows the authentication decision |
+| [#285](https://github.com/DeusMaximus/plamotrack/issues/285) | Updates, backups, recovery and existing-install transition | Gate both deployment paths |
+| [#286](https://github.com/DeusMaximus/plamotrack/issues/286) | Editable public sandbox with daily reset | Separate deployment using #278 artifacts |
+| [#287](https://github.com/DeusMaximus/plamotrack/issues/287) | Complete guides, usability pass and release acceptance | Gates the whole milestone |
+
+**Decisions still to measure.** #279 compares at most two initial platform
+candidates through actual setup, ongoing cost, private networking, migrations,
+MCP transport, persistence and recovery; no platform is declared supported before
+that check. **#280 is decided (25/09/2026):** Pocket ID is an optional supported
+provider. Browser login, assistant authorisation, refresh, restarts, backup and
+lost-passkey recovery were measured against Pocket ID v2.16.0, with real passkeys
+and Claude.ai for the owner's legs; the report is on the issue. The browser login
+worked as shipped, but the assistant link did not until #294 stopped the MCP proxy
+forwarding the client's `resource` — the case this section anticipated, a
+successful login that says nothing about assistant authorisation. It is documented
+from the release that ships #294; whether a template bundles it or leaves it
+separately configured is #281's call.
+Material implementation prerequisites discovered by either investigation get
+their own issues before the templates depend on them. Existing Google/OIDC
+deployments remain supported.
+
+**The sandbox is for trying the workflows.** Visitors use the real collection
+forms and service behaviour to add/edit kits, receive orders, adjust stock and
+delete eligible records. Ordinary integrity guards still apply. It is a shared,
+disposable collection of invented data, with a visible next reset and a notice
+that other visitors can see/change it. An operator-controlled daily reset restores
+a versioned baseline safely around in-flight writes, with clear behaviour for
+browsers that were already open. Request, record and operation-size limits bound
+public writes, including order quantities and spawned kits.
+
+The sandbox is a dedicated deployment artifact/entry point with separate data and
+explicit collection permissions. No visitor receives owner authority: account,
+password, credential and shared-settings mutations are refused server-side, and
+MCP/OAuth, bulk import/export, uploads and API documentation/schema exposure are
+unavailable. The browser still needs collection REST endpoints, which an HTTP
+client can also call; the boundary is their deliberately restricted authority,
+not a claim that only a browser can use them. Ordinary production images retain
+their authentication contract, with no general authentication-off setting. M8
+remains the separate showcase of an owner's real collection.
+
+Sandbox visitors must receive an explicitly restricted sandbox principal, available
+only through the dedicated sandbox deployment. Requests remain subject to the
+existing default-deny route-policy registry; the sandbox must not bypass
+authorisation, grant owner authority, or broaden the production anonymous
+principal's permissions. Implementation must define the permitted routes and
+operations and test both prohibited sandbox actions and unchanged production
+behaviour, including that ordinary deployments cannot resolve a sandbox visitor
+principal.
+
+**Completion is the whole journey.** A person unfamiliar with Docker follows the
+recommended platform guide without coaching or editing Compose/application config,
+claims the instance and adds a kit. The VPS recipe, optional assistant connection,
+update and restore are verified too. Backups cover the required secrets and, when
+included, identity-provider state; a collection export is not a full-instance
+backup. Docs ship with the work and describe released behaviour only. The final
+gate identifies the exact images, templates, provider configuration and clients
+tested, and coordinates their availability with the public guides. M7 still owns
+the photo-storage and backup contract (#28); host selection considers that future
+need without predeclaring an unused volume. Offline collection synchronisation,
+a database-backend replacement and broad marketplace submissions are outside M6.7.
+
 ---
 
 ## 12. Import & Export ✅ (Milestone 4.5, 06/08/2026)
@@ -1208,7 +2716,13 @@ migrate, or seed from the spreadsheet they already keep.
 CSV, one file per table, zipped with a `manifest.json` carrying `format`,
 `export_version`, `schema_version` (the live Alembic revision), `app_version`,
 `exported_at`, and per-table row counts. An archive from a **newer** `export_version` is
-refused rather than mangled; a `schema_version` mismatch is a warning.
+refused rather than mangled; a `schema_version` mismatch is a warning. The version is
+**2** since #349 (12/11/2026), which added a row an older reader cannot hold: an
+`other` order line (§3.9). A column an older reader would merely drop, such as
+`orders.notes` (#348), does not move it. Version-1 archives read unchanged.
+`order_adjustments.csv` (#350, §3.8a) joined the archive under the same version 2,
+because no release was published in between. An archive without the file, which is
+every version-1 archive, restores with no adjustments.
 
 The CSVs are deliberately human-readable as well as machine-restorable: every uuid FK
 carries a readable twin column (`retailer_name`, `catalog_name`), and every integer
@@ -1226,6 +2740,29 @@ was, and the artifact is what gets kept as a backup and restored from. A snapsho
 not a lock: row-level writes and an export never delay each other in either direction;
 only a `replace_all` import's `TRUNCATE` queues behind an in-flight export, and the
 reverse. *(Added 16/08/2026; rule 7.2 in `AGENTS.md`.)*
+
+**The bytes are a contract, pinned by a golden archive** (#303, 01/10/2026). Other
+programs read and write this format: a standalone client whose only bridge to an
+instance is the archive, and every older release's exports. So the exact byte layout
+is fixed, not just the agreement between export, import and the templates (§12.2), which
+holds through any change made to all three at once. The rules: UTF-8 without a
+byte-order mark, every record ended by CRLF, `QUOTE_MINIMAL`, an empty cell for null,
+lowercase uuids, snake_case enum values, dates as `YYYY-MM-DD`, timestamps as UTC
+`isoformat()` (microseconds only when non-zero, offset `+00:00`), and major-unit
+amounts to the currency's exponent. Members are written in a fixed order: the manifest,
+`README.txt`, then the tables in registry order. `backend/tests/fixtures/golden/`
+holds an export made from a seeded collection, and `tests/test_golden_archive.py`
+writes the headers out literally and requires the export to reproduce the fixture
+byte for byte. The manifest's `schema_version`, `app_version` and `exported_at` are
+excluded, because every migration moves the first, every release the second, and the
+clock the third. **Changing the fixture is a contract change:** the PR says why, and
+whether `EXPORT_VERSION` moves.
+
+**Row order is stable, not meaningful.** The importer never reads it. Tables sort by
+`name` or by date with `id` as the tiebreak; `upgrade_applications` had no tiebreak
+until #303. Name order follows the database's collation, which another implementation
+cannot reproduce, so a reader must not depend on it. The fixture uses only names that
+every collation sorts alike.
 
 ### 12.2 The spec registry
 
@@ -1383,6 +2920,21 @@ every order because shipping carries no stock semantics; clearing it is refused
 predicate under the same change-not-cell reading; and the spawn descriptor carries
 the post-write ship instant, hash-bound beside the receipt.
 
+**A value's domain is the third writer's too** (#305, 01/10/2026). REST and MCP hold
+ratings to 1–5 and stock, prices and thresholds to zero or more through the request
+schemas, and the database holds most of them with CHECK constraints. The importer
+held them to int4 alone, so a `rating` of 7 or a `quantity_on_hand` of -2 previewed
+clean and failed the apply at flush with a 500 naming no row. Two columns that have
+no CHECK at all, `shipping_cost_minor` and `low_stock_threshold`, went further: a
+negative value imported, which no other writer could store. Each bounded column now
+declares its range in `spec.py` (`minimum` / `maximum`), the planner refuses a value
+outside it as a row error after money scaling (named as the cell the sheet wrote),
+and `tests/test_import_ranges.py` holds the declarations to both the CHECKs and the
+request schemas. The rating's numbers live once, in `services/numeric.py`. Since
+#309 the database holds those two as well: CHECK constraints, with the upgrade clearing
+any negative an earlier import stored to null ("not recorded", "no alert"), never to 0,
+which would claim free shipping or an alert at zero.
+
 A blank cell in an *included* column means null; a column omitted from the file entirely
 is left alone. That's needed for archive fidelity, but it makes partial sheets dangerous
 — so the starter sheet emits only the columns it actually knows about. Otherwise
@@ -1420,3 +2972,1232 @@ meets it: the archive's bundled `README.txt` and `docs/import-export.md`. An
 escape-and-strip pair (fidelity dependent on both halves staying in sync forever) and
 a second "spreadsheet-safe" export variant (two formats, guaranteed drift) were both
 considered and declined.
+
+---
+
+## 13. UI redesign (M6.5) ✅ — direction decided 09/09/2026, built 10/09/2026 (#231–#234)
+
+**Decision.** The interface moves off the stock Tailwind vocabulary to one house
+look, *Workbench*: warm near-black surfaces (the light theme a warm off-white), one
+amber accent, hairline borders, flat surfaces without shadows, uppercase
+micro-labels, tabular figures, Inter as the only typeface, stroke icons, no emoji.
+Two alternatives were drawn on the same screens and set aside — a cool, shadowed
+*Console* and an unboxed *Editorial* — and the owner's reason for Workbench is that
+it best suits what the app is: a tool at a bench, not a storefront. Console stays a
+candidate for a second selectable theme later; under the token system below that is
+one more token file, so choosing now closes nothing.
+
+### 13.1 Tokens and the theme switch
+
+- **Every colour, radius and border is a semantic token** — `--bg`, `--surface`,
+  `--border`, `--text`, `--muted`, `--faint`, `--accent`, the six status colours —
+  defined once in `frontend/src/index.css` and exposed to Tailwind v4 through
+  `@theme`. Components use the token utilities, never a palette utility (`zinc-*`,
+  `indigo-*`); the light theme is the same tokens under `[data-theme="light"]`. A
+  palette utility in a component after M6.5 is a regression, not a style choice.
+- **Light / dark / system is a per-browser preference**, held in `localStorage` and
+  applied before first paint so a dark browser never flashes white — by a blocking
+  script in the document head (`frontend/public/theme.js`), a first-party file
+  rather than an inline one because the bundled nginx serves the app under
+  `script-src 'self'` (§5.6); `src/lib/theme.ts` is its runtime twin and one test
+  holds the two to the same answers. This is the one deliberate exception to §6.1's instance-wide rule, because
+  "system" only means something on the device asking: a phone in dark mode and a
+  desktop in light are both right. Every other setting stays instance-wide.
+- **Inter is bundled with the app**, never fetched from a font host: a private
+  instance makes no third-party request to render.
+- **Icons are stroke icons from one set (Lucide).** The emoji go.
+
+Built as #231 (2026-09-10). What the build changed: the light theme's accent and
+five of its status hues are the artboard's hues *darkened* until every composed
+text-on-chip pair clears 4.5:1 (`src/lib/tokens.test.ts` parses `index.css` and
+asserts each pair in both themes; Codex #235) — the artboard's light values are no
+longer literal; `--faint` is held to 3:1 on the chip as well as the surfaces, because
+a hovered row is the chip and its pencil sits on it (Codex #236); and the palette
+guard (`scripts/check-palette.mjs`, run by `npm run lint`) refuses arbitrary colour,
+radius and shadow values too, not only the stock palette.
+
+### 13.2 Home replaces the board
+
+The kanban was drawn for a dozen kits; at 52 in the backlog and 92 received it
+scrolls past usefulness, and every card is drag-only (#122). **Home** is the start
+page instead — status at a glance, the bench first:
+
+- **On the bench** — the kits in `building`, as wide cards: name, grade, scale, kit
+  number, started date, days since, the latest note, an edit control. Latest start
+  first (`sort=started`); a kit with no start date after every one that has one.
+- **Backlog** and **Recently completed** — six kits each, the true count in the
+  heading, and a *view all* link to Kits filtered to that status. The Backlog is
+  the newest arrivals — when the kit entered the status (`status_updated_at`,
+  `sort=recent`): creation for a kit that started in the backlog, receipt for one an
+  order delivered — and prints no date; its link opens the Kits page's own order.
+  Recently completed is the latest completion dates (`sort=completed`), the date
+  each row prints, and its link keeps that sort.
+
+  Each list is ordered by the date its cards print (#247). Both strips were first
+  built on the status clock, so a build finished in July and recorded in September
+  headed Recently completed above one finished yesterday, while the row printed the
+  July date. A build with no date of its own (an import never guesses one) prints
+  none and sorts after every dated one, rather than borrowing the moment it was
+  moved or imported (owner's call, 2026-09-25). The two layers hold that rule
+  through one fixture, `frontend/src/lib/__fixtures__/kit-sort-cases.json`.
+- **In the mail** — three columns of *order* cards (Pre-ordered, Ordered, In
+  transit): retailer, the date of the order's last status change (placed,
+  shipped), its first kit line, "and n more", tracking once shipped; capped and
+  linked to Orders filtered the same way. An order sits under Pre-ordered only when
+  every kit line is a pre-order; a mixed order sits under Ordered with a
+  *pre-order* tag on the line.
+- **Editing from a card is a visible control** in its corner that opens the same
+  edit dialog as the list pages — not a right-click menu, which has no touch
+  equivalent, and not a bare click, which fights drag. Drag-and-drop is not carried
+  to Home: with capped lists and an edit path on every card, the column move it
+  offered is the dialog's status field, travelling with the dates a real
+  transition carries (#120's reasoning).
+
+Built as #233 (2026-09-10). What the build decided: the **order's stage is the
+server's** — `received`, else `in_transit` (shipped), else `pre_ordered` (every
+spawned kit still a pre-order, at least one), else `ordered` — one predicate
+(`services/order_stage.py`) behind a derived `stage` on every order row, the per-stage
+counts and, through them, Home's columns and the Orders page's `?status=` filter,
+whose vocabulary is now that of the wire (`?status=in_transit`, where #232 had
+`shipped`); so a *view all* link, a heading count and a list page's total are one
+number by construction, and the browser derives nothing. The **counts come from one
+function** for REST (`GET /summary`) and MCP (`get_summary`), read under one
+`REPEATABLE READ` snapshot (rule 7.2) so the kit side and the order side of a receive
+cannot be seen half-applied. The **mail columns cap at three cards**, the artboard's
+number; the strips at six; the bench is never capped. A card names its **first line**
+and either the one other line by name or how many more there are; a mixed order's
+pre-ordered line carries the *pre-order* tag, an order that is wholly a pre-order does
+not (the column says it). The **day counter** reads *day 1* on the start day. The
+two dialogs are **one component each** (`KitFormModal`, `OrderFormModal`), shared by
+the list pages and Home, and the writes they make invalidate the summary through one
+list of keys (`lib/invalidate.ts`). `/board` redirects to Home; `@dnd-kit/core` is
+gone, and with it the #50 optimistic-move policy — a status change is one PATCH from
+the dialog, nothing is queued or rolled back.
+
+### 13.3 Sidebar
+
+Fixed while the page scrolls. Wordmark only — the tagline moves to the sign-in
+screen and About. Home, Kits, Orders, Inventory, Retailers; Settings on its own
+below; then a footer with the theme switch and Sign out and, in OIDC mode only, who
+the owner is bound as ("Jamie · via Google"), the one identity a single-owner app
+has to show. In local mode the footer is two controls: nothing to manage, so no
+profile card.
+
+Built as #231 (2026-09-10), Home first from #233. The line that moved off the
+sidebar is a plain one-line description ("A self-hosted Gunpla and plamo collection
+and build tracker."), on the sign-in screen and About (#234); the README keeps its
+own tagline. The Settings sections' navigation is the sidebar's row shape, and the
+Access tokens table the list pages' (#234).
+
+### 13.4 List pages
+
+Kits, Orders, Inventory and Retailers keep their tables and gain what Home links
+to: **filter and sort in the URL** (`?status=complete&sort=completed`), so a *view all*
+link is a page state and a bookmark. Each row carries one edit control; Delete moves
+inside the edit dialog, next to the fields it destroys. Orders keeps its expandable
+lines, kit lines showing their kit status and catalog lines noting that stock applies
+on receipt (§3.9), with a shipping line closing the box and the lines' converted total
+under the order's own (§6). Built as #232 (2026-09-10), with what the Orders artboard
+added: the count beside the page title, a pager of ten rows a page (every row on a
+phone since #318, §13.7) whose page is one
+more URL parameter (`?page=2`, clamped onto the last page when the list shrinks — a
+filter, sort or search change resets it), and the sort as the server's — `GET /kits`
+and `GET /orders` take `sort` and `limit`, on REST and the MCP list tools alike, so
+"recent" means one thing for the page, Home and an agent: a kit's `status_updated_at`
+(every generated stamp is the API's clock, so a create and a move never rank by two
+clocks; a supplied ship or receipt instant is recorded as given), an order's last
+status change (received, else shipped, else placed — a placement date being its
+midnight in the instance's time zone, rule 11). That order clock is computed by the
+application, in its own zone database, and the list is sorted there — the clocks
+compared as instants, so a UTC shipment and a zone-local midnight at the same
+instant tie and the placement date decides: a cast in SQL
+read the database session's zone (Codex #236 round 1), and handing the zone's name to
+Postgres read *its* zone files, which lack 97 of the names the settings accept and
+take CET, EET, MET and WET as fixed offsets (round 2). Two choices on a transition day
+are named rather than left to a library: a midnight that happens twice is its first
+occurrence, and a midnight a transition skipped is read with the offset that held
+before it. The filters and the search narrow the loaded list in the browser; the page
+holds the whole list, and a personal collection is a few hundred rows.
+
+With #247 (2026-09-25) the kit sorts are `created` (oldest first, the API's
+default), `newest` (its reverse), `recent`, `started` and `completed` (the build's own
+dates, newest first, undated kits last) and `name` — on REST and the MCP tool alike.
+The **Kits page offers every one but `recent`** and opens on `newest` (owner's
+calls): a page sort should follow a date the table shows, and `recent` follows the
+last status change, a different event for every status, shown nowhere. An old
+`?sort=recent` link lands on the default, and the address bar drops the value —
+every list page does that for a filter or sort outside its vocabulary. `recent` stays
+on the API — what an agent asking "what moved lately" wants — and behind Home's
+Backlog strip.
+
+### 13.5 Not in M6.5
+
+A phone/tablet layout — wanted, and to be its own UI rather than a squeezed
+desktop, after this lands: decided and begun as M6.6, §13.7. Photos and the showcase
+(M7, M8) are built in this look once.
+
+### 13.6 Implementation split
+
+Each a PR against the integration branch `m6.5-workbench` — cut from `main`, `main`
+merged into it as `main` moves, landed on `main` in one release (v0.4.0-alpha), so a
+`git clone` mid-milestone gets the 0.3.0 interface rather than a redesign in progress
+(decided 2026-09-10) — in this order, so no page is styled twice (filed as #231–#234,
+milestone M6.5):
+
+1. ✅ **Tokens, theme switch, Inter, Lucide** — every component and page onto the
+   token utilities; the sidebar (§13.3); the sign-in screen. #231, PR #235 → `f99e085`.
+2. ✅ **List-page filter and sort in the URL** (§13.4) and the row edit control.
+   Backend: sort and limit on the kit and order list endpoints, on REST and MCP
+   alike (rule 1), declared in the route registry. #232, PR #236 → `3faca69`.
+3. ✅ **Home** (§13.2), replacing the board page and the drag-and-drop dependency; the
+   per-status counts come from one service function both surfaces share. #233,
+   PR #237 → `8bac10a`.
+4. ✅ Settings, About, the e2e suite and the README screenshots in the new look. #234.
+
+### 13.7 Phone and tablet (M6.6) — decided 17/09/2026, built as #257–#260 (v0.5.0-alpha)
+
+§13.5 promised a phone and tablet layout that is "its own UI rather than a squeezed
+desktop". It comes before M7 because the phone is the camera the photos will come
+from. **The layout at 1280 px and wider does not change** — with one exception the
+owner made on 18/09/2026, when #258 found the desktop's Orders table wider than its
+box with ordinary rows: that table folds to its box there too ("Built — #258").
+
+**Measured on v0.4.1-alpha.** Every page and dialog was captured at 390, 744, 820,
+1024, 1080, 1133, 1180, 1210 and 1366 px on the screenshot spec's demo data. The
+interface had no breakpoint: the sidebar kept its 240 px at every width, so a 390 px
+phone gave the page 150 px — 86 after padding — and every list page scrolled
+sideways. Tablets never scrolled at page level, which hid the real defect: the Orders
+table needs 953 px and scrolls inside its own box, so its trailing columns and the
+edit control were off-screen on every iPad but a 13-inch one in landscape.
+
+| Viewport | Orders' table box, full sidebar | What was off-screen |
+|---|---|---|
+| 744–834 (iPad portrait) | 438–528 px | Shipped, Received, Items, Total, Tracking, Edit |
+| 1024–1080 (older iPads, landscape) | 718–774 px | Total, Tracking, Edit |
+| 1133–1210 (mini and 11-inch, landscape) | 827–904 px | Tracking cut, Edit |
+| 1366 (13-inch, landscape) | 1060 px | nothing |
+
+Measure a table box's `scrollWidth` against its `clientWidth`, not the document's:
+the first pass checked only the document and called iPad landscape fine. Touch had
+its own list: 14 px form controls, which make iOS Safari zoom the page on focus;
+24–28 px icon buttons; a `100vh` sidebar, which on iOS is the *large* viewport, so
+its foot could sit under Safari's toolbar; no web manifest and no touch icon.
+
+**Decisions (owner, 17/09/2026).**
+
+- **Three shells, chosen by viewport width alone** — no device or touch sniffing:
+  below 768 px the phone layout; 768–1279 px a 64 px **icon rail** in place of the
+  sidebar; 1280 px and up the sidebar of §13.3, untouched. A narrow desktop window
+  gets the rail too, deliberately: the Orders table is already clipped in a window
+  that size, and under the rail a list page's table box is the viewport less
+  130 px, so an 11-inch iPad in landscape gets the box a 13-inch one gets beside
+  the full sidebar. An iPad mini in portrait is 744 px wide and gets the phone
+  layout, which the owner accepts.
+- **Phone navigation is a bottom tab bar**: Home, Kits, Orders, Inventory, More.
+  *More* is a page (`/more`) holding what the sidebar's lower half holds —
+  Retailers, Settings, the theme switch, the OIDC identity line, Sign out.
+- **The rail** carries the brand mark, the five collection pages as icons with their
+  accessible names and tooltips, Settings, the theme switch as one button that
+  steps through the three choices, the identity's initial in OIDC mode, Sign out.
+- **A sign-out that did not sign out says so beside the control**, in every shell
+  (#333, owner's call 2026-10-12): an alert under Sign out in the sidebar and under
+  More's panel, and, since the rail is 64 px of icons, a bubble from the rail's
+  Sign out out over the page, gone on the next press, a press elsewhere (pointer or
+  keyboard), or Escape. The page stays signed in and its writes keep working. When
+  neither the logout nor the session re-read answers, it says it could not confirm
+  the sign-out rather than claiming either outcome (Codex #340).
+- **Accessible names are the same in every shell** ("Edit {name}", "New order",
+  "Sign out"), so one e2e suite drives all three.
+- **On a phone**: a 16 px gutter; a page's header is a bar with its title, its count
+  and its one primary action; card rows instead of tables; search on the page and
+  every other filter and the sort in one bottom sheet writing the same URL state
+  (§13.4); dialogs as full-screen sheets with a fixed action bar; **Export CSV is
+  not in the phone page headers**, and Settings → Data management on a phone is
+  export only — the line drawn at the phone shell, by width like every other
+  layout decision here, not at touch devices. (Amended by #304, below: a phone
+  imports, Merge and Add only.)
+- **A table that stays a table folds by its *container's* width**, not the
+  device's, the way Home already lays out (§13.2).
+- **Home-screen install is a manifest and icons.** No service worker, no offline
+  mode.
+- **Four PRs straight to `main`**, each shippable alone — no integration branch
+  (§13.6's reason does not apply: no PR leaves the interface half-redesigned).
+
+**The split.** 1. The three shells, the touch basics, the manifest and icons, the
+Playwright `phone` and `tablet` projects (#257). 2. List pages on a phone — card
+rows, the filter sheet — and the table folds (#258). 3. Dialogs as sheets, order
+lines that stack (#259). 4. Home, Settings and sign-in on a phone, the full phone
+and tablet e2e, screenshots, the release (#260).
+
+**Built — #257.** What the build decided:
+
+- **The two lines are Tailwind's `md` and `xl`** (48rem, 80rem), and they are
+  drawn in two languages that cannot import each other: `src/lib/shell.ts` asks
+  `matchMedia` for the same rem queries — the `useShell()` hook, for where a shell
+  renders *different things* — and the stylesheet's `max-md:` and `touch:`
+  utilities cover the same thing at a different size. `shell.test.ts` holds the
+  two to one answer.
+- **`main` keeps its place in the tree** whichever navigation stands beside it, so
+  a rotation or a resize across a line re-dresses the page without remounting
+  it: an open dialog and a half-filled form survive an iPad mini turning from
+  1133 px to 744.
+- **The touch sizes are one variant, `touch:`** — the phone shell *or*
+  `(pointer: coarse)` at any width — so an iPad gets them beside the rail and a
+  13-inch one in landscape beside the sidebar, while 1280 px with a mouse keeps
+  the sizes it had. Icon buttons, the dialog's close, nav rows, the theme
+  segments and the pager's pages are 44 px under it; form controls 44 px tall,
+  and 16 px text in the phone shell only, where iOS would zoom; buttons 40 px,
+  the artboards' height for them.
+- **The More tab is current on the pages it holds** (`/retailers`,
+  `/settings/*`) as well as on its own: `aria-current="page"` at `/more`,
+  `"true"` on the others, and tapping it is the way back. `/more` opened at a
+  wider width is the same page beside a navigation that already offers all of
+  it.
+- **The phone header bar is `PageHeader`** (`components/ui.tsx`), which from
+  768 px up renders what the pages had. It stays while the page scrolls. On Home
+  it carries the brand mark and wordmark — the sidebar that held them is gone —
+  with the `h1` kept for assistive tech. It is **one tree dressed two ways**, so
+  a page's primary action is the same DOM node on both sides of the 768 px line:
+  `Modal` gives focus back to the node that opened it, and as two subtrees the
+  opener was replaced while a dialog was open across a rotation, leaving the
+  keyboard on `<body>` (Codex #265). A page that caps its own width keeps the
+  bar outside the cap — a negative margin undoes a gutter, not an ancestor's
+  `max-width`, and More's bar stopped 264 px short at 744 px (same review).
+- **Safe areas**: `viewport-fit=cover`, the tab bar padded by
+  `env(safe-area-inset-bottom)`, the shell by the left and right insets (a
+  phone held sideways is wide enough for the rail, which therefore scrolls),
+  and `dvh` wherever there was `vh` — `shell.test.ts` refuses a new `h-screen`.
+- **The manifest is `/manifest.json`, not `.webmanifest`**: nginx 1.27's
+  `mime.types` has no entry for the latter, so the bundled stack would serve it
+  as `application/octet-stream` beside `nosniff`; `.json` needs no ingress
+  change and falls under the existing CSP (`manifest-src` falls back to
+  `default-src 'self'`). Its link is `crossorigin="use-credentials"` so the
+  fetch carries the cookie an access proxy in front of the instance wants. The
+  PNGs — a 180 px opaque touch icon, 192 and 512 px manifest icons that double
+  as maskable, a 32 px tab icon for Safari 18 and earlier, first in the link
+  order so the amber SVG stays last — are drawn from the brand mark and the
+  tokens by `scripts/render-icons.mjs`; `install.test.ts` holds the manifest,
+  the files, `index.html` and the tokens to each other.
+- **Inventory's tab row scrolls inside its own box on a phone** — it was the one
+  page whose *document* scrolled sideways once the shell was out of the way, by
+  8 px. The tables still scroll inside theirs until #258.
+- **A mail card's line is a row: the name truncates, the *pre-order* tag stays.**
+  The tag was inline content at the end of a truncating line, so it was the
+  first thing an ellipsis took. Home's mail grid takes three columns from a
+  56rem container, where a card is 288 px and a 24-character kit name is
+  enough — on `main` that was a viewport of about 1200 px, which nothing
+  sampled; under the rail it is every 1024 px tablet, and `home.spec.ts`'s
+  width test found it there. That test now samples both thresholds and 390.
+- **The guard**: `e2e/shell.spec.ts` runs in three Playwright projects — `app`
+  (1280 px, a mouse), `phone` (390 × 844 and 744 × 1133, both ends of the phone
+  shell) and `tablet` (820 × 1180, 1180 × 820 and 1366 × 1024), the last two
+  with a touch screen. The 1280 and 1440 px
+  captures of every page and five dialogs, in both themes, were compared with
+  `main`'s pixel for pixel: identical but for the anti-aliasing noise `main`
+  shows against itself — with one deliberate exception the demo data does not
+  draw: on a mixed order's Home card the tag now sits 1.2 px higher, centred on
+  its line, and the card is 0.2 px shorter.
+
+**Built — #258.** What the build decided, and what it measured:
+
+- **Cards are chosen in JS, folds in CSS.** Below 768 px `useShell()` renders
+  card rows in place of the table on Kits, Orders, Inventory and Retailers —
+  different things, so the hook; a row keeps the desktop's visible
+  "Edit {name}" control at 44 px rather than becoming a tap target itself. From
+  768 px a table folds by **container queries** on its own box (`@container`),
+  as Home lays out. Access tokens is the one list that swaps table for cards in
+  CSS, by its box and not the shell: the Settings pane is two columns beside
+  the rail, so its box is under the table's width on every iPad in portrait.
+- **The fold lines come from ordinary rows, not the demo's.** The issue's
+  figures (953 px for Orders) were measured on the screenshot spec's data,
+  where no order is both shipped and received; one that is says
+  "27/08/2026 · 9 d" where the demo says a date, and with that and a
+  seventeen-character order number the Orders table needs **1040 px** whole,
+  **935 px** with the order number under the retailer's name, and **625 px**
+  with Shipped and Received under the status chip and Tracking in the expanded
+  lines. The lines sit a little over what was measured: Orders 66rem (1056 px)
+  and 60rem (960 px), Kits 48rem (Grade and Scale to the name's second line;
+  needs 732), Retailers 46rem (Notes to a truncated line under the name; needs
+  707), Access tokens 36rem (cards below; a populated row needs 553). Beside the
+  rail that gives an 11-inch iPad Pro in landscape the whole Orders table, a
+  1180 px iPad and a mini the first fold, and 1024–1080 px and every portrait
+  the second. A line is a guess about rows nobody has typed yet — so what a line
+  cannot know gives way instead (below), and past that the box still scrolls, as
+  it always did. *(Superseded by #329: the lines are gone, and a table folds when
+  its whole layout does not fit — "Amended — #329" below. The widths here are
+  still what those rows need.)*
+- **A fold moves what a column said; it never drops it, and never says it
+  twice.** A received order shows its delivery date with the days it took *and*
+  its ship date under the chip — both columns moved. A null moves as nothing:
+  no separator after a kit's grade when no number or series follows, no empty
+  line under a pending order's chip.
+- **The folds answer the box at every width, the desktop's included** (the
+  owner's call, 18/09/2026) — the one place this milestone changes the layout
+  from 1280 px up. With those ordinary rows `main`'s Orders table was 60 px
+  wider than its box at 1280 px (the box is the viewport less 306 px beside the
+  sidebar), so it scrolled inside the box with the edit control off its edge,
+  until about 1345 px: the defect the milestone exists to remove, surviving in
+  the one range it had promised to leave alone, and invisible on the demo data
+  every width had been measured on. So from 1280 to 1361 px the order number
+  rides under the retailer's name, and from 1362 px — a 1366 px laptop, a
+  13-inch iPad in landscape — the table is whole; that is why the first line is
+  66rem and not a rounder number above it. Kits, Retailers and Access tokens
+  never fold beside the sidebar: their boxes are well over their lines from
+  1280 px. The build first gated the folds below 1280 px and had its spec *pin*
+  the desktop's overflow so that the exception could not outlive its cause; the
+  pin went with the gate.
+- **What a line cannot know gives way instead** (Codex #266, finding 2). The
+  lines were measured with the default formatting and ordinary references, and
+  neither is fixed. The date style and the formatting locale are instance
+  settings (§6.1), and `full` writes the Received cell "Thursday, 27 August 2026
+  · 9 d": held to one line, as #120 had it, the Orders table was 121 px wider
+  than its box at 1280 px and the edit control off its edge at every width. A
+  USPS tracking number is twenty-two digits where Japan Post's is thirteen, and
+  at 1366 px, where nothing folds, it alone put the table 49 px past its box. So
+  a cell's rigidity is decided **by its value**. A date the locale writes in
+  digits — ten characters at most — stays on one line with what follows it; one
+  written in words may wrap (`dateInDigits` — a length standing in for a
+  shape: ten characters is as long as a numeric date gets in the locales it was
+  run in, and the containment tests, not the rule, are what hold the tables).
+  A reference no wider than the measured one — 115 px for a tracking number,
+  82 px between an order number's hyphens, at the table's 14 px — is a plain
+  word; a wider one may break anywhere, down to lines as wide as that budget.
+  **Wider on screen, not longer in characters** (round 2, finding 5: thirteen
+  `W`s are 183 px where thirteen digits are 115): each reference is measured,
+  by the browser, as the widest piece it will not break — an invisible copy
+  laid out at `min-content` in one ruler per table (`ReferenceRuler` in
+  `OrdersPage.tsx` then; `TableRuler`, `components/Measured.tsx`, since #323, below), reached through a portal so it is never inside a fold's
+  `display: none` half, holding the text as a pseudo-element's content so that
+  a test's `getByText` cannot prefer it to the visible text, at the table's own
+  `tabular-nums` because a canvas cannot be told those and measures digits
+  narrower. By the value and not for every row, because `overflow-wrap:
+  anywhere` lowers a column's minimum width and a table squeezes every column
+  that has give: applied to every row it re-laid-out the ordinary ones, the
+  desktop's included — and in Chromium it also *reshapes* the text, kerning
+  stopping at every break opportunity, so a plain 105 px word became 110 and
+  wrapped at the cell's edge with nothing squeezed at all.
+  The same question found a sibling nobody had reported — a revoked token's
+  "revoked {date}" was the one date on the Access tokens table held to a line,
+  and under `full` that table was up to 73 px wider than the 576 px box that
+  first shows it. Home had paid for this once already (Codex #237, P3-2: the mail
+  cards under full dates); the list pages were built without asking it again.
+- **A card says who it is whatever stands beside it** (finding 1). An order's
+  total is as long as the order has currencies, and beside a retailer's name
+  that could shrink and a total that could not, "JPY 2,800 + USD 45.00 + EUR
+  34.00" left the name 0 px — on a card that fitted the screen exactly, so every
+  bounds check passed it. The name keeps 8rem whatever stands beside it — or the
+  whole line, whichever is less: rem follows the browser's font-size preference
+  and the card does not, and at 32 px an unconditional 8rem was 256 px in a
+  94 px column with the name's start 57 px off the left of the screen (round 2,
+  finding 6; the stock stepper's row wraps for the same reason) — and a
+  total that leaves it less takes a line of its own, where it may wrap too. The
+  facts under it wrap where they used to end in an ellipsis: a card is the only
+  place a phone says them, and a date in words is as long as the settings make
+  it. A name longer than the card's whole line still ends in an ellipsis — the
+  artboards' one-line title — but never in less than the line.
+- **A row's controls give way to a physical floor, and the identifying text
+  keeps its share** (round 3, finding 7). Everything on a card is in rem — the
+  stepper's two squares, the pencil, the line-items toggle, the padding — and
+  follows the browser's font-size preference; the card's width is the phone's.
+  At 32 px on a 320 px phone the stepper (two 88 px squares and a count) was
+  46 px past its card; at 40 px the toggle and the pencil, 90 and 110 px, left
+  the retailer's name 38 px and pushed the total out of its column. Two rules,
+  both in px because what they name is physical. A **target's floor is a
+  finger's**: a square is 2.75rem where the row has room and gives way to 44 px
+  and no further where it has not (`min-w-[44px]`, and no `shrink-0` on a
+  control that stands in a card's row — `IconButton` under `touch:`, the toggle
+  at its own 36 px); the 4 px between the stepper's targets and the count's
+  40 px room likewise. And the **identifying column has a share to give way
+  from**: `flex-[1_1_8rem]` rather than `flex-1` — the same room at the default
+  size, since it grows to the line either way — so that where the row is
+  narrower than what stands in it each item yields in proportion to its size
+  and the controls reach their floors first; with a basis of 0 the column got
+  what the controls left. The count is not a target and never gives way: it is
+  read in full, and where the count and two fingers are wider than the row the
+  count takes a line of its own above them (#271; "Built — #260").
+  At 16 px every floor is the size, so nothing moves — the pixel comparison
+  says so, not the reasoning. Tested at 32 *and* 40 px: the second point found
+  the pencil and the toggle, which a fix for the stepper alone would not have.
+- **A fold keeps a hidden copy of what it moves**, at every width, because CSS
+  can show and hide but not move. Nothing a person uses sees it — it is
+  `display: none` to a screen reader, to find-in-page and to a copy — but
+  `getByText("MS-91055")` does, and became a strict-mode violation at 1440 px,
+  where nothing folds; the screenshot spec found it. A test that reads a row's
+  text asks for the one on screen (`.filter({ visible: true })`).
+- **`touch:px-0` on a table's pencil cell.** The 44 px target carries its own
+  margin round a 15 px icon, so under `touch:` the cell drops its padding and a
+  touch table needs exactly what a mouse's does — one set of lines for both.
+  It is load-bearing at the narrow end: with the padding the folded Orders
+  table needs 641 px of the 638 a 768 px iPad gives it.
+- **The filter sheet is `Modal` with `sheet`** — the same focus trap, Escape
+  and inert page, risen from the foot of the screen — on Kits and Orders. It
+  edits a draft: status toggles with each status's count from `GET /summary`,
+  series or retailer as a native select, the sort segmented, *Clear*, and a
+  primary button that says what it will show ("Show 5 kits") through the same
+  pure filter the page reads (`lib/listFilters.ts`), with the page's search
+  still applied. Applying writes every parameter in one navigation, each
+  dropped at its default, so the sheet leaves the URL the desktop's selects and
+  a Home link would (§13.4). The control that opens it counts the active
+  filters; a sort is an order, not a filter. No grab handle: nothing drags.
+  Inventory keeps its one category select on the page and Retailers has only a
+  search — a sheet for one select is a detour.
+- **Focus comes back by record, not by name** (`lib/focusKey.ts`). Across the
+  768 px line a `<tr>`'s pencil and a card's are two nodes, and `PageHeader`'s
+  remedy (one tree) is not available to a table. So a control that is drawn per
+  shell carries `data-focus-key="kit:<id>"`, and two things read it. `Modal`,
+  which returns focus to the node that opened it: at close, if the opener is
+  gone, it focuses whatever carries that key now. And `useFocusAcrossShells`,
+  called where the shell is chosen: with no dialog at all, a rotation destroys
+  the *focused* row control, focus falls to `<body>` and the next Tab starts from
+  the top of the page — so after the swap the keyboard goes to the control for
+  the same record. Not the accessible name, though §13.7 keeps names equal
+  across shells, because here names are not unique: two kits from one order line
+  share one, three orders from one shop on one day share "Edit {shop} {date}",
+  and every upgrade's button says "Apply to kit". The inline status filter
+  carries the sheet opener's key, so a sheet closed after a turn to landscape —
+  or the turn alone — hands the keyboard to the filters that replaced it.
+  Someone who clicked away from a row is not taken back to it: the `focusout` of
+  a click-away and of a removed node are identical when dispatched, and what
+  separates them is whether the node is still in the page one microtask later
+  (measured; the comment there has the order of events). The second reader was
+  found by a screenshot: Playwright's full-page capture makes the viewport 1 × 1
+  for a moment, and a focus ring `main` drew was missing from the branch's.
+- **The rule those are instances of: every change of representation accounts for
+  the focused control** (Codex #266, findings 3 and 4 — the class of #265's
+  finding 1). The build had answered it for the instances it thought of: the
+  rows, a dialog's opener, the Status filter. The review found four more selects
+  and the tokens' Revoke; a sweep that focuses *every* control and changes the
+  page under it found the rest — the pager's pages, a retailer's link, Export
+  CSV, the tracking link, and the whole navigation, which #257 draws as three
+  sets of nodes. Three additions. **A stand-in**: a control some shape does not
+  draw names the one that takes its place there (`data-focus-stand-in`, several
+  in order) — the Series, Retailer and Sort selects name the sheet's opener,
+  Export CSV the page's primary action, a page the phone's short pager lacks the
+  current page, the tracking link the control that opens the lines, and what a
+  phone keeps under More names that tab. The way back is one control for several,
+  and deliberately the first of them. **A control that is no longer drawn**: a
+  container query hides a focused control with no shell change and no render at
+  all — an iPad Air turning is the rail both ways — so a `ResizeObserver` on the
+  focused control (on its nearest sized ancestor when it is inline, as a text
+  link is) hands the keyboard to the *drawn* carrier of its key; both copies of
+  a CSS swap carry one key, and the forgetting rule learned that a control a
+  fold has just hidden is connected too and nobody left it. **The navigation**
+  carries keys as the rows do. The guard is the sweep itself
+  (`lists.spec.ts`, "no change of representation leaves the keyboard on
+  `<body>`"): every focusable control, the three ways the page can change under
+  it. It says only *never nowhere*; the named tests beside it say where.
+- **A control that changes its own state is a change of representation too**
+  (#268). Disabling the focused control drops the keyboard to `<body>` just as
+  removing it does, and outside a dialog nothing answered: every press of a
+  stock stepper sent the next Tab to the top of the page. Two kinds, two
+  answers. A control **waiting** on its own request keeps the keyboard —
+  `Button`'s `pending` is `aria-disabled` and refuses a second press, so two
+  presses are still one request (#55) — because the person is still there and
+  it will act again: the steppers, Export CSV, a Save or a Create in flight, a
+  Revoke, Sign in. A control that **cannot act any more** — disabled, or gone —
+  hands the keyboard to the stand-in it names, through one `MutationObserver` in
+  `useFocusAcrossShells`: − at zero names +, a Save with nothing left to save
+  the field before it (the owner's call, 07/10/2026), a revoked token's Revoke
+  the next token's, then the one before, then the new token's name, Create the
+  new token's Copy, Done the name, and the name field Copy (Enter there creates
+  the token too). The stand-ins are read as the control carries them when the
+  keyboard is lost, not when it arrived: a Revoke's neighbours change when the
+  list is refetched under it. A loss is answered when it happens or not at all —
+  a removed control is kept two frames for the shell effect's late twin, then
+  forgotten — because answered later, by whatever next draws the key or by the
+  next shell change, it would be a jump nobody asked for, and on an iPhone a tap
+  on Done would raise the on-screen keyboard (`e2e/keyboard-place.spec.ts`; the
+  PR #336 review).
+- **The pager on a phone** offered five pages at most — the ends and the current
+  page with a neighbour either side — at 44 px each, on their own line when
+  they did not fit beside the range: the desktop's window is nine entries from
+  the middle of a long list, wider than the screen. Since #318 a phone shows
+  every row and draws no pages at all (the amendment below).
+- **The guard**: `e2e/lists.spec.ts`, in all three projects, on rows it seeds —
+  the from-empty suite had only ever seen empty lists. It carries each field's
+  null as well as its widest value; its run tag is digits, because the tag is a
+  word of the retailer's name and a segment of the order number, and in base 36
+  the table's width moved 25 px from one run to the next. Beyond the sampled
+  viewports it gives every table's box **every width** from 634 to 1300 px: a
+  fold line a few pixels short is a band a few pixels wide between any two sizes
+  a suite samples. Since Codex #266 it also seeds the *wide* row — an order in
+  three currencies, thirty-two digits of order number, thirty of tracking — runs
+  the phone's tests from 320 px, and has a sibling, `lists.settings.spec.ts`,
+  that asks the fit questions again under every date style (in the `settings`
+  project, after everything else: it flips the singleton every date is written
+  with).
+
+**Built — #259.** What the build decided, and what it measured:
+
+- **Three frames from one tree.** `Modal` draws the desktop's centred panel, the
+  phone's full-screen sheet and the bottom sheet from the same nodes, dressed by
+  `max-md:`, so a turn across the 768 px line keeps the Close that was clicked,
+  the field being typed in and the primary action as the elements they were.
+  Below 768 px the overlay is the screen and the panel a column filling it: the
+  head (the title and Close) and the action bar fixed by the column, the body
+  the one scroller, nothing inside `position: fixed` (the trap's `offsetParent`
+  filter still sees every control). A form *describes* its two actions
+  (`DialogAction`: a label, an `onClick` or the `form` it submits) and the frame
+  draws them — at the end of the panel on the desktop, 16 px under the last
+  field as every form drew them; in the bar on a phone, one share for the
+  secondary and two for the primary at 48 px, above the home indicator — so the
+  submit stands outside the `<form>` element and names it by id. The filter
+  sheet's bar (#258) is this bar now, with a hairline above it.
+- **Delete is drawn twice.** The owner's call keeps it out of the fixed bar —
+  under the fields it destroys on a phone, at the start of the action row on the
+  desktop — and the two places cannot be one node, so both are drawn and CSS
+  hides one per shell (the fold's pattern, above), each carrying
+  `data-focus-key="dialog-delete"`; `focusByKey` reads the whole document now, a
+  dialog being a portal beside `#root`. A turn with the keyboard on Delete lands
+  on the twin: the dialog's own `focusout` fallback asks the key before it takes
+  the keyboard itself — its first version pre-empted the twin, and the rotation
+  test caught it.
+- **The order form.** The head's eight fields are one six-column grid — two
+  columns a field, three for the tracking pair, on the desktop, which is
+  arithmetic-identical to the three grids it replaces — and on a phone the
+  retailer alone, then date and currency, number and shipping cost, delivery
+  service and tracking number, the URL alone. A line is a card: the type with the
+  remove control beside it (44 px under `touch:`), quantity and unit price under
+  labels that show (a placeholder is gone once its field is filled) with the
+  currency code inside the price field, then the kit's name and grade, scale and
+  number three across, or the picker; the §6 snapshot a labelled field with its
+  note beneath. **One tree in the desktop's DOM order**, placed by grid cell: the
+  issue drew the name before the quantity, and either order reads, but the
+  phone's would have needed a second arrangement per shell (every line control
+  keyed, the picker's search remounted mid-word on a turn) or CSS `order`, which
+  puts the Tab order out of step with the eye. So the remove control is tabbed
+  after the price in both shells, as it always was, and drawn a row up on a
+  phone — the one place the eye and the Tab differ. The desktop's row is kept
+  to the pixel, an accident included: the quantity sat in a `Field` whose
+  empty label carried 4 px of margin, so the row was 38 px and the field 2 px
+  under the price's centre; the first build let that go, the comparison
+  against `main` showed every order dialog shifted from the line row down
+  (and, where the dialog is taller than the screen, the whole panel — the
+  focus call scrolls the overlay to the nearest edge, and a shorter panel lands
+  elsewhere), and the margin went back in as a block with `md:pt-1`, one
+  comment and one line to remove if the field is ever centred on purpose.
+- **A row of fields folds by its box, not the viewport.** `stack-3:` and
+  `stack-2:` (index.css) are container queries at 20.25rem and 13.25rem — about
+  100 px a field, 6.25rem, and the row's gaps — asked of the nearest
+  `@container`: the dialog's body, or the line's own card, whose padding is then
+  inside the arithmetic. So a 320 px phone's line has grade, scale and number one
+  to a row where a 390 px phone's has three across (a card of 262 px against
+  332), and under the browser's font-size preference the same rule folds the kit
+  dialog at 390 px and 32 px (a body of 11.2rem) while a 744 px one keeps its row
+  (21.25rem). The phone's pairing itself (`max-md:grid-cols-2`) is a shell
+  decision and yields to the box's — the container rule sorts after it in the
+  stylesheet. What a 320 px phone under a 40 px font cannot give: a field alone
+  on its row is 4.45rem, under the room, and that is all there is — declined,
+  and the spec's room check asks only of a field with another beside it.
+- **The trap holds in WebKit (#267).** Safari's default Tab stops on fields and
+  selects, not on buttons, links, checkboxes or radios, so a trap guarding only
+  the ends of its own list let one Shift+Tab out of a dialog whose first control
+  is Close, and one Tab out after the last field. The trap now hand-drives a Tab
+  whose next stop is anything an engine might skip, and leaves to the engine the
+  moves every engine makes alike — which keeps a date input's own Tab through its
+  day, month and year. Where the engine *lands* when it leaves such a field is
+  still the trap's to check (Codex #272, finding 2): WebKit left the order form's
+  arrival date for the first line's type select and passed *Add line* over —
+  inside the dialog the whole time, so every containment check passed. For the
+  length of that key's own task, focus arriving anywhere but the logical next
+  stop is sent on to it; a move between parts fires nothing out here, so the
+  parts keep their Tab. **A pending correction is consumed by its own departure
+  and governs no later focus change** (round 2, finding 3): the first version
+  removed itself on a zero-delay timer alone, a timer does not confine it to
+  one key's task, and under a burst of native Tabs several were pending at
+  once, each holding a different next stop — they sent focus back and forth
+  between two fields until the page stalled. The listener removes itself before
+  it sends focus anywhere. Two rounds landed in this function; a third is a
+  reason to restructure the trap, not to patch it. Two more WebKit-only defects fell out of running the phone
+  specs under it, both older than this milestone: **Safari does not focus a
+  button on click**, so a mousedown on a picker result blurred the search field
+  to nowhere and #104's `relatedTarget` rule unmounted the list before the click
+  landed — no catalog item could be picked by tap on an iPhone (the list keeps
+  the input's focus through the press now); and **WebKit takes the keyboard off a
+  just-disabled control later than the attribute changes**, after the dialog's
+  observer had looked (it acts on a focused control that is disabled *now*, and
+  a `focusout` to nowhere is checked a microtask later). CI installs Chromium
+  alone; the WebKit runs are local (`.agents/testing-and-review.md`).
+- **The on-screen keyboard.** iOS Safari does not resize the layout viewport for
+  it — the visual viewport shrinks and pans — so a bar at the foot of a
+  full-height sheet would sit under the keyboard while a field is focused. The
+  phone's sheet follows the visual viewport (its height and offset, through the
+  CSSOM, which the packaged stack's CSP permits). **Measured on the iOS
+  Simulator** (iPhone 17, iOS 27, Safari, 18/09/2026), which no emulation
+  replaces — it found three things. The bar did rise above the keyboard, but
+  the *tapped field was hidden*: iOS scrolls a field into view against the
+  viewport as it was before the sheet shrank, so the focused field is scrolled
+  back into the sheet's scroller when the viewport changes and when focus moves
+  while it is shrunk (with a line of scroll padding). The *page showed through*
+  between the bar and the keyboard: it is the panel that follows now, not the
+  overlay, and on a phone the overlay has the sheet's own ground. And **iOS
+  draws a date input at an intrinsic width and lets it out of its cell** — the
+  order form's date ran 30 px into the currency beside it; below 768 px a date
+  input drops the native appearance, takes the width it is given, and still
+  opens the system picker. Left alone: a sliver of the page behind the
+  keyboard's translucent top edge, which is Safari's. Still the owner's: a real
+  iPhone, an iPad, the standalone window. Chrome for Android's
+  `interactive-widget` was left alone.
+- **The applied-upgrade row wraps, and breaks words only where its box is too
+  narrow for one** (Codex #272, finding 1). The kit form's row — an upgrade's
+  name, its date, *Withdraw…* — was the one row of any dialog that neither
+  folded nor wrapped: under a 32 px browser font it was 16 px past a 390 px
+  sheet and 86 px past a 320 px one, and the body scrolled sideways. The PR's
+  coverage record had listed that state as untested; the review walked it.
+  The row stays the row `main` drew where it fits: the name may shrink, and a
+  word no line can hold breaks (`break-words`, which touches no word that
+  fits); under `stack-3:` Withdraw takes the next line and the name the whole of
+  this one; and the question's buttons, which are sentences, may break inside a
+  word under `stack-2:` — by the box and not everywhere, because `overflow-wrap:
+  anywhere` reshapes the text it is put on (above). Not `flex-wrap` at every
+  width, the first remedy tried: a long name would have sent Withdraw to the
+  next line on the desktop too, and a short-named parity capture could not see
+  it. The spec's upgrade carries a 42-character token for that reason — with a
+  short name, and then a 29-character one, the remedies covered for each other
+  and their mutants survived. *Withdraw…* itself may break its word under
+  `stack-2:` (round 2, finding 4): 252 px under a 40 px font in a 178 px row.
+  Round 1 had removed that as untested, and the test had not seen the case
+  because **the page behind the sheet widens what the sheet is measured
+  against**: at that font the page is wider than a phone (#269, #270), a wide
+  page widens the layout viewport, and the sheet had room the screen does not.
+  The font-size test takes the inert page out of layout while it measures and
+  asserts the screen's width. A selected catalog item's long name pushing
+  *Change* off the sheet was the same family and older than this work (#273,
+  fixed with #260).
+- Also: checkbox rows a finger tall with the label the target; the picker's
+  result rows a finger tall; `inputmode` numeric on quantities and a rating,
+  decimal on money; the touch sizes on the remove control, the retailer's add
+  control and the picker's *back to search*.
+- **Parity from 768 px up**, measured: every page and dialog at 1440 × 900,
+  1280 × 720, 1024 × 768 and 820 × 1180, both themes, against `main` on one
+  seeded database, with `main` against itself as the noise floor (up to 56
+  pixels a capture, a channel delta of 1 or 2). One capture lies outside the
+  noise: the Apply-to-kit dialog's primary button, about 150 pixels along its
+  rounded edge — its row is the frame's shared row now, an auto margin on
+  Cancel where it had `justify-end`, and the button's edge rounds a fraction of
+  a pixel differently; the text inside does not move.
+- **The guard**: `e2e/dialogs.spec.ts` in all three projects — every dialog at
+  320, 390 and 744 px (and 820, 1180, and 1280 with a mouse): no control past
+  the screen, no field under its room beside another, the sheet's own scroller
+  never sideways, the primary and Close under a finger at the top, the middle
+  and the end of the scroll; the line's shape per shell; the head's pairing; an
+  order recorded and a kit edited from the phone, driven to the API; Delete's
+  place and its twin across a turn; the dialogs under 32 and 40 px fonts — and
+  `e2e/dialog-keyboard.spec.ts` runs in the phone and tablet projects too.
+  Against `main`'s `src/` the fit test and the line test are red by name in
+  every project (the head not at the top, no bar, a tap on the primary landing
+  on nothing, no `inputmode`); under WebKit, `main`'s keyboard spec escapes to
+  `<body>` at its ninth Tab.
+
+**Built — #260 (the pages, and what a large browser font found).** What the
+build decided, and what it measured:
+
+- **Settings is one `<nav>` dressed two ways.** From 768 px it is the pane it
+  was — and from 768, not 640: the page had Tailwind's `sm` for its one
+  breakpoint, so between the two lines a phone shell held a two-pane page.
+  Below 768 px `/settings` *is* the section list — More's rows, a chevron on
+  each — and a section opens from it with the list not drawn; the bar gains a
+  44 px chevron, *All settings*, the way up (`PageHeader`'s `back`, a slot the
+  page fills, so `ui.tsx` still knows nothing of the router). The `h1` stays
+  "Settings" and the section's `h2` stays the section's, in every shell, so the
+  heading order and the names one e2e suite reads do not fork. `/settings`
+  redirects to General only from 768 px (`SettingsIndex`). Because it is one
+  tree, a turn keeps the page and a half-edited form; the keyboard is handed
+  over by `lib/focusKey.ts`'s stand-ins — a section's link names the chevron,
+  the chevron names the open section's link.
+- **Fields fill their card on a phone** (`max-md:max-w-none` on the caps the
+  desktop keeps), and Date style and Hour cycle share a row while each has 9rem.
+- **Data management below 768 px renders its export card and one sentence**
+  (superseded by #304, at the end of this section) —
+  the Templates and Import cards are not in the DOM, which is what "should not
+  sit a thumb's width from a mis-tap" means; hidden would have left them to a
+  keyboard and a screen reader. The import's state is held above the cards, so
+  a tablet turned to 744 px and back finds its file and its preview (tested).
+- **A Recently completed row on a phone is a grid by decree, not a wrap by
+  need**: the name, then the stars and the date, and the pencil in a column of
+  its own beside both — left to the wrap, the pencil went down with the date.
+  The same tree (`display: contents` on the meta's wrapper). **By the strip's
+  own box, under 26rem, not by the shell** — the owner's second call
+  (19/09/2026), made looking at an iPad mini in the simulator: at 744 px the
+  phone shell's strip is 712 px wide and two lines left most of each row empty.
+  Under 26rem is every phone there is (408 px of strip on the widest); 26 and
+  not Tailwind's 28 because a 1024 px tablet's two-up strip is 436 px and keeps
+  what it had. Backlog rows keep the wrap-by-need they had (since #326, in the same
+  shape: the meta under the name, the pencil beside both). **The mail is three stacked
+  groups on every phone there is; at the very top of the phone shell — an iPad
+  mini in portrait, 712 px of box — it is two abreast**, because Home lays out
+  by its box (§13.2) and that box has the room; the owner's drawing was a
+  390 px phone. *View all* links are 44 px under `touch:`, and a mail card's
+  words end where its 44 px pencil begins.
+- **The sign-in, setup and OIDC screens already fitted** a 320 px phone and the
+  420 px an iPhone's keyboard leaves of 844 (the page scrolls to its button).
+  What they did not survive was the font preference, below.
+- **The browser's font-size preference, the shell's turn** (#269, #270, #271,
+  #273 — one family: content in rem beside a box that is not). Measured on
+  every page at 32 and 40 px, 320 and 390 px wide:
+  - the phone bar is `min-h-14` and wraps: the action takes the next line
+    where it no longer fits beside the title. **The tab bar was never too
+    wide** — it is fixed to the layout viewport, which the overflowing action
+    had widened; #269 measured the symptom;
+  - `main` in the phone shell is `break-words`, and a `Button`'s label and a
+    `Chip`'s may break *inside a word* there (`max-md:wrap-anywhere`): at 40 px
+    a card's content box on a 320 px phone is 158 px, narrower than
+    "formatting", "Consumables" or "Pre-ordered". In the phone shell only:
+    `anywhere` lowers a box's min-content size and a desktop table squeezes
+    whatever has give (#258's lesson);
+  - a card's facts wrap (`CardMeta`), a word that truncates beside chips says
+    `CARD_WORDS` so it keeps their line while it has 4rem; the token card's
+    facts keep 10rem beside Revoke or Revoke takes the next line; the pager's
+    pages wrap — found only once a test's own seed gave Kits a second page
+    (`lessons.md` → "The state that was not on the page");
+  - **the stepper has a second arrangement** (#271): the count above the two
+    squares where the count and two fingers are wider than the row. Which one
+    is *measured* — the count on a hidden ruler that never wraps, against the
+    row — not counted in digits; the first version measured the drawn count
+    and oscillated on a ten-digit one (`lessons.md` → "The answer changed what
+    was measured"). One line wherever it fits;
+  - the picker's chosen name breaks inside its chip and the row wraps by its
+    box (`stack-3:`), never at every width — #272's lesson — and the chip keeps
+    a field's room, because breaking is not reading;
+  - the wordmark on the sign-in screens is `min(1.5rem, 9vw)`: one word that
+    must not break, at the size that fits.
+  **The bound now:** 40 px on a 320 px phone, every page, the dialogs, the
+  sign-in screens. 48 px on 320 px — three times the default on the smallest
+  phone — still overflows in places (the filter button, Data management's
+  buttons) and is not claimed.
+- **The guard**: `e2e/pages.spec.ts` in all three projects (Settings' two
+  shapes and the turn between them; Data management by named control, and the
+  import across a turn; Home's row, groups and targets; the four auth screens
+  with a mocked session, at the height a keyboard leaves; every page and auth
+  screen under 32 and 40 px), `e2e/phone.spec.ts` — the happy path by thumb,
+  signed in with the password and checked against the API — and the font-size
+  tests of `lists.spec.ts` and `dialogs.spec.ts` extended to the facts, the
+  ten-digit count, the pager and the unbroken name.
+- **Codex's round 1 on #274 (GO, four P3s), and what they changed:**
+  - *The bar's buttons have 4 px of side padding, in px.* `Button`'s 0.75rem a
+    side was 60 of Cancel's 71 px column under a 40 px font, and once a label
+    may break inside a word "Cancel" was six lines of a letter, the first above
+    the button. A bar button is as wide as its column and its label is centred:
+    its own padding bought nothing. `min-h`, so a long translation grows it.
+  - *A phone's dialog frames are `break-words`*, as the phone shell's `main`
+    is: a dialog is a portal and inherits nothing from it. **Every state of
+    the picker gives way**, not the chosen name alone — the third review the
+    picker came back in: a result's name keeps 8rem beside what is on hand or
+    that takes the next line; the offer to create breaks (the query is free
+    text); *back to search* takes the next line where it cannot share one, its
+    side padding in px. And the order form's checkbox column is
+    `max-md:flex-nowrap`: a column that may wrap is a multi-line flex
+    container, whose lines are as wide as their widest item wants, so
+    "stretch" stretched every row to the longest label's longest word.
+  - *The controls Data management does not render on a phone name a stand-in*
+    — the bar's way back — and **the hand-over no longer depends on commit
+    order** (`lib/focusKey.ts`): each `useShell()` caller re-renders in a
+    commit of its own, in the order the browser reports their media queries,
+    so `Layout`'s "the shell changed" effect could run before the section had
+    removed the focused control — some turns in every few, three callers deep.
+    The effect now looks again on the next frame, by when every caller has
+    committed. Not from the removed control's `focusout`, the first remedy:
+    WebKit does not reliably fire one for a node taken out of the page, and
+    there it lost one run in four.
+  - *The stepper's stability is asserted over sixty frames at the widths
+    between the samples* (420–540 px), where a measurement of the drawn count
+    flips every frame; read once at 320, 390 and 744 px it could pass.
+  - **What the checks ask now:** a label *reads* (its ink inside its control,
+    its lines no more than its words); a thing beside another *has its room*
+    (its one-line width or its row's); every block of a dialog holds what it
+    says (`said past its own box` — a spill of 20 px lands in the sheet's 40 px
+    of padding, where no scroller moves and no control is off the screen).
+  - **Seen by the reviewer and kept:** at the default font on a 320 or 390 px
+    phone a kit card's series and an inventory card's low-stock badge now take
+    a second line where they used to be cut to a few letters (`CardMeta`
+    wraps). A change at the default size, and a better one.
+- **Codex's round 2 on #274 (GO, two P3s):** the picker's new result-row rules
+  are the **phone shell's alone** (`max-md:`). At every width they had moved a
+  desktop result with a long name and a long category — the stock label from
+  two squeezed lines to one, the name's column 30 px narrower: a better row,
+  and not this milestone's to change. The dialog fit check's `said past its own
+  box` says exactly what it asks and of what, allows an ellipsis and the
+  dialog's own head by its Close's measured margin and nothing else, and has a
+  negative control of its own. And the turn test arrives at Data management
+  **by the app's own link**: the section then subscribes to the shell after
+  `Layout` has, which makes the adverse commit order certain — the stand-in
+  alone lost the keyboard eight times in eight there, in both engines. It had
+  been measured as a one-in-three race because the test only ever arrived by
+  URL, where the two mount together; for anyone who tapped their way in it was
+  every time.
+
+**Built — #260 (the pictures and the pages that describe it).** `e2e/screenshots.spec.ts`
+captures the phone's and the tablet's shells beside the desktop's, from the same
+seeded demo collection and in both themes: eleven `phone-*` captures at 390 × 844,
+three device pixels to one, and two `tablet-*` at 820 × 1180, two to one — contexts
+with the `phone` and `tablet` projects' own viewport and touch screen
+(`DEVICES` in `e2e/screenshots.ts`), so a capture is what those projects test.
+A phone capture is the screen as held — the viewport, the tab bar at its foot —
+never the page's whole length. The README carries one, Home; the docs site the
+set, on a page of its own (*Phone & Tablet*: the three layouts by width, the
+tab bar and More, the filter sheet, sheets, Settings as a list, what a phone
+leaves out and why, adding it to the home screen). The desktop captures were not
+re-shot: nothing from 1280 px up moved in this milestone but the one declared
+exception, which 1440 px does not show.
+
+**Built — #275 (a dialog opened inside a turn).** The focus rule had two readers and
+one of them asked too late. `Modal` takes its opener from `document.activeElement`
+in an effect, after the commit that mounted it; a viewport across a shell's line
+changes what `matchMedia` says at once and delivers `change` later in the frame, and
+`useSyncExternalStore` re-reads its snapshot whenever its caller renders — so a key
+pressed in that gap renders the list *and* the dialog in the new shell in one commit,
+the opener's row is swapped away in it, and the opener `Modal` finds is `<body>`,
+with no key to give the keyboard back to. `Layout`, which answers for swapped rows,
+has not rendered and hears of the turn only after the dialog has the keyboard. So the
+place `useFocusAcrossShells` remembers is the module's, not the hook's, and a dialog
+that opens onto `<body>` takes the keys of the control whose going nobody has answered
+for yet (`unansweredKeys`); closing gives the keyboard to whatever carries them, as
+it already did for an opener that went while the dialog was open. `<body>` with no
+remembered place — a pointer in Safari, which focuses no button — is as it was.
+**An unanswered loss, not the last keyed `focusin`** (Codex #276, finding 1): the
+keys are given only while the remembered control is not drawn. A control hidden and
+shown again, or taken out and put back, was never *left*, so it stays remembered,
+and no event marks its return — a dialog then opened by a pointer in Safari was
+handed, at close, to a control that had not opened it. That check was in the first
+draft and came out as untestable; the reviewer made three things that test it. The
+store has one owner — the hook, called once in `Layout` — and outlives it; a second
+caller is a second writer, and owes the store an owner and an end first.
+Reported as a WebKit loss of two to six runs in ten after repeated turns; the turns
+and the engine were the harness's (Playwright's WebKit resolves a viewport change
+before the page hears of it). With the `change` events held (`e2e/shellEvents.ts`) it
+was eight in eight in both engines, and lists.spec.ts and shell.spec.ts hold it there.
+
+**Amended — #304, import on a phone (owner's calls, 02/10/2026).** plamotrack-ios
+keeps its own store, and the CSV archive is its only way to a server: someone moving
+to their own instance has the archive *on their phone*, and the documented path is to
+import it here. That undoes the first of the three reasons the phone was export only
+(nobody prepares a CSV on a phone); the other two are answered rather than kept:
+
+- **`replace_all` stays off the phone** — two modes, Merge and Add only, as segments
+  (radios in their labels), never a `<select>` holding the third. The move does not
+  need it: merging an archive into an empty instance restores it whole
+  (`test_golden_archive.py`'s round trip). A tablet turned to a phone while replacing
+  everything falls back to Merge and loses the plan in the same render, so no Apply
+  can run a plan the phone does not offer; the file stays. A preview still in
+  flight then is dropped when it answers — every preview carries a number that
+  anything discarding a plan moves on (another file, another mode, Cancel, the
+  fall-back), which closed the same race on the desktop's mode select (#314
+  review).
+- **The preview is the same `ImportPreview`** — it had already stopped being "wide
+  diff tables": a section per table, a row its badge and its label. On a phone the
+  row number joins the line under the label instead of taking a column, a label
+  wraps anywhere (a table's columns are as narrow as their longest word, which
+  widened the page under a large browser font), and a section's rows no longer
+  scroll inside a 20rem box: the page is the one thing a thumb scrolls.
+- **Apply and Cancel are a dialog's bar, on the page**: Cancel a share, Apply two,
+  held above the tab bar (`sticky`, the tab bar's 3.5rem and the home indicator's
+  inset) while the Import card is on screen, at rest under it — so a long preview
+  never puts Apply a scroll away. `main`'s width, gutters included, so nothing
+  scrolls past beside it.
+- **The picker is a button**, *Choose a file*, then the file's row with *Change*;
+  there is nothing to drop onto on a phone. The input accepts the MIME types beside
+  the extensions, for pickers that filter by type.
+- **Of the blank templates, the starter sheet alone**, after the import: one CSV, a
+  row a kit, the one template a phone might fill in (Numbers, Sheets) and the way
+  someone starting from a spreadsheet gets going. The full pack — nine files in a zip —
+  stays on the wider shapes, and its button names the starter sheet as its stand-in.
+- **An import that has been sent is the operation's, not the draft's** (#314 round
+  2). The fall-back may throw the draft away under it, and an import that reached
+  the server is not stopped by that. Aborting the request wouldn't stop it either:
+  the transaction may already be committing. So `submitted` holds the mode it was
+  sent with, a status line in the card names it ("Importing — Replace
+  everything…"), and the actions stay up, saying "Importing…", until it answers.
+  Meanwhile the mode and the file can't be changed, in any shell. **The phase
+  ends on the API's answer** (round 3); the refresh of the rest of the app's data
+  comes after it. **And it has somewhere to keep the keyboard:** sending it
+  disables Apply, and its stand-in, the mode, is disabled too. So the status is
+  focusable (`tabIndex={-1}`) and carries a key of its own (`import-pending`), and
+  every pending control names it as its last stand-in. Sending the import gives
+  the status the keyboard, and the answer gives it to the outcome, but only where
+  the keyboard is nowhere else. **Where the keyboard is moved, it is revealed**
+  (round 4): a nearest scroll, with scroll margins clearing the phone's sticky head
+  and its bar over the tab bar. `preventScroll` alone left the status focused far
+  below a long preview. A preview's answer gives the keyboard to its refusal or
+  back to Preview; `main` lost it there too. A focused outcome replaced by a dropped
+  file hands it to that file's Preview.
+- **…and the operation outlives the section** (#315, the owner's call). Held in
+  the section, a sent import went with it when the section was left: the server
+  finished it, coming back found a fresh draft, and nothing stopped the same file
+  being applied again, which under Add only adds every kit twice. The request and
+  its answer now live in a module above the routes (`lib/importRun.ts`, one import
+  at a time, for the life of the tab); the draft stays in the section, where
+  leaving can still throw it away, because it has not happened. A section mounted
+  while the import runs says so and offers no file to pick. One mounted when it
+  answers is told in the same tick, so the result and the emptied draft are one
+  commit (round 3's rule, kept); one mounted after it answered starts from the
+  outcome. Either way the outcome stays in the module until a section has
+  **painted** it (two animation frames after committing it), then it is
+  forgotten: shown once, as an outcome seen in place goes when the section is
+  left. Being told is not being shown (PR #332 review): a section can be told
+  while a navigation tears it down, or commit the outcome under a link's
+  transition that replaces it before the next frame, and the first version lost
+  the outcome both ways. **What is drawn is what is acknowledged** (round 2): the
+  section holds the outcome as one state, and the result and the apply's failure
+  are read from it. Held as three, the phone's fall-back cleared the drawn result
+  while the copy being acknowledged forgot it unseen. The fall-back is the
+  draft's and leaves the outcome be; a preview's refusal, the draft's, is a state
+  of its own and goes with it. Arriving takes nobody's keyboard: the keyboard moves at
+  the moments of sending and answering, never on mount. The other direction,
+  blocking navigation while it runs, was turned down: it needs a data router
+  (`useBlocker`) or hand-intercepted links, and it holds the tab bar hostage for
+  the import's seconds. A reload or a closed tab still loses the outcome and
+  aborts the request mid-flight, so while it is in flight the page asks first
+  (`beforeunload`). **An import belongs to the owner session it was sent
+  under** (round 3), identified by its CSRF token, which is one per session (an
+  HMAC of the session's own token). `AuthGate` forgets it on any read that is not
+  that session: signed out, expired, or another owner session, signed in again
+  here or in another tab while this tab read nothing between. Read as a state
+  alone, `owner` → `owner` across two sessions looked like no change, and the old
+  import's answer reached the new session. A read of the same session keeps it,
+  however the cache got there: a late sign-in's clear and re-read is `owner` →
+  nothing → `owner`, and the import is live. A confirmed logout (204) forgets
+  at once in the tab that sent it, whether or not the session can be re-read; a
+  refused one leaves the session and the import running (round 1; #333 is that
+  path's other loose ends). A mounted section is told when the import is
+  forgotten, so its card stops saying it is under way. And an accepted send
+  replaces the last outcome: a failure left beside "Importing…" read as the new
+  import's (round 3).
+- **The import's failures are said in its card**, last in it — under Preview when
+  a preview is refused, just above the bar when an apply is. At the head of the
+  section, where every error used to go, a phone put it a screen above the button
+  that caused it, and a refused file read as a tap that did nothing (found in the
+  iOS Simulator). On a phone the badge's column hugs the badge (`w-px`): the table
+  had handed the number column's width to every column, and a short label lost a
+  third of its row.
+- **…and so is every failure in Settings, by the control that failed** (#316). A
+  download's is said last in the card whose button failed (Export, or Blank
+  templates in either shape), and brought into view: on a phone the starter sheet
+  is the last card, and at the section's head its failure was a screen and more
+  above it. A form's is said beside its Save (General, Language & formatting,
+  Create a token); at the form's head, Language's sat under the sticky bar on a
+  320 px phone by the time Save was reached. A revoke's stays at the token list's
+  head, since a Revoke can be any row, and is brought into view instead
+  (`ErrorBanner reveal`: the nearest scroll, clear of the phone's bars, the
+  keyboard left where it was). A failure to *load* a section stays at its head:
+  nothing was pressed.
+- **Focus across the turn** is by key, as everywhere (`lib/focusKey.ts`): the file
+  control, the mode, Preview, Apply, Cancel and the starter sheet each carry one in
+  both shapes; the pack and the replace confirmation name a stand-in.
+
+**Amended — #318, every row on a phone (owner's calls, 03/10/2026).** Ten rows and a
+pager is right at a desk and awkward under a thumb, where one long scroll is the
+natural shape, and there is no reason to page a list on a phone. So the phone shell
+shows every row and draws no pages; from 768 px it is ten a page, as before. The lists
+already fetch every row and page in the browser (`paginate`), so this fetches nothing
+more; it only draws more.
+
+- **Decided by the shell, not chosen.** A first build offered *Rows per page* (10,
+  20, All) as a browser-local preference, one value per shell; the owner dropped it
+  before review: nothing on a phone wants pages, and a preference for the wider
+  shells alone was not wanted either. So nothing is stored, the theme stays §13.1's
+  one exception, and a tablet turned across 768 px switches live, like every other
+  shell decision. `usePaging` (`lib/listState.ts`) is the list pages' one entry.
+- **`?page=` on a phone is dropped in place** (a replace, no history entry), whether
+  it came from a shared link, a bookmark or a turn into the phone shell: the URL never
+  names a page the list is not showing (#247's rule). Turned back, the list is on
+  page 1.
+- **Focus**: a page button names the page's primary action (`page-action`) as its
+  stand-in — a turn into the phone shell takes every page away. The phone's compact
+  page window went with the pages.
+- **A turn out of the phone lands on the focused record's page** (#321, owner's call
+  03/10/2026). Every row was drawn and ten are now: page 1 left the keyboard on row 12
+  with nothing carrying its key, and it fell to `<body>` — a regression #319 shipped,
+  which the focus sweep missed because every list it seeds is shorter than a page.
+  `usePaging` reads, in the render that crosses the line, which record the keyboard
+  is on or will come back to (`focusedRecordKeys`: an open dialog's opener, which
+  `Modal` holds while it is open, then the focused control), draws the page that
+  holds its row, and writes `?page=N`. The turn decides the page, not the URL — the
+  phone's drop of `?page=` can still be on its way — and it holds until the
+  browser's address *and* the router's location say that page: a navigation changes
+  the address at once and reaches React later, in a transition, and a turn that
+  trusted the router stood down on a stale page 2 (two runs in ten, a tablet turned
+  back within a moment). Rejected: every row control naming `page-action` as a last
+  stand-in, which keeps the rule and loses the place.
+- **Measured** before deciding (03/10/2026; Chromium, 390 × 844, the from-empty
+  database seeded with 300 kits, 300 orders, 300 consumables and 300 retailers —
+  about 2.5 times the owner's 116 kits, 3.7 times their 82 orders). Unthrottled, a
+  list of 300 is on screen in 220–430 ms against 130–250 ms for ten; at a 4× CPU
+  throttle (a mid-range phone) 0.9–2.1 s against 0.4–0.7 s, Orders the slowest —
+  5,200 nodes, and about 5.7 s of long tasks around its load, so the page is busy
+  for a few seconds after it appears. Scrolling top to bottom never dropped a
+  frame past 50 ms in either case; a search narrowing 300 kits took 0.7 s and a
+  stock change on the 300th consumable 1.3 s at 4×. Nothing to do at this scale; if
+  a collection's Orders grows into the hundreds on a slow phone, its cards are where
+  to look first, not a pager.
+
+**Amended — #323, every free-text cell gives way by its value (06/10/2026).** The rule
+above ("What a line cannot know gives way instead") was applied to dates and to
+Orders' references, and never to names. One word no line can hold — a product code
+run together, the issue's case, as an upgrade's name — held every list's table past
+its box from 768 px up, the row's Edit control with it: Kits was 2,956 px in a 770 px
+box at 900 px. `lists.spec.ts` checked exactly this, but only for its own rows, which
+had no such word; a multi-worker run put `dialogs.spec.ts`'s unbroken upgrade on the
+Upgrades tab and it failed there.
+
+- **The class is free text, not names.** Grade and scale are free text (#96), as are a
+  category, a manufacturer, a kit's number and series, a note, a shop's address and a
+  delivery service; each had the same defect. Every free-text value that sets a list
+  table's column width is now drawn through `Measured` (`components/Measured.tsx`) —
+  the ones a cell already truncates, a retailer's notes and an order line's label,
+  set none and stay as they were — the old
+  `Reference` lifted out of `OrdersPage.tsx`. Its ruler is now any table's
+  (`TableRuler`), and its copy takes the font from the text it measures, not from the
+  ruler: a name is medium, a grade chip semibold and tracked.
+- **Budgets from real data.** `name` is 10em: "(Unidentified" is the widest word of
+  the owner's 116 kit names, 6.2em in Inter's medium. `text` is 8em: "Workstation", a
+  real category, is 5.7em. Ordinary values stay plain words, so ordinary rows lay out
+  as before; the e2e rule test seeds both words and holds them to `normal`.
+- **A floor below the budget**, unlike a reference's: 4em for a name, 3em for other
+  text. A table has one of these per column, and an unbroken value in each — in
+  different rows, which is the same thing to the table — has to fit the narrowest box
+  (638 px beside the rail at 768). With 4em everywhere, Display's seven columns were
+  4 px past it.
+- **A value under its budget is still a width** (Codex #328, finding 1). Each value is
+  judged alone, and a table's minimum is the sum of its columns' widest words: one
+  ordinary Display row — "Weatherproof Display", "Accessories", "Non-scale",
+  "Kotobukiya", "Polyurethane", nothing near a budget — was 675 px in the 638 px box
+  at 768 (Chromium; 692 in WebKit), Edit past the edge. Inventory's tables were the
+  only lists that never folded, so they fold now, by their box as the others do, at
+  lines drawn from the worst case nothing breaks: a word just under its budget in
+  every free-text column at once (9.74em for the name, 7.73em for the rest — the same
+  in Chromium and WebKit), with ordinary values in the other columns; below the
+  line the folded columns ride under the name. Tools needs 690 px whole (WebKit, touch), so below 44rem (704 px)
+  Condition folds, leaving 558; Display needs 873 whole, so below 55rem (880 px)
+  Manufacturer and Notes fold, leaving 608. Consumables and Upgrades need at most 545
+  and never fold. Rejected: breaking every measured value in a table that does not
+  fit — it catches any combination, but breaks ordinary words mid-word wherever a
+  table is tight.
+- **A fixed line bounds the rows it was measured with, not every allowed value**
+  (Codex #328, round 2). Words nearer the budgets than the lines assumed (9.99em and
+  7.98em) in every column, a cost in CHF or A$9,999.00 on Tools, or a completed, rated,
+  fully dated kit with near-budget words in every field, outgrow the Tools and
+  Display lines and Kits' #258 line, in both engines — 864–898 px tables in 770–880
+  px boxes. None is near the owner's data (6.2em and 5.7em at most). Raising every
+  line to the theoretical maximum would fold most tables on the desktop and still
+  enumerate cases, so the owner's call (06/10/2026) was to ship the lines as measured
+  and state the contract: a line holds the realistic rows it was measured with, and
+  past it the box scrolls, as this section has always said. Folding *to fit* — a table
+  that measures itself and folds before paint when it is wider than its box — is
+  the structural answer for every list, and is #329.
+- **The siblings.** Inventory's category filter was the one list filter `<select>`
+  with no width cap, and a select is as wide as its widest option: it scrolled the
+  document. It now has the `max-w-52` that Kits' series filter and Orders' retailer
+  filter already had. On a phone, a kit card's scale was `shrink-0` and the grade chip
+  could not narrow, so an unbroken one pushed the card past a 320 px screen. The
+  scale may now narrow, and `GradeChip` gives way as `Chip` does below 768 px. A
+  clipping box (an order's lines) hid an unbroken delivery service rather than widen
+  the table, so the test asks whether it is cut, not whether it fits.
+  And seeding a real category ("Workstation (Portable)") where the spec had
+  "nippers" showed an Inventory card's facts cut to an ellipsis at a 40 px font on
+  a 320 px phone, against "the facts under it wrap" above. They wrap now.
+- **Not in this change: Home.** A strip row's meta is `whitespace-nowrap` by design,
+  and a bench card says the kit number beside the grade; an unbroken grade, scale or
+  number scrolls Home sideways from 768 px. How its strips give way is its own
+  decision (#326).
+  - **Amended — #326 (07/10/2026).** The owner's call: a strip row **stacks under its
+    name**, the narrow Recently completed strip's shape, by need at every width. The
+    pencil has a column of its own beside both lines; the name and the meta share the
+    other, on one line where they fit (an ordinary row is as it was) and with the
+    meta under the name where they do not. `stacked` is now only the decree that puts
+    the meta on the second line under 26rem. Home is measured as a table is: one
+    `TableRuler` over the page, and the grade, scale, kit number and a mail card's
+    date line (which says the carrier) through `Measured`, so a value past its budget
+    breaks and an ordinary one stays a plain word. A bench card's name is a heading,
+    a block of its own: it breaks where it ends (`break-words`), since `Measured`'s
+    floor is for a table's columns and ran under the edit control at a 32 px browser
+    font (Greptile #337). Measured with the issue's 92-character value in every field
+    at 320–1440 px, and at 32 and 40 px fonts on a 320 px phone, in Chromium and
+    WebKit (`pages.spec.ts`).
+
+**Amended — #329, tables fold to fit (06/10/2026).** Every list table from 768 px
+used to fold at a fixed line, a container query in rem measured once with one set of
+rows: Kits 48rem, Orders 66rem and 60rem, Retailers 46rem, Tools 44rem, Display 55rem,
+Access tokens 36rem. The bullet above records why no line can be right: words that
+each stay under their budgets add up, and Codex's second round on #328 put allowed
+values past every line in both engines. So a table now folds by measuring itself
+(`components/FoldToFit.tsx`):
+
+- **The first stage that fits, tried from the whole table up, every time.** Stage 0 is
+  the whole table and each stage folds more; a pass sets each stage on the box in
+  turn (`data-fold-1`, `data-fold-2`, cumulative), asks whether the box is wider
+  inside than out, and stops at the first that fits — or at the last, past which the
+  box scrolls, as it always has. A pass never starts from the stage drawn and never
+  reasons "fold if over, unfold if under", which oscillates (Codex's probe of that
+  shape flipped 60 times in 60 frames). The answer is a function of the box's width
+  and the rows, so unchanged inputs choose the same stage; and since a wider box
+  never needs more folding, a fold that toggles a classic scrollbar settles in one
+  more pass. The cells read the stage as `group-data-fold-<n>/fold:` variants where
+  they read `@max-[…rem]:` before; the stage is an attribute set before paint, not
+  React state.
+- **Four inputs, four triggers.** The box's width, through a `ResizeObserver` on a
+  zero-height sentinel as wide as the box — not the box, whose height a fold changes
+  inside its own callback (the observer-loop error), and not the table, which, `w-full`
+  and folded, keeps the box's width when its widest row leaves and so reports nothing
+  when it could unfold. The rows, through every commit of the box (a page, a filter, a
+  search, a tab, an order's lines). A value deciding to break, which commits alone:
+  `Measured` calls `useRefit()`'s function. A web font arriving: each face's
+  `loaded` promise — not the font set's `loadingdone`, which WebKit never fired for
+  the stylesheet's faces, leaving a table folded where Inter fit it whole. Each
+  queues one pass in a microtask, so a commit touching every cell measures once,
+  after React's synchronous re-renders and before paint.
+- **The fold hands on the focus it hides.** A pass that ends with the focused control
+  undrawn gives the keyboard to whatever carries its key now (`focusFirst`), before
+  paint. The first version left that to `useFocusAcrossShells`, whose observer hears
+  any control lose its box, and every focus test passed. CI's Integration run then
+  lost the Tracking link one run in five on a turn across the sidebar's line. The
+  viewport narrows a frame before the shell changes, so Orders folds to its second
+  stage at the sidebar's box for one frame and unfolds the next. The hook moved the
+  keyboard to the link's copy in the opened lines from inside its own delivery, so it
+  began watching the copy a frame later. By then the copy was hidden, and a hidden box
+  reports nothing to a new observation. The keyboard sat on `<body>` until something
+  else answered. The fold knows when it hides the focused control, so it answers
+  itself. The hook still answers for shells and for everything a fold doesn't
+  draw.
+- **Stages.** Kits 1 (Grade and Scale under the name), Orders 2 (the number under the
+  retailer; then Shipped, Received under the chip and Tracking into the lines),
+  Retailers 1 (Notes), Tools 1 (Condition), Display 1 (Manufacturer and Notes),
+  Access tokens 1 (the cards). Consumables and Upgrades have none: with a word just
+  under its budget in every free-text column and ten-digit counts, they fit the
+  narrowest box a table is drawn in (638 px) unfolded, in both engines. Access tokens is also stage 1
+  in the phone shell whatever its box, as every list there is cards — at 744 px (an
+  iPad mini in portrait) it was a table before.
+- **What the e2e holds.** The fixed `FOLD` lines are gone from `lists.spec.ts`. Every
+  box width from 634 to 1300 px (and back down, every seventh) and every real size
+  checks that the stage drawn is the first that fits, tried by hand in the test
+  (`foldState`), and that no observer error is reported. Without a resize: a search
+  that narrows Kits in place to an ordinary row unfolds it, and back; a second order
+  arriving on a refetch folds Orders to its second stage under a focused Tracking
+  link, and the keyboard lands on the link's stand-in; the web font arriving decides
+  the stage of a box set between what the table needs in each font. Codex's round-2
+  payloads, ten-digit counts (#327) and A$9,999.00 are seeded rows. Two orderings are
+  held by hand: a value whose break decision changes only after the font's own pass
+  (its measuring copies' observer deliveries held while the font arrives — Codex's
+  witness, PR #330; the value is chosen on the machine, since which run of glyphs
+  crosses the budget depends on its fallback font), and a control in a folded copy
+  kept focused, with no `focusout`, through passes whose trial hides it and that end
+  at the stage they began (Greptile, PR #330). And every frame of ten turns across
+  the sidebar's line, with the keyboard on a Tracking link whose lines are open: never
+  on `<body>`. Mutants: a fold that steps from the drawn stage, no per-commit pass, no
+  sentinel, observing the table, no font trigger, no `Measured` refit, no focus
+  observer, no phone floor for tokens, a browser that drops focus during the trial,
+  and a fold that leaves hidden focus to the hook — each killed. #258's literal desktop lines ("1280 to 1361
+  px fold the order number") became what the rows imply: with these rows, 1280 folds
+  the order number, 1440 nothing, Kits and Retailers never.
+- **An On hand cell wraps (#327).** WebKit found no break between the count and the
+  stepper beside it, both inline boxes, where Chromium did: a ten-digit count made
+  the column 208 px there against 136, and every Inventory table was 13–80 px past
+  its box beside the rail with all its folds taken. The count, the stepper and
+  Consumables' Restock chip are now a flex row that wraps (`StockCell`): one line
+  wherever the column has room, as before, and the count above the stepper where it
+  has not, in both engines. A failed run of the font-size test had left that row
+  behind for the next file, which is how it was found; its rows now go in `finally`
+  and in the file's own clean-up, which a timeout still runs.
+- **Rejected:** keeping the lines and adding a fit check for the rows that outgrow
+  them (two mechanisms, and the lines still guess); folding by `table.scrollWidth`
+  alone through an observer on the table (misses unfolding); React state for the
+  stage (a render per trial).

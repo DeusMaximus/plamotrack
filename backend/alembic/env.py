@@ -14,7 +14,11 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# The option is read through ConfigParser interpolation, and the URL carries a `%`
+# wherever a credential is percent-encoded or a host names an IPv6 zone: doubled
+# here, it comes back single in both modes — `get_main_option` offline,
+# `get_section` online (#300).
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 

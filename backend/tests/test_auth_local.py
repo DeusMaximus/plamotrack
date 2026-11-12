@@ -1,0 +1,937 @@
+"""Local owner authentication — the flows (§5.5 families 2–3, §5.6; §5.8 T4/T7/T8/T11;
+M6-3, #188).
+
+These drive the **shipped** app (`app`, default-deny since M6-3) as a real
+anonymous browser: `anon_client` clears the suite's injected owner, so the
+principal comes from the session cookie the flows set. The setup token is issued
+onto `app.state` here rather than read from a log line (the lifespan announce does
+not run under the in-memory transport); `conftest` resets the token and the
+failure budget between tests.
+
+Login and setup happen with no cookie — the SPA shows those screens only when
+there is no valid session — so tests exercise them through a `fresh_client` (a
+cookie-less browser). Doing them through the client that just claimed, which now
+carries the owner cookie, would make the request cookie-borne and CSRF-gated: a
+state the real flow never reaches.
+"""
+
+import uuid
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
+
+from app import error_codes
+from app.auth import credentials
+from app.auth.budget import (
+    BASE_DELAY,
+    DECAY_AFTER,
+    KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE,
+    MAX_DELAY,
+    VERIFICATIONS_PER_MINUTE,
+    FailureBudget,
+    FailureBudgets,
+    VerificationBudget,
+)
+from app.auth.sessions import (
+    CSRF_HEADER,
+    PLAIN_COOKIE_NAME,
+    SECURE_COOKIE_NAME,
+    SESSION_ABSOLUTE,
+)
+from app.auth.setup_token import setup_token_state
+from app.config import Settings
+from app.db import get_sessionmaker
+from app.exceptions import RateLimitedError
+from app.main import app, create_app
+from app.models import AuditEvent, Owner
+from app.models import Session as SessionRow
+from app.routers.auth import BUDGET_ATTR
+from app.services import audit
+from app.services import auth as auth_service
+
+pytestmark = pytest.mark.anyio
+
+PASSWORD = "correct-horse-battery-staple"
+ORIGIN = {"Origin": "http://test"}  # same-origin: base_url is http://test
+
+
+def _issue_setup_token() -> str:
+    return setup_token_state(app).issue()
+
+
+def _reset_budget() -> None:
+    setattr(app.state, BUDGET_ATTR, FailureBudgets())
+
+
+@asynccontextmanager
+async def fresh_client():
+    """A cookie-less client on the shipped app — a real anonymous browser."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as c:
+        yield c
+
+
+async def _claim(client, *, password: str = PASSWORD) -> str:
+    """Claim the (reset-to-unclaimed) instance and return the CSRF token; the
+    client keeps the session cookie."""
+    token = _issue_setup_token()
+    resp = await client.post(
+        "/auth/setup", json={"token": token, "password": password}, headers=ORIGIN
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["csrf_token"]
+
+
+async def _audit_count(event_type: str) -> int:
+    async with get_sessionmaker()() as session:
+        return await session.scalar(
+            select(func.count()).select_from(AuditEvent).where(AuditEvent.event_type == event_type)
+        )
+
+
+# --- family 2: GET /auth/session ------------------------------------------------
+
+
+async def test_session_reports_unclaimed_then_owner(anon_client):
+    unclaimed = await anon_client.get("/auth/session")
+    assert unclaimed.status_code == 200
+    body = unclaimed.json()
+    assert body["state"] == "unclaimed"
+    assert body["csrf_token"] is None
+    assert body["display_name"] is None
+    # It carries what a login screen needs and nothing else — no version.
+    assert body["interface_language"] and body["formatting_locale"]
+    assert "version" not in body
+
+    csrf = await _claim(anon_client)
+    owner_view = await anon_client.get("/auth/session")
+    assert owner_view.json()["state"] == "owner"
+    # The CSRF token is stable per session, so the one setup returned still matches.
+    assert owner_view.json()["csrf_token"] == csrf
+    # Local mode stores no display name (§13.3: the identity line is OIDC's).
+    assert owner_view.json()["display_name"] is None
+
+
+async def test_session_reports_anonymous_when_claimed_without_a_cookie(anon_client):
+    await _claim(anon_client)
+    async with fresh_client() as fresh:
+        body = (await fresh.get("/auth/session")).json()
+    assert body["state"] == "anonymous"
+    assert body["csrf_token"] is None
+
+
+async def test_session_carries_no_store(anon_client):
+    assert (await anon_client.get("/auth/session")).headers.get("cache-control") == "no-store"
+
+
+# --- T7: lifecycle --------------------------------------------------------------
+
+
+async def test_unclaimed_instance_fails_every_collection_route_closed(anon_client):
+    assert (await anon_client.get("/kits")).status_code == 401
+
+
+async def test_setup_claims_opens_a_working_session_and_then_410s(anon_client):
+    csrf = await _claim(anon_client)
+    # The session works: a read, and a write with the CSRF token.
+    assert (await anon_client.get("/kits")).status_code == 200
+    created = await anon_client.post(
+        "/retailers",
+        json={"name": f"Auth Local {uuid.uuid4().hex[:8]}"},
+        headers={**ORIGIN, CSRF_HEADER: csrf},
+    )
+    assert created.status_code == 201
+    # A second setup — from a fresh browser, token or not — is 410: claimed.
+    async with fresh_client() as other:
+        again = await other.post(
+            "/auth/setup",
+            json={"token": _issue_setup_token(), "password": PASSWORD},
+            headers=ORIGIN,
+        )
+    assert again.status_code == 410
+    assert again.json()["code"] == error_codes.AUTH_SETUP_CLAIMED
+    assert await _audit_count(audit.SETUP_CLAIMED) == 1
+
+
+async def test_a_wrong_setup_token_is_403_and_leaves_the_instance_unclaimed(anon_client):
+    _issue_setup_token()
+    resp = await anon_client.post(
+        "/auth/setup", json={"token": "not-the-token", "password": PASSWORD}, headers=ORIGIN
+    )
+    # 403, not 401: a 401 owes a challenge and this route refuses the only
+    # scheme the app speaks (`CredentialRejectedError`; Codex #202 round 2).
+    assert resp.status_code == 403
+    assert resp.json()["code"] == error_codes.AUTH_SETUP_TOKEN_INVALID
+    # Still unclaimed, and no session was opened.
+    assert (await anon_client.get("/auth/session")).json()["state"] == "unclaimed"
+
+
+async def test_setup_token_is_single_use(anon_client):
+    token = _issue_setup_token()
+    first = await anon_client.post(
+        "/auth/setup", json={"token": token, "password": PASSWORD}, headers=ORIGIN
+    )
+    assert first.status_code == 200
+    # The same token again, from a fresh browser: the instance is claimed → 410.
+    async with fresh_client() as other:
+        again = await other.post(
+            "/auth/setup", json={"token": token, "password": PASSWORD}, headers=ORIGIN
+        )
+    assert again.status_code == 410
+
+
+async def test_login_then_logout_revokes_the_session(anon_client):
+    await _claim(anon_client)  # the instance is now claimed
+    async with fresh_client() as c:
+        login = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert login.status_code == 200
+        csrf = login.json()["csrf_token"]
+        assert (await c.get("/kits")).status_code == 200
+        out = await c.post("/auth/logout", headers={**ORIGIN, CSRF_HEADER: csrf})
+        assert out.status_code == 204
+        # The cookie is cleared and the session revoked: the collection is closed.
+        assert (await c.get("/auth/session")).json()["state"] == "anonymous"
+        assert (await c.get("/kits")).status_code == 401
+
+
+async def test_a_wrong_password_is_403(anon_client):
+    await _claim(anon_client)
+    async with fresh_client() as c:
+        resp = await c.post("/auth/login", json={"password": "wrong-password"}, headers=ORIGIN)
+    assert resp.status_code == 403
+    assert "www-authenticate" not in resp.headers
+    assert resp.json()["code"] == error_codes.AUTH_LOGIN_FAILED
+
+
+async def test_an_expired_session_is_401(anon_client):
+    await _claim(anon_client)
+    # Age every session past the absolute lifetime, directly in the database.
+    async with get_sessionmaker()() as session:
+        rows = (await session.execute(select(SessionRow))).scalars().all()
+        for row in rows:
+            row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+    assert (await anon_client.get("/kits")).status_code == 401
+
+
+async def test_a_short_password_is_422(anon_client):
+    token = _issue_setup_token()
+    resp = await anon_client.post(
+        "/auth/setup", json={"token": token, "password": "short"}, headers=ORIGIN
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == error_codes.AUTH_PASSWORD_TOO_SHORT
+    # The token was NOT consumed by a failed-password setup — retry works.
+    assert (await anon_client.get("/auth/session")).json()["state"] == "unclaimed"
+
+
+# --- T4: CSRF -------------------------------------------------------------------
+
+
+async def test_a_cookie_write_without_the_csrf_token_is_403(anon_client):
+    await _claim(anon_client)
+    resp = await anon_client.post("/retailers", json={"name": "No CSRF"}, headers=ORIGIN)
+    assert resp.status_code == 403
+    assert resp.json()["code"] == error_codes.AUTH_CSRF_FAILED
+
+
+async def test_a_cookie_write_without_an_origin_is_403(anon_client):
+    csrf = await _claim(anon_client)
+    resp = await anon_client.post(
+        "/retailers", json={"name": "No Origin"}, headers={CSRF_HEADER: csrf}
+    )
+    assert resp.status_code == 403
+    assert resp.json()["code"] == error_codes.AUTH_ORIGIN_REQUIRED
+
+
+async def test_a_hostile_origin_on_a_cookie_write_is_403(anon_client):
+    csrf = await _claim(anon_client)
+    resp = await anon_client.post(
+        "/retailers",
+        json={"name": "Hostile"},
+        headers={"Origin": "https://evil.example", CSRF_HEADER: csrf},
+    )
+    # The ingress guard refuses the hostile origin first (its own code).
+    assert resp.status_code == 403
+    assert resp.json()["code"] == error_codes.INGRESS_ORIGIN_NOT_ALLOWED
+
+
+async def test_the_csrf_token_admits_the_write(anon_client):
+    csrf = await _claim(anon_client)
+    resp = await anon_client.post(
+        "/retailers",
+        json={"name": f"Good {uuid.uuid4().hex[:8]}"},
+        headers={**ORIGIN, CSRF_HEADER: csrf},
+    )
+    assert resp.status_code == 201
+
+
+async def test_the_multipart_import_route_needs_the_csrf_token(anon_client):
+    """Named individually (§5.8 T4): the CORS-safelistable multipart routes are the
+    ones a form could POST cross-site, so the token is required there too."""
+    csrf = await _claim(anon_client)
+    files = {"file": ("retailers.csv", b"name\nCSRF Import\n", "text/csv")}
+    without = await anon_client.post(
+        "/import/preview", files=files, data={"mode": "merge"}, headers=ORIGIN
+    )
+    assert without.status_code == 403
+    assert without.json()["code"] == error_codes.AUTH_CSRF_FAILED
+    with_token = await anon_client.post(
+        "/import/preview",
+        files=files,
+        data={"mode": "merge"},
+        headers={**ORIGIN, CSRF_HEADER: csrf},
+    )
+    assert with_token.status_code == 200
+
+
+# --- T8: brute force ------------------------------------------------------------
+
+
+async def test_repeated_failures_throttle_then_a_success_resets(anon_client):
+    await _claim(anon_client)
+    # A controllable clock so the test pins the doubling without sleeping.
+    now = {"t": 1000.0}
+    setattr(app.state, BUDGET_ATTR, FailureBudgets(clock=lambda: now["t"]))
+    async with fresh_client() as c:
+        first = await c.post("/auth/login", json={"password": "nope"}, headers=ORIGIN)
+        assert first.status_code == 403  # the failure is recorded, the gate now shut
+        throttled = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert throttled.status_code == 429
+        assert throttled.headers["retry-after"] == str(int(BASE_DELAY))
+        assert throttled.json()["code"] == error_codes.AUTH_TOO_MANY_ATTEMPTS
+        # Past the delay, the correct password is accepted and the budget resets.
+        now["t"] += BASE_DELAY + 0.01
+        ok = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert ok.status_code == 200
+    assert app.state.login_budget.ladder("/auth/login", "127.0.0.1").failures == 0
+    async with get_sessionmaker()() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AuditEvent)
+                    .where(AuditEvent.event_type.in_((audit.LOGIN_FAILED, audit.LOGIN_THROTTLED)))
+                    .order_by(AuditEvent.occurred_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [row.event_type for row in rows] == [audit.LOGIN_FAILED, audit.LOGIN_THROTTLED]
+    assert all(row.principal_kind == "anon" for row in rows)
+    assert all(row.client_address == "127.0.0.1" for row in rows)
+    assert all(row.target == "/auth/login" for row in rows)
+    assert rows[-1].detail == f"retry_after={int(BASE_DELAY)} budget=address"
+
+
+def test_failure_budget_doubles_to_a_finite_ceiling():
+    now = {"t": 1000.0}
+    budget = FailureBudget(clock=lambda: now["t"])
+    delays = [budget.record_failure() for _ in range(12)]
+    assert delays[:4] == [1.0, 2.0, 4.0, 8.0]
+    assert delays[-2:] == [MAX_DELAY, MAX_DELAY]
+    assert budget.retry_after() == int(MAX_DELAY)
+
+
+def test_a_ladder_at_the_ceiling_restarts_after_a_quiet_period():
+    """#221 item 4: the ceiling was renewable — one failure after each expiry
+    re-armed the full delay for as long as a caller cared to. After `DECAY_AFTER`
+    of quiet the next failure is a first failure again."""
+    now = {"t": 1000.0}
+    budget = FailureBudget(clock=lambda: now["t"])
+    for _ in range(12):
+        budget.record_failure()
+    assert budget.retry_after() == int(MAX_DELAY)
+    # Within the decay window a further failure re-arms the ceiling — that is the
+    # attacker's own address, and it stays slow.
+    now["t"] += MAX_DELAY + 1
+    assert budget.retry_after() is None
+    assert budget.record_failure() == MAX_DELAY
+    # Past it, the ladder starts over.
+    now["t"] += DECAY_AFTER + 1
+    assert budget.record_failure() == BASE_DELAY
+    assert budget.failures == 1
+
+
+def _client_from(address: str):
+    """A cookie-less client whose socket peer is `address` — a different caller
+    at the ingress, which is what the ladders are keyed on."""
+    return AsyncClient(
+        transport=ASGITransport(app=app, client=(address, 40000), raise_app_exceptions=False),
+        base_url="http://test",
+    )
+
+
+async def test_one_address_at_the_ceiling_does_not_exclude_another(anon_client):
+    """#221 item 4, the owner's half: a guesser's failures shut the guesser's
+    address and nobody else's. Address A is driven to the ceiling through the
+    route; the owner at address B signs in with the correct password while A
+    is still refused."""
+    await _claim(anon_client)
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    async with _client_from("203.0.113.7") as attacker:
+        for attempt in range(10):
+            if attempt:
+                now["t"] += MAX_DELAY + 1  # wait out the delay: the ladder climbs, never decays
+            wrong = await attacker.post("/auth/login", json={"password": "nope"}, headers=ORIGIN)
+            assert wrong.status_code == 403
+        shut = await attacker.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert shut.status_code == 429
+        assert shut.headers["retry-after"] == str(int(MAX_DELAY))
+        async with _client_from("198.51.100.9") as owner:
+            ok = await owner.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+            assert ok.status_code == 200
+        still = await attacker.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert still.status_code == 429
+    assert budgets.ladder("/auth/login", "203.0.113.7").failures == 10
+    assert budgets.ladder("/auth/login", "198.51.100.9").failures == 0
+    # The owner's success reset the owner's ladder, not the attacker's.
+    assert budgets.ladder("/auth/login", "203.0.113.7").retry_after() == int(MAX_DELAY)
+
+
+async def test_the_verification_budget_bounds_the_instance_not_the_caller(anon_client):
+    """#221 item 4, the work bound: at most `VERIFICATIONS_PER_MINUTE` password
+    checks per minute instance-wide, refused before the Argon2 work with a
+    short `Retry-After`, and back within the minute — never a lockout."""
+    await _claim(anon_client)
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    for _ in range(VERIFICATIONS_PER_MINUTE):
+        assert budgets.verification.take() is None
+    async with fresh_client() as c:
+        spent = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert spent.status_code == 429
+        assert spent.json()["code"] == error_codes.AUTH_TOO_MANY_ATTEMPTS
+        assert 1 <= int(spent.headers["retry-after"]) <= 2
+        # The refusal spent nothing on this caller's ladder.
+        assert budgets.ladder("/auth/login", "127.0.0.1").failures == 0
+        now["t"] += 60
+        ok = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert ok.status_code == 200
+    async with get_sessionmaker()() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.event_type == audit.LOGIN_THROTTLED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [row.detail for row in rows] == [
+        f"retry_after={spent.headers['retry-after']} budget=instance"
+    ]
+
+
+def test_setup_and_login_are_separate_ladders_and_the_table_is_bounded():
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    budgets.ladder("/auth/setup", "10.0.0.1").record_failure()
+    assert budgets.ladder("/auth/login", "10.0.0.1").retry_after() is None
+    assert budgets.ladder("/auth/setup", "10.0.0.1").retry_after() == int(BASE_DELAY)
+    # Fill the table from distinct addresses; an idle ladder is evicted first,
+    # a live one only when nothing is idle.
+    from app.auth.budget import MAX_TRACKED
+
+    for i in range(MAX_TRACKED - 2):
+        budgets.ladder("/auth/login", f"10.1.{i // 256}.{i % 256}").record_failure()
+    assert budgets.tracked == MAX_TRACKED
+    budgets.ladder("/auth/login", "10.9.9.9")  # one over: nothing is idle yet
+    assert budgets.tracked == MAX_TRACKED
+    now["t"] += DECAY_AFTER + 1  # everything decays
+    budgets.ladder("/auth/login", "10.9.9.8")
+    assert budgets.tracked == 1
+
+
+def test_setup_token_has_the_declared_entropy():
+    import base64
+
+    from app.auth.credentials import TOKEN_BYTES
+
+    raw = _issue_setup_token()
+    decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+    assert len(decoded) == TOKEN_BYTES == 32
+
+
+async def test_failures_are_audited(anon_client):
+    await _claim(anon_client)
+    before = await _audit_count(audit.LOGIN_FAILED)
+    async with fresh_client() as c:
+        await c.post("/auth/login", json={"password": "nope"}, headers=ORIGIN)
+    after = await _audit_count(audit.LOGIN_FAILED)
+    assert after == before + 1
+
+
+# --- T11: timing shape ----------------------------------------------------------
+
+
+async def test_an_unclaimed_login_and_a_wrong_password_are_byte_identical(anon_client):
+    """The two failure kinds — no credential at all (unclaimed) and a wrong
+    password (claimed) — return the identical status, code and body, so an
+    attacker cannot tell one instance state from the other (§5.8 T11). The
+    constant-time construction: an unclaimed instance verifies against
+    `DUMMY_HASH`, doing the full Argon2 work (asserted directly below)."""
+    async with fresh_client() as c0:
+        unclaimed = await c0.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+    # The unclaimed attempt recorded a budget failure; clear it so the claimed
+    # attempt is judged on its own merits rather than throttled.
+    _reset_budget()
+    await _claim(anon_client)
+    async with fresh_client() as c1:
+        wrong = await c1.post("/auth/login", json={"password": "the-wrong-one"}, headers=ORIGIN)
+    assert unclaimed.status_code == wrong.status_code == 403
+    assert unclaimed.json() == wrong.json()
+
+
+def test_no_credential_verifies_against_the_dummy_hash(monkeypatch):
+    """The code path, not a stopwatch (§5.8 T11): `verify_password(None, ...)` runs
+    the real verifier against `DUMMY_HASH` and returns False — it does not
+    short-circuit on the absent hash, which is what makes the timing equal. The
+    verifier is spied on, so a short-circuit that returns False *without* the
+    Argon2 work fails here rather than passing on the answer alone (Codex #200
+    round 1, f3: the previous assertion was on the return value only)."""
+    seen: list[str] = []
+    real_hasher = credentials._hasher
+
+    class SpyingHasher:
+        def verify(self, encoded: str, password: str) -> bool:
+            seen.append(encoded)
+            return real_hasher.verify(encoded, password)
+
+        def __getattr__(self, name):
+            return getattr(real_hasher, name)
+
+    monkeypatch.setattr(credentials, "_hasher", SpyingHasher())
+    assert credentials.verify_password(None, "anything at all") is False
+    assert seen == [credentials.DUMMY_HASH]
+    # And a real verifier round-trips, so the False above is a mismatch, not a
+    # broken verifier.
+    encoded = credentials.hash_password(PASSWORD)
+    assert credentials.verify_password(encoded, PASSWORD) is True
+    assert credentials.verify_password(encoded, "other") is False
+
+
+def _spy_compare_digest(monkeypatch) -> list[tuple[str, str]]:
+    """Record every constant-time compare so a test can assert the compare *was*
+    constant-time — a plain `==` gives the same answers (Codex #200 round 1, f3)."""
+    calls: list[tuple[str, str]] = []
+    real = credentials.hmac.compare_digest
+
+    def spying(a, b):
+        calls.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(credentials.hmac, "compare_digest", spying)
+    return calls
+
+
+def test_opaque_tokens_are_compared_on_their_digests(monkeypatch):
+    calls = _spy_compare_digest(monkeypatch)
+    token = credentials.new_token()
+    expected = credentials.digest(token)
+    assert credentials.tokens_match(token, expected) is True
+    assert credentials.tokens_match("guess", expected) is False
+    # Both compares went through compare_digest, on the digests (fixed length).
+    assert calls == [(expected, expected), (credentials.digest("guess"), expected)]
+
+
+def test_csrf_token_is_bound_to_the_session(monkeypatch):
+    calls = _spy_compare_digest(monkeypatch)
+    a, b = credentials.new_token(), credentials.new_token()
+    token_a = credentials.csrf_token_for(a)
+    assert credentials.csrf_tokens_match(token_a, a) is True
+    # A token for one session does not validate another.
+    assert credentials.csrf_tokens_match(token_a, b) is False
+    assert credentials.csrf_tokens_match(None, a) is False
+    # Two compares, each constant-time and against the session-bound value; the
+    # None case never reaches the compare.
+    assert calls == [(token_a, token_a), (token_a, credentials.csrf_token_for(b))]
+
+
+# --- the cookie -----------------------------------------------------------------
+
+
+async def test_the_session_cookie_is_httponly_and_lax(anon_client):
+    raw_token = _issue_setup_token()
+    resp = await anon_client.post(
+        "/auth/setup", json={"token": raw_token, "password": PASSWORD}, headers=ORIGIN
+    )
+    set_cookie = resp.headers["set-cookie"]
+    # Plain HTTP (no PUBLIC_BASE_URL): the non-Secure name, HttpOnly, Lax.
+    assert PLAIN_COOKIE_NAME in set_cookie
+    assert SECURE_COOKIE_NAME not in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "samesite=lax" in set_cookie.lower()
+    assert f"Max-Age={int(SESSION_ABSOLUTE.total_seconds())}" in set_cookie
+
+
+class _LogRecorder:
+    """Stands in for the `plamotrack.auth` module logger. Not caplog: the session
+    conftest runs alembic, whose `fileConfig` disables every already-imported app
+    logger, so records from app modules never reach pytest's handler in this
+    suite (`test_integrity.py` has the same note). Patching the logger asserts
+    the call itself, which is the named control."""
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+        self.infos: list[str] = []
+
+    def warning(self, msg, *args) -> None:
+        self.warnings.append(msg % args)
+
+    def info(self, msg, *args) -> None:
+        self.infos.append(msg % args)
+
+
+async def _lifespan_log(monkeypatch, *, public_base_url: str) -> _LogRecorder:
+    """Enter the lifespan of an auth-enabled app built from `public_base_url` and
+    return what it logged through `sessions.log` and `setup_token.log`. The
+    startup announcement is the operator's only tell of the cookie mode (§5.6;
+    #188)."""
+    from app.auth import sessions, setup_token
+
+    recorder = _LogRecorder()
+    monkeypatch.setattr(sessions, "log", recorder, raising=False)
+    monkeypatch.setattr(setup_token, "log", recorder, raising=False)
+    live = create_app(Settings(public_base_url=public_base_url), authorization=True)
+    async with live.router.lifespan_context(live):
+        pass
+    return recorder
+
+
+async def test_plain_http_cookie_mode_is_announced_at_startup(anon_client, monkeypatch):
+    """On plain http the session cookie cannot be `Secure`; the startup log says
+    so, whether or not the instance is claimed (Codex #200 round 1, f1)."""
+    log = await _lifespan_log(monkeypatch, public_base_url="")
+    assert [m for m in log.warnings if "NOT Secure" in m and PLAIN_COOKIE_NAME in m], log.warnings
+    # And on a claimed instance too — the warning is not the setup-token banner,
+    # which a claimed instance no longer prints.
+    await _claim(anon_client)
+    log = await _lifespan_log(monkeypatch, public_base_url="")
+    assert [m for m in log.warnings if "NOT Secure" in m and PLAIN_COOKIE_NAME in m], log.warnings
+    assert not any("setup token" in m for m in log.warnings), log.warnings
+
+
+async def test_https_cookie_mode_is_not_warned_about(monkeypatch):
+    log = await _lifespan_log(monkeypatch, public_base_url="https://plamotrack.example")
+    assert not any(PLAIN_COOKIE_NAME in m for m in log.warnings), log.warnings
+    assert any(SECURE_COOKIE_NAME in m for m in log.infos), log.infos
+
+
+# --- recovery (T13; the host-side break-glass, never an HTTP route) --------------
+
+
+async def test_recovery_reset_password_claims_and_revokes(anon_client):
+    from app.services.auth import recovery_reset_password
+
+    csrf = await _claim(anon_client)
+    # A live session before recovery; a write works.
+    assert (
+        await anon_client.post(
+            "/retailers", json={"name": "Before Recovery"}, headers={**ORIGIN, CSRF_HEADER: csrf}
+        )
+    ).status_code == 201
+
+    # Pin the claim time: recovery on a claimed instance must not re-stamp it
+    # (Codex #200 round 1, f3 — an unconditional re-stamp survived the old test).
+    claimed_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    async with get_sessionmaker()() as session:
+        owner_before = (await session.execute(select(Owner))).scalar_one()
+        owner_before.claimed_at = claimed_at
+        await session.commit()
+
+    revoked_before = await _audit_count(audit.SESSIONS_REVOKED)
+    async with get_sessionmaker()() as session:
+        revoked = await recovery_reset_password(session, password="a-brand-new-passphrase")
+    assert revoked == 1  # the setup session
+
+    async with get_sessionmaker()() as session:
+        owner_after = (await session.execute(select(Owner))).scalar_one()
+        assert owner_after.claimed_at == claimed_at
+        # The bulk revocation is its own audit event (#188: "session revoked"),
+        # beside the record that recovery ran (f2).
+        events = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.event_type == audit.SESSIONS_REVOKED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events) == revoked_before + 1
+        assert events[-1].detail == "count=1"
+        assert events[-1].target == "recovery reset-password"
+        assert events[-1].client_address == "host"
+    assert await _audit_count(audit.RECOVERY_RUN) == 1
+
+    # The old cookie no longer authenticates.
+    assert (await anon_client.get("/kits")).status_code == 401
+    # The new password logs in.
+    async with fresh_client() as c:
+        login = await c.post(
+            "/auth/login", json={"password": "a-brand-new-passphrase"}, headers=ORIGIN
+        )
+        assert login.status_code == 200
+
+
+async def test_recovery_revoke_sessions_is_audited_with_its_count(anon_client):
+    from app.services.auth import recovery_revoke_sessions
+
+    await _claim(anon_client)
+    async with fresh_client() as c:
+        assert (
+            await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        ).status_code == 200
+    async with get_sessionmaker()() as session:
+        assert await recovery_revoke_sessions(session) == 2
+        events = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.event_type == audit.SESSIONS_REVOKED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [(e.detail, e.target, e.client_address) for e in events] == [
+        ("count=2", "recovery revoke-sessions", "host")
+    ]
+    assert (await anon_client.get("/kits")).status_code == 401
+
+
+async def test_recovery_on_an_unclaimed_instance_claims_it(anon_client):
+    from app.services.auth import is_claimed, recovery_reset_password
+
+    async with get_sessionmaker()() as session:
+        assert await is_claimed(session) is False
+        await recovery_reset_password(session, password="fresh-owner-password")
+    async with get_sessionmaker()() as session:
+        assert await is_claimed(session) is True
+    async with fresh_client() as c:
+        assert (
+            await c.post("/auth/login", json={"password": "fresh-owner-password"}, headers=ORIGIN)
+        ).status_code == 200
+
+
+# --- Codex #222 round 1, f1: the cheap paths spend nothing; the reserved bucket -------
+
+
+async def test_a_wrong_setup_token_spends_no_verification(anon_client):
+    """Thirty wrong setup tokens from thirty addresses did no Argon2 work and
+    still drained the whole verification bucket, so the correct token from a
+    thirty-first address read 429 (Codex #222 round 1, f1). The setup path is
+    the ladder's alone: the comparison is cheap, and the expensive work behind a
+    correct token is gated by the token's entropy."""
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    token = _issue_setup_token()
+    for i in range(VERIFICATIONS_PER_MINUTE):
+        async with _client_from(f"203.0.113.{i + 1}") as guesser:
+            wrong = await guesser.post(
+                "/auth/setup", json={"token": "not-it", "password": "x"}, headers=ORIGIN
+            )
+            assert wrong.status_code == 403
+    assert budgets.verification.tokens == VERIFICATIONS_PER_MINUTE
+    assert budgets.known.tokens == KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE
+    async with _client_from("198.51.100.1") as owner:
+        ok = await owner.post(
+            "/auth/setup", json={"token": token, "password": PASSWORD}, headers=ORIGIN
+        )
+    assert ok.status_code == 200
+
+
+class _Flood:
+    """Wrong passwords from an endless supply of fresh addresses."""
+
+    def __init__(self) -> None:
+        self.next = 0
+
+    async def run(self, count: int) -> None:
+        for _ in range(count):
+            self.next += 1
+            address = f"203.0.{self.next // 250}.{self.next % 250 + 1}"
+            async with _client_from(address) as guesser:
+                wrong = await guesser.post("/auth/login", json={"password": "nope"}, headers=ORIGIN)
+                assert wrong.status_code == 403
+
+
+async def _known_cookie(anon_client) -> str:
+    """Claim, keep the raw session cookie, sign out — the row is revoked, the
+    cookie is still one the instance stored: the weakest proof that admits."""
+    csrf = await _claim(anon_client)
+    raw = anon_client.cookies.get(PLAIN_COOKIE_NAME)
+    assert raw
+    out = await anon_client.post("/auth/logout", headers={**ORIGIN, "X-CSRF-Token": csrf})
+    assert out.status_code in (200, 204), out.text
+    return raw
+
+
+def _small_buckets(now: dict, *, general: int = 4, reserved: int = 3) -> FailureBudgets:
+    """The budgets with small buckets: every drained token is one full-cost
+    Argon2 check, and the invariant is the same at four as at thirty (the
+    round-1 head's thirty-strong floods put the CI Backend job past its cap)."""
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    budgets.verification = VerificationBudget(
+        clock=budgets.clock, capacity=general, tokens=float(general)
+    )
+    budgets.known = VerificationBudget(
+        clock=budgets.clock, capacity=reserved, tokens=float(reserved)
+    )
+    setattr(app.state, BUDGET_ATTR, budgets)
+    return budgets
+
+
+async def test_a_known_browser_is_admitted_from_the_reserved_bucket_under_a_flood(anon_client):
+    """Codex #222 round 1, f1: with the general bucket drained, each refill was
+    taken by the next fresh address before the owner's retry, for as long as the
+    stream cared to continue. A browser that presents any session cookie the
+    instance ever stored — here a revoked one, from a new address — is verified
+    from the reserved bucket and gets in every time; a brand-new browser
+    competes with the flood, as documented."""
+    raw = await _known_cookie(anon_client)
+    now = {"t": 1000.0}
+    budgets = _small_buckets(now)
+    flood = _Flood()
+    await flood.run(budgets.verification.capacity)
+    assert budgets.verification.tokens < 1
+    async with _client_from("198.51.100.20") as new_browser:
+        contested = await new_browser.post(
+            "/auth/login", json={"password": PASSWORD}, headers=ORIGIN
+        )
+    assert contested.status_code == 429
+    known_headers = {**ORIGIN, "Cookie": f"{PLAIN_COOKIE_NAME}={raw}"}
+    async with _client_from("198.51.100.21") as known_browser:
+        for _ in range(3):
+            ok = await known_browser.post(
+                "/auth/login", json={"password": PASSWORD}, headers=known_headers
+            )
+            assert ok.status_code == 200
+            # One general token refills; a fresh address takes it first.
+            now["t"] += 60.0 / budgets.verification.capacity
+            await flood.run(1)
+            assert budgets.verification.tokens < 1
+    async with get_sessionmaker()() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.event_type == audit.LOGIN_THROTTLED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [row.detail.split(" ")[-1] for row in rows] == ["budget=instance"]
+    assert rows[0].client_address == "198.51.100.20"
+
+
+async def test_the_reserved_bucket_is_bounded_and_falls_back_to_the_general_one(anon_client):
+    """The known-browser allowance is a bound too: a stolen expired cookie
+    replayed from many addresses buys ten verifications a minute and then
+    competes like everyone else."""
+    raw = await _known_cookie(anon_client)
+    now = {"t": 1000.0}
+    budgets = _small_buckets(now)
+    await _Flood().run(budgets.verification.capacity)
+    known_headers = {**ORIGIN, "Cookie": f"{PLAIN_COOKIE_NAME}={raw}"}
+    statuses = []
+    for i in range(budgets.known.capacity + 1):
+        async with _client_from(f"198.51.100.{i + 30}") as replayer:
+            statuses.append(
+                (
+                    await replayer.post(
+                        "/auth/login", json={"password": "nope"}, headers=known_headers
+                    )
+                ).status_code
+            )
+    assert statuses == [403] * budgets.known.capacity + [429]
+    assert budgets.known.tokens < 1
+    assert KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE < VERIFICATIONS_PER_MINUTE
+
+
+async def test_the_reserved_path_is_what_the_browser_still_holds(anon_client):
+    """Codex #222 round 2, f4: the runbook had promised the reserved path to
+    "the browser you signed in with", but a normal logout clears the cookie —
+    an ordinary signed-out browser holds nothing and competes with the flood.
+    Through a real cookie jar, both halves: after `POST /auth/logout` the jar
+    is empty and the next login from it is the general bucket's (429 with the
+    bucket drained); after a host-side revocation the jar keeps the cookie, the
+    row is kept revoked, and the next login is the reserved bucket's (200)."""
+    csrf = await _claim(anon_client)
+    now = {"t": 1000.0}
+    budgets = _small_buckets(now)
+    flood = _Flood()
+    await flood.run(budgets.verification.capacity)
+    out = await anon_client.post("/auth/logout", headers={**ORIGIN, "X-CSRF-Token": csrf})
+    assert out.status_code in (200, 204)
+    assert anon_client.cookies.get(PLAIN_COOKIE_NAME) is None
+    signed_out = await anon_client.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+    assert signed_out.status_code == 429
+
+    # The other lifecycle: signed in, then every session revoked from the host.
+    now["t"] += 60.0  # the general bucket refills, so this login is admitted…
+    signed_in = await anon_client.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+    assert signed_in.status_code == 200
+    assert anon_client.cookies.get(PLAIN_COOKIE_NAME)
+    await flood.run(budgets.verification.capacity - 1)  # …and drained again (that login spent one)
+    assert budgets.verification.tokens < 1
+    async with get_sessionmaker()() as session:
+        await auth_service.revoke_all_sessions(session, target="recovery revoke-sessions")
+        await session.commit()
+    assert (await anon_client.get("/auth/session")).json()["state"] == "anonymous"
+    assert anon_client.cookies.get(PLAIN_COOKIE_NAME), (
+        "the server cannot clear it; the jar keeps it"
+    )
+    recovered = await anon_client.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+    assert recovered.status_code == 200
+    assert budgets.known.tokens == budgets.known.capacity - 1
+
+
+async def test_the_two_buckets_are_separate_additive_and_refill_continuously(anon_client):
+    """Codex #222 round 3, f5: the runbook said "thirty in total"; the policy
+    is two token buckets — the general one admits thirty at once and refills at
+    thirty a minute, the reserved one ten and ten — drawn in that order by a
+    recognised browser, so the instance admits up to forty checks at once and
+    refills continuously rather than counting per minute. Accounting only: no
+    password is checked here."""
+    await _claim(anon_client)
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    assert budgets.verification.capacity == VERIFICATIONS_PER_MINUTE == 30
+    assert budgets.known.capacity == KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE == 10
+    async with get_sessionmaker()() as session:
+        for _ in range(VERIFICATIONS_PER_MINUTE):
+            await auth_service.refuse_throttled(
+                session, budgets, request=None, target="/auth/login"
+            )
+        assert budgets.verification.tokens < 1
+        for _ in range(KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE):
+            await auth_service.refuse_throttled(
+                session, budgets, request=None, target="/auth/login", known_browser=True
+            )
+        assert budgets.known.tokens < 1
+        # Forty admitted at once; the forty-first, known or not, is refused.
+        with pytest.raises(RateLimitedError):
+            await auth_service.refuse_throttled(
+                session, budgets, request=None, target="/auth/login", known_browser=True
+            )
+        # Continuous refill: two seconds buy one general check, six one reserved.
+        now["t"] += 2.0
+        await auth_service.refuse_throttled(session, budgets, request=None, target="/auth/login")
+        with pytest.raises(RateLimitedError):
+            await auth_service.refuse_throttled(
+                session, budgets, request=None, target="/auth/login"
+            )
+        now["t"] += 6.0
+        await auth_service.refuse_throttled(
+            session, budgets, request=None, target="/auth/login", known_browser=True
+        )

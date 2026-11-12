@@ -57,9 +57,68 @@ class Order(UUIDPrimaryKeyMixin, Base):
     # the order is received, not at entry — quantity_on_hand means "physically
     # on hand", not "on hand + on order".
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # What no other field holds: how it was paid, a substitution, a partial refund,
+    # a damage claim against this purchase (#348). Never read by anything but the
+    # person reading it, and never blank: see `services/text.stripped_or_none`.
+    notes: Mapped[str | None]
+
+    # Every writer refuses a negative shipping cost (REST and MCP through
+    # `NonNegativeInt4`, the importer through its column bound since #305); the
+    # database says so too since #309.
+    __table_args__ = (
+        CheckConstraint("shipping_cost_minor >= 0", name="shipping_cost_non_negative"),
+    )
 
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
+    )
+    # What came off the price at the checkout (#350), in entry order. Loaded with
+    # the order, always (`selectin`), rather than by an option at each query: the
+    # read schema derives `totals` from these, and under asyncio a load site that
+    # forgot the option would be a 500 on the first order serialised from it.
+    adjustments: Mapped[list["OrderAdjustment"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="(OrderAdjustment.position, OrderAdjustment.id)",
+        lazy="selectin",
+    )
+
+
+class OrderAdjustment(UUIDPrimaryKeyMixin, Base):
+    """Something that came off what an order cost: a discount, a promo code, a
+    voucher, a gift card (#350).
+
+    It belongs to the order, never to a line. Line prices stay what the shop
+    charged for each thing, because per-kit price history is read from them, and
+    what was paid is derived on the way out (`services/order_totals.py`) — items
+    plus shipping less these — so no stored total can go stale behind an edit.
+
+    `amount_minor` is positive and in the order's own `currency_code`; being an
+    adjustment is what makes it a deduction. Together an order's adjustments never
+    exceed its lines in that currency plus its shipping: every writer refuses that
+    (`order_totals.adjustment_overrun`), since the database cannot say it in a
+    CHECK across three tables.
+
+    Nothing here tracks a card's balance, its expiry, or which order drew it down.
+    """
+
+    __tablename__ = "order_adjustments"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    # What it was, in the buyer's words: "Gift card", "SPRING10". Never blank.
+    label: Mapped[str]
+    amount_minor: Mapped[int]
+    # Where it sits among the order's adjustments, lowest first. Not unique: a
+    # hand-written sheet may leave every one at the default, and `id` breaks the tie.
+    position: Mapped[int] = mapped_column(default=0)
+
+    order: Mapped[Order] = relationship(back_populates="adjustments")
+
+    __table_args__ = (
+        CheckConstraint("amount_minor > 0", name="amount_positive"),
+        CheckConstraint("position >= 0", name="position_non_negative"),
     )
 
 
@@ -67,8 +126,8 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
     """Dispatch point between orders and the catalog tables (§3.9).
 
     Quantity semantics differ by item_type — kit lines fan out into new `kits`
-    rows, catalog lines increment `quantity_on_hand`. The dispatch lives in
-    app/services/orders.py.
+    rows, catalog lines increment `quantity_on_hand`, and `other` lines (#349) do
+    neither. The dispatch lives in app/services/orders.py.
     """
 
     __tablename__ = "order_items"
@@ -78,8 +137,14 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
     )
     item_type: Mapped[ItemType] = mapped_column(text_enum(ItemType, "item_type"))
     # Points into one of the catalog tables depending on item_type; null for kit
-    # lines (kits are spawned fresh). No DB-level FK is possible across four tables.
+    # lines (kits are spawned fresh) and for `other` lines, which point at nothing
+    # (#349). No DB-level FK is possible across four tables.
     catalog_ref_id: Mapped[uuid.UUID | None]
+    # What an `other` line bought, in the buyer's words (#349). The line has no kit
+    # and no catalog row to be named by, so this is all that says what it was.
+    # Set on `other` lines and on no others, never blank
+    # (`services/text.stripped_or_none`).
+    description: Mapped[str | None]
     quantity: Mapped[int]
     unit_price_minor: Mapped[int]
     currency_code: Mapped[str] = mapped_column(String(3))
@@ -110,6 +175,17 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
         CheckConstraint(
             "(converted_price_minor IS NULL) = (converted_currency_code IS NULL)",
             name="converted_price_currency_paired",
+        ),
+        # An `other` line is its description and nothing else (#349): every writer
+        # requires one there and refuses one anywhere else, and refuses a catalog
+        # reference on a line that tracks nothing.
+        CheckConstraint(
+            "(item_type = 'other') = (description IS NOT NULL)",
+            name="description_only_on_other",
+        ),
+        CheckConstraint(
+            "item_type <> 'other' OR catalog_ref_id IS NULL",
+            name="other_has_no_catalog_ref",
         ),
     )
 

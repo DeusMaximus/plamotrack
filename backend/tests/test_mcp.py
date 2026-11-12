@@ -7,6 +7,7 @@ from app.services import orders
 
 EXPECTED_TOOLS = {
     "get_meta",
+    "get_summary",
     "list_kits",
     "list_kit_series",
     "get_kit",
@@ -405,3 +406,186 @@ async def test_withdraw_tool_requires_the_restore_choice(client):
     # Nothing happened: the application survives and the stock stays spent.
     assert len((await client.get(f"/kits/{kit['id']}/applications")).json()) == 1
     assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 3
+
+
+# --- sort and limit on the list tools (§13.4, #232) -------------------------------
+
+
+async def test_list_orders_tool_reads_the_placement_date_in_the_instance_zone(client, retailer):
+    """The order clock is the service's, instance zone included: an order placed on
+    2 August against one shipped at 15:00Z on 1 August ranks under Brisbane's
+    midnight (14:00Z on the 1st) the same way on the tool as on REST, and the
+    other way under Los Angeles's (Codex #236 P2-1)."""
+    for number, order_date, extra in (
+        ("A", "2026-08-02", {}),
+        ("B", "2026-07-31", {"shipped_at": "2026-08-01T15:00:00+00:00"}),
+    ):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": f"Kit {number}", "grade": "HG"},
+                    }
+                ],
+                **extra,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+    for zone, expected in (("Australia/Brisbane", ["B", "A"]), ("America/Los_Angeles", ["A", "B"])):
+        assert (await client.patch("/settings", json={"time_zone": zone})).status_code == 200
+        async with Client(mcp) as mcp_client:
+            tool = (await mcp_client.call_tool("list_orders", {"sort": "recent"})).data
+        rest = (await client.get("/orders", params={"sort": "recent"})).json()
+        assert [o["order_number"] for o in tool] == expected, zone
+        assert [o["order_number"] for o in rest] == expected, zone
+
+
+async def test_list_sort_and_limit_match_rest(client, retailer):
+    """One service function, one vocabulary: the tool's `sort`/`limit` return
+    the rows REST returns, in the same order, and refuse the same strangers."""
+    zaku = (await client.post("/kits", json={"name": "Zaku II", "grade": "HG"})).json()
+    await client.post("/kits", json={"name": "Gouf", "grade": "HG"})
+    await client.post("/kits", json={"name": "Dom", "grade": "HG", "status": "building"})
+    await client.patch(f"/kits/{zaku['id']}", json={"status": "building"})
+    for number, order_date, extra in (
+        ("R", "2026-01-10", {"received": True, "received_at": "2026-03-01T10:00:00+00:00"}),
+        ("S", "2026-02-01", {"shipped_at": "2026-02-20T10:00:00+00:00"}),
+        ("P", "2026-02-25", {}),
+    ):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": f"Kit {number}", "grade": "HG"},
+                    }
+                ],
+                **extra,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+    async with Client(mcp) as mcp_client:
+        kits_tool = (await mcp_client.call_tool("list_kits", {"sort": "recent", "limit": 2})).data
+        orders_tool = (
+            await mcp_client.call_tool("list_orders", {"sort": "recent", "pending_only": True})
+        ).data
+        # Both lists, because each service holds its own check — an unknown
+        # sort must be refused, never quietly read as the default order.
+        with pytest.raises(ToolError, match="sort must be one of"):
+            await mcp_client.call_tool("list_kits", {"sort": "oldest"})
+        with pytest.raises(ToolError, match="sort must be one of"):
+            await mcp_client.call_tool("list_orders", {"sort": "newest"})
+        # `limit` is a PositiveInt4 on the tool (test_int4_bounds), so a zero is
+        # refused by the schema before the service's own check — either way a
+        # ToolError naming the parameter.
+        with pytest.raises(ToolError, match="limit"):
+            await mcp_client.call_tool("list_orders", {"limit": 0})
+
+    kits_rest = (await client.get("/kits", params={"sort": "recent", "limit": 2})).json()
+    orders_rest = (
+        await client.get("/orders", params={"sort": "recent", "pending_only": "true"})
+    ).json()
+    assert [k["id"] for k in kits_tool] == [k["id"] for k in kits_rest]
+    # "Kit P" first: the pending order spawned it just now, after Zaku moved.
+    # The other two spawned kits sit at the back — a supplied shipped_at or
+    # received_at is the kit's status clock (#120), and those were backdated.
+    assert [k["name"] for k in kits_tool] == ["Kit P", "Zaku II"]
+    assert [o["id"] for o in orders_tool] == [o["id"] for o in orders_rest]
+    assert [o["order_number"] for o in orders_tool] == ["P", "S"]
+
+
+# --- #56: create_order's description matches its schema -----------------------------------
+#
+# The tool's docstring once told an agent two false things and a validation
+# failure followed (#56): that a per-line `currency_code` could be omitted (the
+# item schema requires it), and to consult a `meta` resource that does not
+# exist. These assert the description and the exposed input schema agree, so a
+# regression of either is loud. The value axis is currency present/absent at the
+# line level; the asymmetry (order-level optional, per-line required) is read
+# from the schema an agent actually consumes.
+
+
+async def test_create_order_description_points_only_at_real_surfaces():
+    async with Client(mcp) as client:
+        tools = {t.name: (t.description or "") for t in await client.list_tools()}
+    description = tools["create_order"]
+    lowered = description.lower()
+    # #56 (2): the pointer for the instance currency is get_meta, a real tool —
+    # never the phantom `meta` resource the old docstring named. The only "meta"
+    # in the description must be get_meta: a plain, backticked or otherwise-spelled
+    # `meta` resource reference is the phantom (Codex #250 F4 slipped a backticked
+    # one past the old "meta resource" substring guard).
+    assert "get_meta" in tools
+    assert "get_meta" in lowered
+    assert "meta" not in lowered.replace("get_meta", "")
+    # Every other tool the description directs an agent to is real.
+    for named in ("search_catalog", "list_catalog_categories", "mark_order_received"):
+        assert named in description, named
+        assert named in tools, named
+
+
+async def test_create_order_description_and_schema_agree_on_the_currency_asymmetry():
+    # #56 (1): the exposed input schema makes the order-level currency optional
+    # and each line's required; the *description* must say the same, or it lies
+    # to an agent. The old wording ("omit currency_code …") did not scope the
+    # omission to the order header, so both the schema and the description are
+    # checked here (Codex #250 F4 — the schema-only test passed on the misleading
+    # wording).
+    async with Client(mcp) as client:
+        tool = next(t for t in await client.list_tools() if t.name == "create_order")
+    schema = tool.input_schema
+    assert "currency_code" in schema["properties"]
+    assert "currency_code" not in schema["required"]  # order level: optional
+    item = schema["properties"]["items"]["items"]
+    assert "currency_code" in item["properties"]
+    assert "currency_code" in item["required"]  # per line: required
+    # Normalise whitespace: the docstring wraps clauses across lines.
+    normalized = " ".join((tool.description or "").lower().split())
+    assert "item line's currency_code is required" in normalized  # per line: required
+    assert "order-level currency_code" in normalized  # the omission is scoped to it
+    assert "omit" in normalized
+
+
+async def test_create_order_rejects_a_line_without_a_currency():
+    # The behaviour behind the schema: a line omitting currency_code is refused
+    # by the MCP boundary (a ToolError naming the field), which is exactly what
+    # the old docstring wrongly told an agent to do.
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError) as raised:
+            await client.call_tool(
+                "create_order",
+                {
+                    "retailer": "USA Gundam Store",
+                    "order_date": "2026-08-02",
+                    "currency_code": "USD",
+                    "items": [
+                        {
+                            "item_type": "kit",
+                            "quantity": 1,
+                            "unit_price_minor": 2999,
+                            # currency_code omitted — required per line
+                            "kit": {"name": "RG Sazabi", "grade": "RG"},
+                        }
+                    ],
+                },
+            )
+    assert "currency_code" in str(raised.value)

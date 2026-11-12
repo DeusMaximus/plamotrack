@@ -1,12 +1,55 @@
 import re
 from functools import lru_cache
+from ipaddress import IPv6Address, ip_network
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
+
+from app.hostnames import is_loopback_host, validate_host_pattern
+from app.models.enums import AuthMode
+
+#: The two authentication modes (§5.4): a password held here, or an identity a
+#: configured OpenID Connect provider asserts. Never a third, "off" one (§5.6).
+AUTH_MODES = tuple(mode.value for mode in AuthMode)
+
+#: The hosts the MCP SDK admits as a plain-http OAuth issuer (RFC 8414 wants
+#: https; `mcp.server.auth.routes.validate_issuer_url` excepts exactly these).
+#: Mirrored here so the settings validator refuses at start what the SDK would
+#: refuse at app build, naming the setting.
+MCP_OAUTH_PLAIN_HTTP_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1"})
 
 _CURRENCY_RE = re.compile(r"[A-Z]{3}")
+
+
+def split_csv(value: str) -> list[str]:
+    """A comma-separated setting as its non-empty, stripped entries."""
+    return [entry.strip() for entry in value.split(",") if entry.strip()]
+
+
+def _database_host(value: str) -> str:
+    """POSTGRES_HOST as the bare host `URL.create` takes (#299).
+
+    The renderer brackets an IPv6 literal itself, so one written the URL way,
+    `[::1]`, is unwrapped first or it would come out `[[::1]]`. A zone id
+    (`fe80::1%eth0`) stays raw: SQLAlchemy never percent-decodes a host, and its
+    asyncpg dialect hands the text to the resolver as it stands, so RFC 6874's
+    `%25` would parse and then fail to resolve. A colon anywhere else is refused:
+    the port is POSTGRES_PORT, and `db:5433` would otherwise be bracketed as an
+    address and fail at the resolver, far from the setting that caused it."""
+    host = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    if ":" in host:
+        try:
+            IPv6Address(host)
+        except ValueError as exc:
+            raise ValueError(
+                "POSTGRES_HOST is a host name or an IP address, without a port — the "
+                f"port is POSTGRES_PORT (got {value!r})"
+            ) from exc
+    return host
+
 
 # Anchored on this file, not the working directory: `uv run uvicorn` from
 # backend/ and `pytest` from the repo root must resolve the same config.
@@ -22,7 +65,15 @@ _ENV_FILES = (_REPO_ROOT / ".env", _BACKEND_DIR / ".env")
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=_ENV_FILES, extra="ignore")
+    # hide_input_in_errors: a refusal's text is the container log, and pydantic's
+    # `input_value=` echoed the whole input (secrets from .env included) for a
+    # model validator, and the value itself for a field one. Every message below
+    # names its setting and quotes what it may; nothing is lost (#301, rule 14).
+    # It covers str() and repr() only: a Settings ValidationError's `.errors()`
+    # still carries `input`, so never log one without `include_input=False`.
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILES, extra="ignore", hide_input_in_errors=True
+    )
 
     # Shared with the docker-compose db service (§8).
     postgres_user: str = "plamotrack"
@@ -48,6 +99,231 @@ class Settings(BaseSettings):
     # reinterprets a snapshot that was already taken.
     reference_currency: str = "AUD"
 
+    # --- Ingress identity (§5.6, M6-1 / #186) ----------------------------------
+    # The instance's own address, as a browser reaches it: scheme, host and port,
+    # nothing after. It is never derived from Host or X-Forwarded-* (§5.6, proxy
+    # trust). Its host joins the Host allowlist and its origin the Origin
+    # allowlist — behind TLS the app sees plain http on the socket while the
+    # browser sends https://…, and this entry is what lets that match. Empty
+    # means the loopback install: http://localhost:<WEB_PORT>, which the loopback
+    # rules already cover, so nothing extra is listed.
+    public_base_url: str = ""
+    # Comma-separated host names the instance may be reached by, on top of the
+    # loopback names, PUBLIC_BASE_URL's host and WEB_BIND. Ports are ignored
+    # (the Host header's port is not identity). `*.example.lan` wildcards are
+    # accepted; a bare `*` is not — an allowlist of everything is the DNS-
+    # rebinding hole the setting exists to close. A Host outside the list is 421.
+    allowed_hosts: str = ""
+    # Comma-separated browser origins (scheme://host[:port]) trusted on unsafe
+    # methods beyond the three-way rule (listed, loopback-to-loopback, or equal
+    # to the request's own origin). Only needed for a non-canonical alias
+    # reached over a scheme the app does not see. A miss is 403.
+    allowed_origins: str = ""
+    # Comma-separated IPs or CIDRs whose X-Forwarded-For is believed for the
+    # *client address* (rate limiting and audit). Never for the
+    # app's identity, never for the raw peer `/readyz` reads. Empty: ignored.
+    trusted_proxies: str = ""
+    # Audit rows older than this many days are pruned automatically, once at
+    # start and daily after (#221 item 3). Unset: kept until the host-side
+    # `prune-audit` command runs — the pre-#221 behaviour.
+    audit_retention_days: int | None = None
+    # Internal compose contract: the API port is unpublished and the bundled
+    # nginx overwrites X-Plamotrack-Client-Address with the client address it
+    # resolved. Every peer on that private Compose network is inside this trust
+    # boundary; never set by users, and source-run deployments leave it false.
+    plamotrack_bundled_ingress: bool = False
+    # The interface the published port binds to (compose reads the same key).
+    # A non-loopback bind address is a name the instance answers to, so it joins
+    # the Host allowlist; 0.0.0.0 and :: are unspecified and add nothing.
+    web_bind: str = "127.0.0.1"
+
+    # --- Authentication mode (§5.4–§5.6, M6-6 / #191) ---------------------------
+    # `local` (the default): the owner claims the instance with the setup token
+    # and a password. `oidc`: the owner signs in at an OpenID Connect provider
+    # and is bound to the stable (issuer, subject) that provider asserts; no
+    # password exists. The two are mutually exclusive and the switch is this
+    # setting — an explicit operator action, never a fallback. Env-only, never
+    # a settings row (§5.6, route bypass): the Settings page cannot change it.
+    auth_mode: str = "local"
+    # OIDC mode only. The issuer URL exactly as the provider's discovery document
+    # states it (`https://accounts.google.com`, `https://keycloak.example/realms/x`);
+    # the document is fetched from `<issuer>/.well-known/openid-configuration`
+    # and refused if its `issuer` differs. https, unless the host is loopback.
+    oidc_issuer: str = ""
+    # The client registered with the provider. Its authorised redirect URI must
+    # be `<PUBLIC_BASE_URL>/api/auth/oidc/callback`, so PUBLIC_BASE_URL is
+    # required in this mode — the callback is built from it, never from Host.
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+
+    # --- MCP OAuth (§5.5 family 8, §5.6; M6-7 / #192) ------------------------------
+    # OIDC mode only, and required there: the key that signs the access and
+    # refresh tokens the MCP OAuth proxy issues to clients, and from which the
+    # key encrypting the proxy's state rows (`mcp_oauth_state`) is derived.
+    # 32 random bytes as 64 hex characters (`openssl rand -hex 32`). Installation
+    # identity beside PUBLIC_BASE_URL: rotating it invalidates every MCP link
+    # (clients re-authorise; data, sessions and access tokens are untouched).
+    # Explicit rather than derived from OIDC_CLIENT_SECRET, so rotating the
+    # provider's secret does not silently start an empty state store.
+    mcp_oauth_signing_key: str = ""
+    # Optional, OIDC mode. Comma-separated redirect-URI patterns a dynamically
+    # registered MCP client may register (`http://localhost:*`,
+    # `https://*.example.com/*`). It NARROWS registration and never replaces the
+    # registration binding: a client is still sent only to a URI it registered.
+    # When set it applies to EVERY client kind (FastMCP re-checks it at the
+    # callback, where the kind is no longer known), so it must also admit the
+    # callbacks of the CIMD clients in use — Claude web, ChatGPT web — whose
+    # binding is otherwise their published metadata document. Empty: any safe
+    # URI may be registered, and the registration is the binding.
+    mcp_oauth_allowed_redirect_uris: str = ""
+
+    @field_validator("public_base_url")
+    @classmethod
+    def _validate_public_base_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value:
+            return ""
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError(
+                "PUBLIC_BASE_URL must be an absolute http:// or https:// URL "
+                f"with a host (got {value!r})"
+            )
+        if parsed.path or parsed.query or parsed.fragment or parsed.username:
+            raise ValueError(
+                "PUBLIC_BASE_URL is scheme, host and port only — no path, query, "
+                f"fragment or credentials (got {value!r})"
+            )
+        try:
+            _ = parsed.port  # raises on a non-numeric or out-of-range port
+        except ValueError as exc:
+            raise ValueError(f"PUBLIC_BASE_URL has an invalid port (got {value!r})") from exc
+        # The host joins the allowlist, so it obeys the allowlist grammar — a
+        # `*` here would otherwise admit every Host (PR #196 review, P3-1).
+        validate_host_pattern(parsed.hostname, setting="PUBLIC_BASE_URL", allow_wildcard=False)
+        return value
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def _validate_allowed_hosts(cls, value: str) -> str:
+        # Judged on the normalised form the guard matches, not the raw spelling:
+        # `*:8080` loses its port on the way to matching and becomes `*` (PR
+        # #196 review, P3-1). `*.example.lan` is the one accepted wildcard.
+        for entry in split_csv(value):
+            validate_host_pattern(entry, setting="ALLOWED_HOSTS", allow_wildcard=True)
+        return value
+
+    @field_validator("web_bind")
+    @classmethod
+    def _validate_web_bind(cls, value: str) -> str:
+        # Also a name the instance answers to, so the same grammar; the
+        # unspecified addresses are the exception — they bind everything and
+        # name nothing.
+        value = value.strip()
+        if value in ("", "0.0.0.0", "::", "[::]"):
+            return value
+        validate_host_pattern(value, setting="WEB_BIND", allow_wildcard=False)
+        return value
+
+    @field_validator("auth_mode")
+    @classmethod
+    def _validate_auth_mode(cls, value: str) -> str:
+        mode = value.strip().lower()
+        if mode not in AUTH_MODES:
+            raise ValueError(f"AUTH_MODE must be one of {', '.join(AUTH_MODES)} (got {value!r})")
+        return mode
+
+    @field_validator("oidc_issuer")
+    @classmethod
+    def _validate_oidc_issuer(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError(
+                f"OIDC_ISSUER must be an absolute http:// or https:// URL (got {value!r})"
+            )
+        if parsed.query or parsed.fragment:
+            raise ValueError(f"OIDC_ISSUER carries no query or fragment (got {value!r})")
+        if parsed.scheme == "http" and not is_loopback_host(parsed.hostname):
+            raise ValueError(
+                f"OIDC_ISSUER must be https unless the provider is on loopback (got {value!r})"
+            )
+        return value
+
+    @field_validator("mcp_oauth_signing_key")
+    @classmethod
+    def _validate_mcp_oauth_signing_key(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            return ""
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError(
+                "MCP_OAUTH_SIGNING_KEY must be 32 random bytes as 64 hex characters "
+                "(`openssl rand -hex 32`)"
+            )
+        return value
+
+    @field_validator("mcp_oauth_allowed_redirect_uris")
+    @classmethod
+    def _validate_mcp_oauth_allowed_redirect_uris(cls, value: str) -> str:
+        for entry in split_csv(value):
+            parsed = urlsplit(entry)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError(
+                    "MCP_OAUTH_ALLOWED_REDIRECT_URIS entries are http(s) URI patterns "
+                    f"(got {entry!r})"
+                )
+        return value
+
+    @property
+    def mcp_oauth_signing_key_bytes(self) -> bytes:
+        """The signing key as the 32 bytes the proxy takes; empty when unset."""
+        return bytes.fromhex(self.mcp_oauth_signing_key) if self.mcp_oauth_signing_key else b""
+
+    @property
+    def mcp_oauth_allowed_redirect_uri_patterns(self) -> list[str] | None:
+        """The allowlist as the proxy takes it: None when unset (registration is
+        the binding), else the patterns."""
+        entries = split_csv(self.mcp_oauth_allowed_redirect_uris)
+        return entries or None
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _validate_allowed_origins(cls, value: str) -> str:
+        for entry in split_csv(value):
+            parsed = urlsplit(entry)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                raise ValueError(
+                    f"ALLOWED_ORIGINS entries are origins — scheme://host[:port] (got {entry!r})"
+                )
+            if parsed.path.strip("/") or parsed.query or parsed.fragment or parsed.username:
+                raise ValueError(f"ALLOWED_ORIGINS entry {entry!r} is not a bare origin")
+            # Origins are exact: `http://*:8080` would be a wildcard pattern to
+            # the guard's fnmatch (PR #196 review, the P3-1 sweep).
+            validate_host_pattern(parsed.hostname, setting="ALLOWED_ORIGINS", allow_wildcard=False)
+        return value
+
+    @field_validator("audit_retention_days")
+    @classmethod
+    def _validate_audit_retention_days(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("AUDIT_RETENTION_DAYS must be a whole number of days, at least 1")
+        return value
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _validate_trusted_proxies(cls, value: str) -> str:
+        for entry in split_csv(value):
+            try:
+                ip_network(entry, strict=False)
+            except ValueError as exc:
+                raise ValueError(
+                    f"TRUSTED_PROXIES entries are IP addresses or CIDR ranges (got {entry!r})"
+                ) from exc
+        return value
+
     @field_validator("reference_currency")
     @classmethod
     def _validate_reference_currency(cls, value: str) -> str:
@@ -57,16 +333,58 @@ class Settings(BaseSettings):
         return code
 
     @model_validator(mode="after")
+    def _require_oidc_settings(self) -> "Settings":
+        if self.auth_mode != "oidc":
+            return self
+        missing = [
+            name
+            for name, value in (
+                ("OIDC_ISSUER", self.oidc_issuer),
+                ("OIDC_CLIENT_ID", self.oidc_client_id),
+                ("OIDC_CLIENT_SECRET", self.oidc_client_secret),
+                ("PUBLIC_BASE_URL", self.public_base_url),
+                ("MCP_OAUTH_SIGNING_KEY", self.mcp_oauth_signing_key),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "AUTH_MODE=oidc needs " + ", ".join(missing) + " — the callback URL is built "
+                "from PUBLIC_BASE_URL, the provider from OIDC_ISSUER, and the MCP OAuth "
+                "tokens are signed with MCP_OAUTH_SIGNING_KEY "
+                "(https://docs.gunp.la/authentication/oidc)"
+            )
+        # The MCP OAuth authorization server is `<PUBLIC_BASE_URL>/mcp` (§5.5
+        # family 8, #192). RFC 8414 requires an https issuer and the MCP SDK
+        # enforces it, with the developer's loopback as the one exception — and
+        # an authorization server on plain http would hand bearer tokens to
+        # clients in the clear. OIDC mode therefore needs TLS in front (§5.4 mode
+        # R) or a loopback address (mode L / Dev); the private-network plain-http
+        # deployment (mode P) stays on local mode.
+        parsed = urlsplit(self.public_base_url)
+        if parsed.scheme != "https" and parsed.hostname not in MCP_OAUTH_PLAIN_HTTP_HOSTS:
+            raise ValueError(
+                "AUTH_MODE=oidc needs an https PUBLIC_BASE_URL (or localhost / 127.0.0.1 for "
+                "development): the MCP OAuth authorization server at <PUBLIC_BASE_URL>/mcp "
+                f"must be https (RFC 8414); got {self.public_base_url!r}. Put TLS in front, "
+                "or use AUTH_MODE=local (https://docs.gunp.la/authentication/oidc)"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _assemble_database_url(self) -> "Settings":
         if not self.database_url:
-            # quote() the credentials — a password containing @ or / would
-            # otherwise produce a DSN that parses into the wrong host.
-            user = quote(self.postgres_user, safe="")
-            password = quote(self.postgres_password, safe="")
-            self.database_url = (
-                f"postgresql+asyncpg://{user}:{password}"
-                f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-            )
+            # SQLAlchemy renders what its own `make_url` parses: the credentials
+            # quoted (a password containing @ or / would otherwise parse into the
+            # wrong host) and an IPv6 host bracketed (#299).
+            self.database_url = URL.create(
+                "postgresql+asyncpg",
+                username=self.postgres_user,
+                password=self.postgres_password,
+                host=_database_host(self.postgres_host),
+                port=self.postgres_port,
+                database=self.postgres_db,
+            ).render_as_string(hide_password=False)
         return self
 
 

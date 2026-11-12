@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -79,11 +80,18 @@ export function CatalogItemPicker({
 
   if (value?.mode === "existing") {
     return (
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-sm text-indigo-800">
+      // The name gives way, Change does not: a long unbroken name — a part
+      // number run together — breaks inside its chip, where as a box that
+      // could not shrink it pushed Change to 525 px on a 320 px sheet, the one
+      // control that undoes the choice (#273). The row wraps only where its
+      // box is narrow (`stack-3:`): wrapping at every width would send Change
+      // under any long name on the desktop too (the lesson of #272's
+      // applied-upgrade row).
+      <div className="flex items-center gap-2 stack-3:flex-wrap">
+        <span className="min-w-0 rounded-sm bg-accent-soft px-2 py-1 text-sm break-words text-accent">
           {value.name}
         </span>
-        <Button type="button" variant="secondary" onClick={() => onChange(null)}>
+        <Button type="button" variant="secondary" className="shrink-0" onClick={() => onChange(null)}>
           {t("catalogPicker.change")}
         </Button>
       </div>
@@ -92,14 +100,21 @@ export function CatalogItemPicker({
 
   if (value?.mode === "new") {
     return (
-      <div className="space-y-2 rounded-md border border-dashed border-indigo-300 bg-indigo-50/50 p-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-indigo-700">
+      <div className="space-y-2 rounded-sm border border-dashed border-accent/40 bg-accent-soft p-2">
+        {/* The way back gives way to nothing: where the label and it no longer
+            share a line — 0.75rem text under a 40 px browser font, in a 200 px
+            card — it takes the next, at the end, whole (Codex #274, finding 3;
+            the same on `main`). By need, which at the default size is never:
+            both are short and fixed, unlike the chosen name above. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-2">
+          <span className="min-w-0 text-xs font-medium text-accent">
             {t("catalogPicker.newItem", { type: itemTypeLabel(itemType) })}
           </span>
           <button
             type="button"
-            className="text-xs text-zinc-500 hover:text-zinc-700"
+            // Its side padding is the finger's, so it is in px: in rem it was 80 of
+            // the row's 136 px at that font, and "search" broke in two.
+            className="ms-auto max-w-full text-end text-xs text-muted hover:text-text touch:min-h-11 touch:px-[8px]"
             onClick={() => onChange(null)}
           >
             {t("catalogPicker.backToSearch")}
@@ -139,7 +154,7 @@ export function CatalogItemPicker({
             commercial set names a maker, a scratch-built piece doesn't, and a
             backdrop panel has no scale. */}
         {itemType === "display" && (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 stack-2:grid-cols-1">
             <Input
               value={value.manufacturer}
               onChange={(event) => onChange({ ...value, manufacturer: event.target.value })}
@@ -182,37 +197,58 @@ export function CatalogItemPicker({
         placeholder={t("catalogPicker.searchPlaceholder", { type: itemTypePlural(itemType) })}
       />
       {open && debounced.length > 0 && (
-        <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg">
+        <div
+          className="absolute z-10 mt-1 w-full overflow-hidden rounded-sm border border-border bg-surface"
+          // Safari does not focus a button on click: a mousedown on a result took
+          // focus from the input to nowhere, the `onBlur` above read that as focus
+          // leaving the picker and unmounted the list before the click landed —
+          // so no catalog item could be picked by tap or mouse on an iPhone or in
+          // Safari (measured under Playwright's WebKit, #259). Keeping the input's
+          // focus through the press is the standard remedy; the keyboard's Enter
+          // and Space fire no mousedown and are untouched.
+          onMouseDown={(event) => event.preventDefault()}
+        >
           {isFetching && (
-            <div className="px-3 py-2 text-xs text-zinc-400">{t("catalogPicker.searching")}</div>
+            <div className="px-3 py-2 text-xs text-muted">{t("catalogPicker.searching")}</div>
           )}
           {matches.map((result) => (
             <button
               key={result.id}
               type="button"
-              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-indigo-50"
+              // A full-width row, a finger tall under `touch:` (§13.7, #259).
+              // In the phone shell the name keeps 8rem beside what is on hand, or
+              // the row's width, and breaks where no line holds it; what is on
+              // hand takes the next line, at the end, where the two cannot share
+              // one. Neither squeezes the other to nothing: "0 on hand" held to
+              // its line took all 176 px of the row at a 40 px font and left the
+              // name none. **`max-md:` and not every width**: with a long name
+              // and a long category the same rules moved a desktop result too —
+              // the stock label from two squeezed lines to one, the name's
+              // column 30 px narrower (Codex #274, finding 5). A better row,
+              // and not this milestone's to change: from 768 px it is `main`'s.
+              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-accent-soft touch:min-h-11 max-md:flex-wrap max-md:gap-x-3"
               // onClick, not onMouseDown: a keyboard's Enter/Space activates a
               // button through click and never fires mousedown (#104). The
               // mousedown-first ordering the old handler relied on is covered
               // by the container's relatedTarget check above instead.
               onClick={() => onChange({ mode: "existing", id: result.id, name: result.name })}
             >
-              <span>
+              <span className="max-md:min-w-0 max-md:flex-[1_1_min(8rem,100%)] max-md:break-words">
                 {result.name}
-                <span className="ms-2 text-xs text-zinc-400">
+                <span className="ms-2 text-xs text-muted">
                   {[result.category ?? result.manufacturer, result.scale]
                     .filter(Boolean)
                     .join(t("common.dotSeparator"))}
                 </span>
               </span>
-              <span className="text-xs text-zinc-400">
+              <span className="text-xs text-muted max-md:ms-auto">
                 {t("catalogPicker.onHand", counted({}, result.quantity_on_hand))}
               </span>
             </button>
           ))}
           <button
             type="button"
-            className="w-full border-t border-zinc-100 px-3 py-2 text-start text-sm font-medium text-indigo-600 hover:bg-indigo-50"
+            className="flex w-full items-center gap-1.5 border-t border-rule px-3 py-2 text-start text-sm font-medium text-accent hover:bg-accent-soft touch:min-h-11"
             onClick={() =>
               onChange({
                 mode: "new",
@@ -223,7 +259,12 @@ export function CatalogItemPicker({
               })
             }
           >
-            {t("catalogPicker.createNew", { type: itemTypeLabel(itemType), query: query.trim() })}
+            {/* A stroke icon, not the "＋" glyph (§13: one icon set). */}
+            <Plus size={14} aria-hidden className="shrink-0" />
+            {/* The query is free text: one long token breaks inside the row. */}
+            <span className="max-md:min-w-0 max-md:break-words">
+              {t("catalogPicker.createNew", { type: itemTypeLabel(itemType), query: query.trim() })}
+            </span>
           </button>
         </div>
       )}

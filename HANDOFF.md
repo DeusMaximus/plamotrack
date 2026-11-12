@@ -41,204 +41,133 @@ Template:
 
 ---
 
-## 2026-08-31 — GPT-5.6 Sol (OpenAI) — Translation contribution guide expanded
+## 2026-11-12 — Claude Code (Fable 5.2) — #349 MERGED as `6c70787` (PR #360); #350 MERGED as `0c8478b` (PR #362); #359, #361 filed
 
-- **Done:** Expanded `docs/translating.md` into a self-contained contributor
-  guide for the shipped M5.1 design: interface language versus independent
-  regional formatting; the synchronous manifest → registry → i18next →
-  settings runtime path; catalogue structure, placeholders, CLDR plurals and
-  untranslated identifiers; exact disabled and enabled language changes;
-  local checks; and enablement, update and human-review expectations. Named the
-  coverage trap where copied-but-untranslated English values look complete.
-  GLM 5.3 Flash reviewed PR #183 at `1e53a12`: **GO with three wording-level
-  P3s**. All reproduced and corrected — value/placeholder terminology, the
-  validator's group-wide plural-placeholder contract, and enabled-versus-disabled
-  coverage drift; its locale-extension carve-out was documented too. The owner
-  then authorised merge; PR #183 squash-merged as `6cf0f71` and the feature
-  branch was deleted.
-- **Decisions:** Documentation only — no application or catalogue changes.
-  Partial translations remain welcome but disabled, omit untranslated leaves
-  or whole plural groups, and use the `en-AU` fallback. A new formatting locale
-  requires no registry entry; `Intl` consumes the stored canonical locale.
-- **State:** `main` at `6cf0f71` (+ this entry), with PR #183 merged and its
-  local/remote branch removed. Final-head CI: Backend, Frontend and Integration
-  all green. Local verification: frontend **469 passed**, i18n report **604/604**
-  `en-AU`, lint and production build green; backend settings **69 passed**;
-  focused catalogue suite after review **285 passed**; `git diff --check` clean.
-  No application code changed.
-- **Next:** M6 remains the next product milestone.
+- **Done:**
+  - **[PR #360](https://github.com/DeusMaximus/plamotrack/pull/360) merged** at reviewed head `b3cbae0`, closing #349: a sixth order-line type, `other`, with a `description`. It dispatches nothing in any order state. Migration `61442608b20e`. `EXPORT_VERSION` 1 → 2. One Codex gpt-6.1-sol round: GO, no findings.
+  - **[PR #362](https://github.com/DeusMaximus/plamotrack/pull/362) merged** at head `acb7704`, closing #350: `order_adjustments` (a label and a positive amount in the order's currency), `adjustments` and per-currency `totals` on every order read, `order_adjustments.csv`, the editor's section and the Paid row. Migration `b7d4f0a3c915`. One Codex round at `a5e2fa1`: GO with two P3s, both fixed at `acb7704` and not re-reviewed (owner's call).
+  - **The two P3s:** a retry after a half-failed save kept the intermediate adjustments (a second latch, `applied.current.adjustments`); and on a narrow phone at an enlarged font the Paid row ran past its card. The test for the second also found a card's line amounts cut at 40 px on any order, older than the PR, and fixed with it. Lesson appended: `lessons.md` → "A dialog's opening value stops being what's stored".
+  - **Filed:** [#359](https://github.com/DeusMaximus/plamotrack/issues/359), twelve mutation cases whose anchors are stale on `main`. [#361](https://github.com/DeusMaximus/plamotrack/issues/361), a line break in a single-line field is dropped when the browser edits it (found by Greptile on #360; now also an adjustment's label). #363 was a duplicate of #358's retry section and is closed; #358 has the new measurement as a comment.
+- **Decisions (owner):**
+  - **#349:** untracked lines stay out of `get_summary` spend, and there is no conversion to a tracked line.
+  - **#350:** spend summaries keep the shelf price; adjustments that exceed items plus shipping are refused, not clamped; adjustments are a list.
+  - **#350, the author's calls, accepted by the review and merged:** the ceiling counts only lines in the order's own currency, plus shipping. The Orders list's Total is what was paid. The browser renders the server's `totals` and has no live Paid figure. An id-less CSV row matches on order and label, not amount. `EXPORT_VERSION` stays 2, since no release shipped between the two PRs.
+- **State:**
+  - PR checks at `acb7704`: Backend, Frontend and Integration passed. CI on `main` at `0c8478b` was still running when this was written.
+  - Measured locally for #362: backend 4023 passed, 1 xfailed (at `65b84ee`; no backend change after). Frontend 683. Playwright 300 passed, 99 skipped (at `acb7704`, Chromium, one worker). 35 backend mutants and 10 frontend mutants killed. Not run: the fixes under WebKit, a real MCP client over HTTP, the table's Paid row under an enlarged font, two writers racing on one order's adjustments.
+  - **`mutation_test.py`:** #362 re-anchored the two cases it moved (`stg-4`, `348-4`). The twelve from #359 are still stale. A change can stale an older case without touching it, and the harness only says so when that case is run: count every anchor against `main` before a review round (#359 has the script as a comment).
+  - **The dev database was not touched.** The last entry had it behind `8e41c7d2a9f6`; if so it is now three migrations behind. Run `alembic upgrade head` before running `main` against it.
+  - **The owner's LXC is on v0.6.0-alpha.** **Unreleased on `main`:** #333, #341/#343, #346/#352, #348, #349, #350, with #351's docs drift pending (`.agents/next-release.md`). The next release has two migrations that refuse a downgrade once used, and a version-2 archive that v0.6.0-alpha refuses.
+  - **Owed to plamotrack-ios, unmeasured:** #348's field and column. #349: the type, the column, three diagnostic codes, three scenarios, export version 2. #350: the table, two read fields, one code (`order.adjustments_exceed_total`), three scenarios. Also still owed: two diagnostics for an unreadable required cell, a NUL, and `request.text_unstorable` in its `api-error-codes.json`.
+  - **#358 is larger than when filed.** The dialog still restates `currency_code` and `shipping_cost_minor` on every save, and #350's ceiling now reads both. There are two per-field retry latches where the issue said eight would be the wrong shape.
+  - **Left behind:** two T3 Code reviewer worktrees (`t3/review-349-brief`, `t3/review-order-adjustments`), T3's to remove. Merged branches are left on origin as before.
+  - **Carried, not reverified:** #344 (image pins, before or with the next release; bump mechanism undecided). testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
+- **Next:**
+  - #358 (the general answer for the order dialog, now with a server rule behind it), #354, #355, #356, #359, #361.
+  - **The next release:** #351, #344. **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
 
-## 2026-08-29 — GPT-5.6 Sol (OpenAI) — Documentation drift corrected
+## 2026-11-04 — Claude Code (Opus 5.5) — #348 MERGED as `ff50f94` (PR #357); reviews now start through T3 Code; #358 filed
 
-- **Done:** Corrected the verified documentation drift at `392172d`: the README
-  now scopes low-stock thresholds to consumables; `docs/design.md` has the current
-  order-item conversion pair, a 29/08 revision date, and the four missing built
-  routes in §4; `docs/import-export.md` now distinguishes kit-only receipt flips
-  from catalog-bearing orders and uses an explicitly illustrative 0.2.9/current-head
-  manifest; `AGENTS.md` names Settings/DataSection instead of the removed DataPage.
-- **Decisions:** Kept every remaining `converted_price_aud_minor` reference because
-  each describes the legacy CSV alias or rename history. Kept the separate
-  “un-shipping isn't supported anywhere” statement because that claim is true on
-  every writer. The manifest example carries current values but explicitly says
-  exports write live metadata, preventing future example/version drift.
-- **State:** Uncommitted documentation-only changes on clean-starting `main` at
-  `392172d`. Focused backend verification: **6 passed** (exact MCP tool set, both
-  kit-only receipt directions, archive manifest shape/version, and `/meta`
-  language advertisement). `git diff --check` clean; no application code changed.
-- **Next:** Review and commit the documentation update when the owner is satisfied.
+- **Done:**
+  - **[PR #357](https://github.com/DeusMaximus/plamotrack/pull/357) merged** at reviewed head `11a280f`, closing #348: `orders.notes` on REST, MCP, `orders.csv`, the order editor and the expanded lines, with one additive migration, `8e41c7d2a9f6`.
+  - **Three Codex gpt-6.1-sol rounds:** NO-GO on a P2 (a save that never touched the note erased what an agent wrote, fixed `039007b`), NO-GO on a P3 (restoring a note on a retry after a failed ship or receive was ignored, fixed `11a280f`), then GO with no findings. Lesson: `lessons.md` → "A dialog's opening value stops being what's stored (#348, PR #357 rounds 1–2)".
+  - **Filed [#358](https://github.com/DeusMaximus/plamotrack/issues/358):** the order dialog's eight other header fields overwrite what an agent wrote while it was open (measured). Order lines already have the retry trap (measured), a likely fix would give header fields the same trap, and the kit and retailer dialogs look the same from reading only.
+  - **Docs on `main`:** `testing-and-review.md` and `review-brief.md` now say how a round starts through T3 Code. Scratch stays out of `.dev/<issue>/`.
+- **Decisions (owner, 04/11):** the authoring agent starts a round itself with `delegate_task` once the owner asks for one, and the paste is the fallback outside T3 Code. T3 reviewers post on the PR, for the public record. An all-P3 NO-GO has to justify why it can't merge and be fixed in a separate issue, and whether that holds is the owner's call.
+- **State:**
+  - PR checks at `11a280f`: Backend, Frontend and Integration all passed. CI on `main` at `ff50f94` was still running when this was written.
+  - Round 3 passed `order-lossless.spec.ts` in Chromium and WebKit, 19 probes of its own, ten negative controls and frontend 672. Not run on this PR: the rest of Playwright locally, `settings`, enlarged fonts, a request that fails in transport after the server committed it, a real MCP client over HTTP.
+  - **The dev database is not migrated to `8e41c7d2a9f6`:** run `alembic upgrade head` before running `main` against it.
+  - **The owner's LXC is on v0.6.0-alpha.** **Unreleased on `main`:** #333, #341/#343, #346/#352, #348, with #351's docs drift pending (`.agents/next-release.md`).
+  - **Owed to plamotrack-ios, unmeasured:** the new API field and CSV column. Also: its planner still reports two diagnostics for an unreadable required cell, its handling of a NUL hasn't been run, and it hasn't re-synced `api-error-codes.json` for `request.text_unstorable`.
+  - **Left behind:** reviewer scratch from rounds 1 and 2 in gitignored `.dev/348/`, harmless. It predates the scratch rule.
+  - **Carried, not reverified:** #344 (image pins, before or with the next release; bump mechanism undecided). testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
+- **Next:**
+  - #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price); #354, #355, #356, #358.
+  - **The next release:** #351, #344. **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
 
-## 2026-08-29 — Claude Code (Fable 5) — v0.2.9-alpha RELEASED (the M5.1 theme); oma- set folded (#181)
+## 2026-11-03 — Claude Code (Opus 5.5) — #348 order notes: PR #357 open at `a25fce9`, awaiting review; #356 filed
 
-- **Done:** **#181 merged `df2702a`** — oma-1..7 in the tracked harness (7/7
-  killed at fold-in; first targets outside `app/`, so the clean-tree check now
-  covers the registry fixture — a dirtied fixture refusing the run was
-  controlled before the counted run; `testing-and-review.md` corrected to the
-  measured **251 cases over twenty-six target files**). **Bump PR #182 merged
-  `f509c60`**; the release gate ran clean: M5.1 milestone 0 open / 8 closed
-  (#179 unscheduled by design, no milestone); `GET /meta` **and** the MCP
-  handshake's `serverInfo.version` both report 0.2.9; packaged stack built
-  from `f509c60` — four services healthy, `migrate` Exited (0), `/api/meta`
-  right, container-side export manifest carries `app_version 0.2.9` +
-  `schema_version f9979ec7b9cb`; dev overlay restored after. **Tag
-  `v0.2.9-alpha` pushed, release published `--prerelease`** (owner authorised
-  this release explicitly). Notes lead with the data-facing changes: set
-  Settings → Language & region right after upgrading; #114's naive-CSV
-  time-zone change; the #178 `import.match_ambiguous` →
-  `import.order_match_ambiguous` compatibility line.
-- **Decisions:** packaged-stack `migrate` was a **no-op** — the compose volume
-  was already at `f9979ec7b9cb` from this session's dev use — and I did not
-  `down -v` to force a from-empty run: the volume holds the (throwaway but in
-  use) dev collection, and from-empty coverage of the migration exists in
-  every pytest session (downgrade base → upgrade head), the from-empty e2e
-  DB, and the `mig-` harness cases.
-- **State:** `main` at `f509c60` (+ this entry), CI green at every head
-  including the merge and the bump. Suites at the tag: backend **1230**,
-  vitest **469**, from-empty e2e **40 + 1 skipped**. No dev servers running
-  (the session's preview pair was stopped for the packaged-stack step).
-- **Next:** **M6 — secure remote access** (Codex-lane reviews per the
-  roster) is the next milestone; M6.5/M7/M8 queue behind it. **LXC: BACK UP
-  FIRST**, then pull/upgrade — it has **two migrations pending**
-  (`2c97a5ced66a` display-items and `f9979ec7b9cb` settings; the old
-  hand-off phrase "0.2.8's settings migration" was wrong — the settings
-  singleton ships in 0.2.9), then **set Settings → Language & region
-  immediately** or rendering and naive CSV imports stay UTC/en-AU.
+- **Done:**
+  - **[PR #357](https://github.com/DeusMaximus/plamotrack/pull/357)** open, not merged, on `feat/348-order-notes`. Closes #348. `orders.notes` (nullable, one additive migration `8e41c7d2a9f6`) on REST, MCP, `orders.csv` (last column), the order editor, and the foot of the expanded lines in both shapes. Omitted leaves it; null or blank clears it.
+  - `services/text.stripped_or_none` is read by `OrderNotes` and `parse_text`, so a note never holds surrounding whitespace and its export re-imports as no change (rule 10).
+  - Tracked mutants `348-1` to `348-6`, all killed. `.agents/next-release.md` has the entry.
+  - **Filed [#356](https://github.com/DeusMaximus/plamotrack/issues/356):** on `main`, a stored text value with surrounding whitespace makes a re-import an update. Measured on `retailers.notes` only.
+  - Review brief for Codex at `.dev/348/review-brief-1.md` (gitignored, in the main checkout). The owner runs it; no review round has happened.
+- **Decisions (owner, 03/11):** notes are not searched, and searching an order by what it contains is for much later, alongside the planned gift-card, voucher and untracked-item work. Notes stay off the starter sheet.
+- **State:**
+  - At `a25fce9`: backend 3764 passed, 1 xfailed; frontend 672 passed; lint and build clean. Playwright (Chromium; `order-lossless`, `lists`, `dialogs`; app, phone, tablet): 76 passed, 51 skipped, before the last e2e edit; after it only the new not-cut test and the sideways-scroll test were rerun. CI on the PR was not read before this entry.
+  - Not run: the rest of Playwright locally, WebKit, `settings`, the packaged stack, a real MCP client, an older release reading a newer archive.
+  - **The dev database has not been migrated to `8e41c7d2a9f6`:** run `alembic upgrade head` before running that branch against it. `plamotrack_test` was left migrated by the branch's last run, and its head isn't on `main` until the PR merges. A pytest run on `main` before then can't downgrade it: use a scratch `TEST_DATABASE_URL`, or drop that database.
+  - **The owner's LXC is on v0.6.0-alpha.** **Unreleased on `main`:** #333, #341/#343, #346/#352, with #351's docs drift pending (`.agents/next-release.md`).
+  - **Owed to plamotrack-ios, unmeasured:** the new API field and CSV column, once #357 lands. From the last entry: its planner still reports two diagnostics for an unreadable required cell, its handling of a NUL hasn't been run, and it hasn't re-synced `api-error-codes.json` for `request.text_unstorable`.
+  - **Carried, not reverified:** #344 (image pins, before or with the next release; bump mechanism undecided). testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
+- **Next:**
+  - **PR #357:** the review round, then the owner's merge call (`gh pr merge --squash --auto --match-head-commit <reviewed sha>`, never `--admin`).
+  - Then #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price); #354, #355, #356.
+  - **The next release:** #351, #344. **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
 
-## 2026-08-29 — Claude Code (Fable 5) — #178 CLOSED: order ambiguity split to its own code (PR #180, two Codex rounds)
+## 2026-11-02 — Claude Code (Opus 5.5) — #346 + #352 MERGED as `1188a67` (PR #353); #354, #355 filed; the owner's LXC is on 0.6.0
 
-- **Done:** **#178 closed — PR #180 squash-merged as `783a1a7`** on the
-  owner's call after a Codex round-2 GO; branch deleted. The order matcher now
-  speaks `import.order_match_ambiguous`, declared `{count, matched_by}`
-  exactly; generic `import.match_ambiguous` keeps `{count, table}`. The en-AU
-  entry renders `{{matchedBy}}` via `matchedByLabel` (unknown values raw,
-  singular/plural pinned); `LABELLED_PARAMS.matched_by` restored legitimately
-  (#177 P3-4's guard now holds it reachable); the stale `apiError.ts` comment
-  rewritten. Class sweep: `order_line.item_type_immutable` fixed in-branch
-  (REST raise now sends `{before, after}`; registry declares the pair) and
-  **#179 filed** for the raise-side siblings (`catalog_item.not_found`
-  item_type, `_row_problem`'s undeclared row; `import.blocked`'s structural
-  diagnostics named there as deliberate). The diagnostic-site audit is
-  tightened to **exact equality** with the registry, extracted pure
-  (`_diagnostic_param_violations`) with synthetic per-class negative controls;
-  the two bridges are pinned by a runtime matrix in
-  `test_import_diagnostics.py`. Fixture note updated to state both regimes.
-- **Decisions:** issue option 1 (split the code) over optional registry params
-  or a fabricated generic `matched_by`; no `table` param on the order code
-  (the code names the table — retires "orders rows" phrasing); raise sites
-  keep the superset audit deliberately (#179 owns the rest).
-- **State:** evidence measured at `fb34b79` (later commits are comment/docs
-  only): backend **1229**, vitest **469**, ruff + oxlint + build clean,
-  from-empty e2e **40 + 1 skipped** (tables zero, e2e DB dropped). Pre-fix
-  controls in the PR body: backend 3 red (both order emitters observed on the
-  old code; the audit naming exactly importing.py:1297 + invariants.py:115),
-  frontend 4 red. Seven hand-run mutations killed (1/1/1/3/5/1/1 failing
-  tests), byte-identical restores verified; **`oma-` tuples queued in the PR
-  body** for post-merge fold-in (two frontend mutants stay manually measured —
-  no tracked frontend harness). Full harness at `20d0687`: **244/244 killed**,
-  no anchor rot. Two aborted e2e runs were the owner's omlx-server holding
-  `*:8000` (owner confirmed, stopped it) — environmental, not a defect. #167
-  can't fire from-empty; not seen. No dev servers left running.
-- **Round 1 (Codex, GPT 5.6 Sol): NO-GO, 2×P3 — both actioned at `d356ef1`.**
-  P3-1: the bridge runtime matrix covered one of three reachable codes per
-  bridge; a probe param on the `quantity_too_large` raise rode through 34/34
-  green (reproduced at `7fc20d6` first). Matrix now drives every reachable
-  outcome (small/large quantity, aggregate fan-out against a real order,
-  starter-sheet cell + both quantity ends); both probe mutations
-  (`quantity_too_large`, `order.fanout_limit`) re-measured killed; stale
-  `_BORROWED` docstring fixed. Backend **1230** at `d356ef1`. P3-2: the PR
-  body's "additive wire change" claim overruled and amended in place —
-  **the 0.2.9 release notes owe one compatibility line**: order-match
-  ambiguity moved from `import.match_ambiguous` to
-  `import.order_match_ambiguous`.
-- **Round 2 (Codex): GO, no new findings** — replayed both probe mutations
-  at `cfeb9ee` (exact undeclared-key failures, byte-identical restores, 16/16
-  then 1230/1230 green) and independently re-derived the bridge-code
-  enumeration: `_borrowed_diagnostic` ⊇ {quantity_too_small, quantity_too_large,
-  order.fanout_limit}, `_row_problem` ⊇ {cell_invalid, both quantity codes} —
-  the matrix drives every member. P3-2's amendment judged durable.
-- **Next:** fold the **`oma-` mutant set** (queued in the PR #180 body) into
-  `mutation_test.py` — re-check anchors, and whether the clean-tree/restore
-  cover reaches the fixture and test files it mutates the way #151 extended it
-  to `alembic/`. Then the **0.2.9-alpha release gate** (`testing-and-review.md`)
-  — **the release notes owe one compatibility line**: order-match ambiguity
-  moved from `import.match_ambiguous` to `import.order_match_ambiguous` (a
-  client switching on the old code over order rows loses that branch). #179
-  (raise-side catalogue-drop siblings) is filed, unscheduled. M6 not begun.
-  LXC: **back up before pulling** (real collection; 0.2.8's settings migration
-  still pending there, and zone/locale need setting after the M5.1 upgrade —
-  see the `4bd98c0` entry). After merge: fold
-  the `oma-` set into the harness (re-check anchors, and whether the
-  clean-tree/restore cover reaches the fixture and test files it mutates the
-  way #151 extended it to `alembic/`). Then the 0.2.9-alpha release gate
-  (M5.1 theme) from `testing-and-review.md`; M6 not begun. LXC: **back up
-  before pulling** (real collection; 0.2.8's settings migration still pending
-  there, and the instance zone/locale need setting after the M5.1 upgrade —
-  see the `4bd98c0` entry).
+- **Done:**
+  - **[PR #353](https://github.com/DeusMaximus/plamotrack/pull/353)** squash-merged as **`1188a67`**, pinned to head `eb94002`. #346 and #352 are closed. Text a column or a response can't carry is a refusal, never a 500:
+    - `services/text.py` is the one predicate (NUL, unpaired surrogate). `schemas/base.py`'s `RequestModel` covers every request body; `parse_text` covers a CSV cell, so the preview now errors the row; `refuse_unstorable_text` covers filters and MCP's flat arguments (new code `request.text_unstorable`); `OAuthStateStore` reads a NUL key as absent. Sign-in's three models stay on `BaseModel`, so a NUL in a password stays a wrong answer.
+    - `has_utf8_form` judges JSON read and shown rather than stored, where it enters: a manifest (the warning, and the rows import) and a fetched CIMD document (an unknown client). `_is_usable_endpoint` does the same for OIDC discovery.
+    - `_EchoResponse`: a 422 that can't echo a surrogate or `1e999` leaves without `input`.
+    - `_ExpansionBudget.read` catches every `Exception` but `DomainError` and `MemoryError`, after three misses in its list (#341, #352, Zstandard).
+    - OIDC: an unstorable `sub` is refused by the claim validator, a bad label is skipped, and the setup token is spent after the commit.
+    - An unreadable required import cell reports one diagnostic, for every column type.
+    - `tests/test_unstorable_text.py` names every body, text query parameter and flat MCP argument, and fails on a new one. Mutants `352-*` and `346-*` (32) are in `mutation_test.py`. Rule 6 in `AGENTS.md` carries the rule.
+  - **Review:** Codex (gpt-6.1-sol, high) NO-GO twice, every finding P3, all reproduced and fixed. GLM 5.3 (Mistral-hosted) GO on a narrower brief, which I wrote and which said P3s alone aren't a NO-GO, so it is less independent than an open round. Greptile 5/5 at `df5ef1a`. All on the PR body's coverage record. The reviewers' findings came back to the session, not the thread.
+  - **Filed:** [#354](https://github.com/DeusMaximus/plamotrack/issues/354) (`create_order`'s flat arguments that fail `OrderCreate` answer a generic error naming no field) and [#355](https://github.com/DeusMaximus/plamotrack/issues/355) (external JSON nobody has driven with these values: token responses, JWKS, other CIMD fields).
+  - `.agents/lessons.md`: "A phrase the next refusal quotes (#353)". `.gitignore` ignores `.cursor/` (8e8b4c7, with the 29/10 entry below).
+- **Decisions (owner, 02/11):** merge on GLM's GO without a third Codex round. `.cursor/` is ignored.
+- **State:**
+  - **The owner's LXC is on v0.6.0-alpha** (owner, 02/11). Older entries saying 0.5.2 were behind.
+  - **Unreleased on `main`:** #333, #341/#343, #346/#352 (`.agents/next-release.md`). #351's docs drift is pending there too, as work to do in the next release cycle.
+  - Backend 3675 tests collected. The last full local run was at `beb544f` (3606 passed, 1 xfailed); CI's Backend and Frontend passed on `eb94002`, and its required checks gated the merge. Packaged stack beyond CI, Playwright and a local 3.12 run: not run for this.
+  - **Owed to plamotrack-ios, unmeasured:** its planner still reports two diagnostics for an unreadable required cell, its handling of a NUL hasn't been run, and it hasn't re-synced `api-error-codes.json` for `request.text_unstorable`. No behaviour scenario was added for NUL.
+  - `main` is clean. Reviewer worktrees and branches are removed; `fix/346-352-nul-and-archive-500s` is left on origin as usual.
+  - **Carried from 29/10, not reverified:** #344 (image pins, low priority, before or with the next release): five images including uv, Postgres in Compose, CI and release-candidate, bump mechanism undecided. testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
+- **Next:** the owner's pick.
+  - **#348** (order notes, a problem the owner actually hit; `RequestModel` and `parse_text` now cover a new text field), then #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price).
+  - **The next release:** #351, #344.
+  - **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
 
-## 2026-08-28 — Claude Code (Opus 5) — PR #177 review rounds actioned; #178 filed
+## 2026-10-29 — Codex (GPT-6) — documentation drift filed as #351 for the next release cycle
 
-- **Done:** Actioned the Codex review of #177 (five P3s, NO-GO) in `6fa048b` on
-  `codex/176-m51-localisation-gaps`. Every finding reproduced at `0f77635`
-  first, then fixed: **P3-1** `BoardPage`/`RetailersPage` now take
-  `usePresentationVersion` (a `formatting_locale` change that is not also a
-  language change never reached them), and the four raw visible numbers an
-  independent re-sweep confirmed — both rating tooltips, `low_stock_threshold`,
-  `row_number` — go through the formatter, the tooltips via a new
-  `ratingTooltip` over `common.ratingOutOf`; **P3-2** `renderRequestValidation`
-  is path-aware, translating an item only where its structured `field`/`type`
-  both equal the English finding beside it (`field` vs `loc[1:]` dot-joined),
-  degrading per item, never re-pairing; **P3-3** `importActionLabel` gains the
-  `exists ? label : raw` fallback; **P3-4** the `action` and `matched_by`
-  presentation branches were *unreachable* — which is why their mutants
-  survived 449/449 — so both are deleted and `presentationValue` is now a
-  table (`LABELLED_PARAMS`) held against the shipped catalogue; **P3-5** the
-  `design.md` hardening paragraph is historical, stale open-issue inventory
-  gone. Re-review confirmed all five fixed and re-measured the mutants
-  independently, leaving one P3: the **PR body still carried the disproved
-  evidence**. Body amended in place (banner + attribution), naming the invalid
-  `7/240` control, the real `79/238` with 72 import failures, the withdrawn
-  five-and-three mutant claims, and measured final-head totals.
-- **Decisions:** Finding 4 answered at the root rather than by its suggested
-  remedy — a `matched_by` consumer control **cannot** be written today, so a
-  class guard replaced the dead branches. Disproved figures **named, not
-  deleted**, so the correction records what the finding was about. #178 filed
-  rather than folded in: different root cause, and it reproduces on `4bd98c0`.
-- **State:** **PR #177 squash-merged `5b4635d`, #176 closed** — merged on the
-  owner's call with the re-review's verdict on the amended body never recorded,
-  so M5.1 shipped one round short of a GO. Nothing was known-broken at merge.
-  Every number in the body is measured at `6fa048b` on a clean tree: backend
-  1225, frontend 463, ruff check + format, lint, build, Playwright 40 passed /
-  1 skipped on an isolated
-  empty DB (created, migrated, verified zero, dropped). Six mutations killed
-  1/1/4/1/7/2, plus the cold-Board e2e control red without the subscription.
-  **Known, not ours:** `display-items.spec.ts:45` fails on any DB holding a
-  categorised display item (`getByLabel("Category")` also matches the filter)
-  — reproduced with the branch stashed, filed as #167; run e2e on an empty DB.
-- **Next:** M5.1 is done and merged; **M6 is the next milestone** and is not
-  begun. No version bump, tag or release yet — v0.2.8-alpha remains the latest.
-  **#178** (`import.match_ambiguous`: two emitters share one code, so the orders-side
-  `(retailer + date + lines)` hint is dropped and `matched_by` is undeclared in
-  `api-error-codes.json` and pinned by nothing) is unstarted — the `apiError.ts`
-  comment describing that gap predates the number and should gain the `#178`
-  reference when someone next touches the file.
-
----
+- **Done:**
+  - Created [#351](https://github.com/DeusMaximus/plamotrack/issues/351), labelled
+    `documentation`, at the owner's request. Ten checklist items cover token
+    permissions and OAuth wording, phone import, archive compatibility, source
+    setup, Node requirements, implemented auth still marked planned, release
+    status, the retired Kanban dependency, and the generic frontend README.
+  - Findings link to `9908d5f`; the published baseline checked was v0.6.0-alpha.
+    Configuration-only Compose check reproduced the missing-password failure;
+    a compatibility-function probe confirmed export-format versus app-version
+    behaviour. No service was started or collection data changed.
+  - Added #351 as explicitly pending work in `.agents/next-release.md`.
+    Documentation corrections are not implemented by this bookkeeping change.
+  - Rotated the oldest hand-off entry into `.agents/handoff/2026-10.md` verbatim.
+- **Decisions (owner):** include the smaller documentation items and complete the
+  cleanup in the next release cycle. No existing milestone names that release;
+  the issue and release checklist carry the scheduling intent.
+- **State:**
+  - Issue #351 is published. Local ledger and hand-off changes are uncommitted
+    on `main`; no commit or push was requested.
+  - Unreleased implementation remains #333 and #341/#343; #342 was tests only.
+    The release ledger retains those entries separately from the pending task.
+  - Carried from 18/10, not reverified here: #346 (NUL text reaches Postgres)
+    and #344 (dependency/image pins, low priority before or with next release).
+    #344 needs five images including uv, and the Postgres pin in Compose, CI,
+    and release-candidate; the bump mechanism remains undecided.
+  - Carried operational notes: owner's LXC on 0.5.2; refresh the Gunpla skill at
+    upgrade (#289). testhost remains in the tunnel configuration from the 0.6.0
+    gate; do not recreate its Keycloak container. Owner follow-ups: allow
+    `pkg-containers.githubusercontent.com` in cloud Network access, delete the
+    Claude.ai Testing connector, and complete #278's skill-zip check.
+  - Known gaps: #238, #324 (local e2e uses `--workers=1`), #320.
+- **Next:** implement #351 in the next release cycle, with the docs-site claim
+  check it lists. Other sequencing remains #279's edge probes, then #281's
+  packaging and #282's VPS path; M7 waits on #28. plamotrack-ios can re-sync
+  #342's scenarios once its #15 adds `update_order` and `delete_order`.

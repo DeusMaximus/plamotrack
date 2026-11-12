@@ -326,9 +326,10 @@ Your own export can still contradict itself. Importers before 0.2.6 let a line e
 up holding more kits than its quantity said, and a *replace everything* restore of an
 archive taken from such an instance is refused with *"this line says quantity N, but
 this upload supplies M kit(s)"* — every row is a create there, and the file is the
-only world. Nothing is lost: `docs/operations.md` has the query that finds those
-lines and the one-click fix in the app; or raise the quantity in `order_items.csv`
-to match the kits that are really there, and import again.
+only world. Nothing is lost: the docs site has [the query that finds those lines and
+the fix in the app](https://docs.gunp.la/configuration/upgrading#kit-quantities-from-early-imports);
+or raise the quantity in `order_items.csv` to match the kits that are really there,
+and import again.
 
 ---
 

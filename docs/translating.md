@@ -99,7 +99,7 @@ sentence without changing the code that asks for it.
 ```
 
 - Keys are grouped and dot-separated at runtime: `nav`, `common`, page groups
-  such as `board` and `orders`, and domain vocabulary such as `kitStatus` and
+  such as `home` and `orders`, and domain vocabulary such as `kitStatus` and
   `itemType`.
 - Leaves use camelCase, except vocabulary leaves that mirror a canonical wire
   value. For example, `kitStatus.pre_ordered` deliberately retains
@@ -109,6 +109,9 @@ sentence without changing the code that asks for it.
   separators. Values may contain either character.
 - Values may not be empty or whitespace-only. Meaningful surrounding
   whitespace is preserved byte-for-byte.
+- A key may appear only once in its object. JSON parsers keep the last of two
+  and say nothing, so a second `"shippedOn"` further down a group silently
+  replaces the first; the tests read each catalogue's text to refuse it.
 - Do not rename keys or invent translation-only keys. `en-AU` defines the key
   set; an unknown translation key fails the tests. A disabled, incomplete
   catalogue may omit source leaves so those messages use the fallback.

@@ -47,8 +47,18 @@ finding once already here.
 The domain, for anyone reading this cold: plamotrack is a single-user, self-hosted
 model-kit collection tracker. The rules being mutated are data-integrity checks
 about inventory counts and purchase records — that a paint order can't be counted
-twice, that a line's quantity matches the kits attached to it. Nothing here is an
-access control; the application has no authentication at all yet (milestone 6).
+twice, that a line's quantity matches the kits attached to it. Nothing here was an
+access control until the `ingr-` set (#186, M6-1): those cases mutate the Host/Origin
+guard — which names the instance answers to, which browser origins may write — the
+first request-boundary control in the app, defensive hardening of a self-hosted
+service that still has no authentication behind it (milestone 6). Two of them mutate
+a shell file, the nginx server-name generator, killed by a test that runs it. The
+`auth-` set (#187, M6-2) is the first that mutates authorization itself — the
+principal/scope algebra, the default-deny dependency's 401/403 branches, the route
+policy registry and the response profile it declares — against an app built with
+`create_app(authorization=True)`: the shipped app stays unenforced until #188, so
+those kills come from the matrix that drives the real route graph through the
+dependency with injected principals, not from the shipped configuration.
 
 Restores from a backup in a `finally`, and refuses to start unless the tree is
 clean, so an interrupted run is obvious in `git status`.
@@ -65,6 +75,8 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parent
 INV = ROOT / "app/services/portability/invariants.py"
+TOT = ROOT / "app/services/order_totals.py"
+MOD_ORDERS = ROOT / "app/models/orders.py"
 IMP = ROOT / "app/services/portability/importing.py"
 STARTER = ROOT / "app/services/portability/starter_sheet.py"
 NAMES = ROOT / "app/services/names.py"
@@ -89,6 +101,65 @@ META = ROOT / "app/services/meta.py"
 #: Both paths are in the clean-tree check below, the way #151 added alembic/.
 FIX = ROOT.parent / "frontend/src/lib/__fixtures__/api-error-codes.json"
 TEE = ROOT / "tests/test_error_envelope.py"
+#: The M6-1 ingress guard (#186, PR #196): the policy and middlewares, the shared
+#: host grammar, the settings validators, the app factory — and the nginx
+#: server-name generator, a POSIX-sh file the corpus test runs under `sh`. The
+#: clean-tree check covers that path too, the way FIX joined for oma-2.
+ING = ROOT / "app/ingress.py"
+HOSTS = ROOT / "app/hostnames.py"
+CFG = ROOT / "app/config.py"
+ENVSH = ROOT.parent / "frontend/nginx/15-plamotrack-server-names.envsh"
+#: The M6-2 auth foundation (#187, PR #198): the principal/scope algebra, the
+#: default-deny dependency and the response profile it enforces, the route
+#: policy registry — and the auth migration, mutated under the mig- set's
+#: clean-tree cover. `IMP` (the importer) carries `plan_requires_admin`.
+PRIN = ROOT / "app/auth/principal.py"
+DEP = ROOT / "app/auth/dependency.py"
+REG = ROOT / "app/auth/registry.py"
+CRED = ROOT / "app/auth/credentials.py"
+SESS = ROOT / "app/auth/sessions.py"
+AUTH_SVC = ROOT / "app/services/auth.py"
+MAIN = ROOT / "app/main.py"
+# The #189 (pat-) set: personal access tokens.
+TOK_SVC = ROOT / "app/services/tokens.py"
+TOK_FMT = ROOT / "app/auth/tokens.py"
+RESOLVER = ROOT / "app/auth/resolver.py"
+MCP_AUTH = ROOT / "app/auth/mcp_auth.py"
+# The #204 (f13-) set: the pre-routing gate.
+PRE = ROOT / "app/auth/prerouting.py"
+AUTH_MIG = VERS / "20260903_f1058c5de0f3_auth_foundation_tables_m6_2_187.py"
+# #191 (M6-6): the oidc- set.
+OIDC_SVC = ROOT / "app/services/oidc.py"
+AUTH_ROUTER = ROOT / "app/routers/auth.py"
+MODE = ROOT / "app/auth/mode.py"
+# #192 (M6-7): the moa- set — MCP OAuth.
+MCP_OAUTH = ROOT / "app/auth/mcp_oauth.py"
+MCP_OAUTH_STATE = ROOT / "app/auth/mcp_oauth_state.py"
+# The #233 (home-) set: Home's counts and the order stage.
+STAGE = ROOT / "app/services/order_stage.py"
+SUMM = ROOT / "app/services/summary.py"
+RECOVERY = ROOT / "app/auth/recovery.py"
+# #193 (M6-8): the aud- set — audit events, request budgets and log hygiene.
+# Four targets outside app/ join the clean-tree check: the nginx template
+# (the way ENVSH did), the Dockerfile and the ingress matrix itself.
+AUDIT_SVC = ROOT / "app/services/audit.py"
+LOG_HYG = ROOT / "app/log_hygiene.py"
+TEMPLATE = ROOT.parent / "frontend/nginx/default.conf.template"
+DOCKERFILE = ROOT / "Dockerfile"
+MATRIX = ROOT / "ingress_matrix.py"
+# #221: the scan- set — the four availability bounds from the 0.3.0 security
+# scan: the failure ladders and verification budget, the refusal budget, the
+# body budgets and their reader, the client records' bounds.
+BUDGET = ROOT / "app/auth/budget.py"
+BODY = ROOT / "app/auth/body.py"
+# #299/#300/#301: the dsn- set — the database URL assembled from POSTGRES_*, its
+# way into alembic (whose env.py joins the clean-tree check the way VERS did), and
+# what a settings refusal prints.
+ALEMBIC_ENV = ROOT / "alembic/env.py"
+#: #303: the rule that keeps git from rewriting the golden archive's CRLF.
+GITATTR = ROOT.parent / ".gitattributes"
+#: #305: the request schemas' integer types, `Rating` among them.
+SCHNUM = ROOT / "app/schemas/numeric.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -1457,7 +1528,7 @@ CASES = [
     (
         "rcv-2. kit lines are caught too",
         INV,
-        '        if item_type is None or item_type is ItemType.KIT:\n            continue\n        parent = by_id["orders"].get(row.values.get("order_id"))',
+        '        if item_type is None or not _moves_stock(item_type):\n            continue\n        parent = by_id["orders"].get(row.values.get("order_id"))',
         '        if item_type is None:\n            continue\n        parent = by_id["orders"].get(row.values.get("order_id"))',
         "new_kit_line_still_joins",
     ),
@@ -1656,8 +1727,8 @@ CASES = [
     (
         "o67-1. schema override loses the id branch",
         SCH,
-        "            if self.kit is None and self.id is None:",
-        "            if self.kit is None:",
+        "        _validate_line_dispatch(self, kit_required=self.id is None)\n",
+        "        _validate_line_dispatch(self, kit_required=True)\n",
         "kit_omitted or update_order_kit_omitted",
     ),
     (
@@ -1766,8 +1837,8 @@ CASES = [
     (
         "stg-4. replace_all truncates the settings row",
         IMP,
-        '    "upgrade_applications, retailers, orders, order_items"\n)',
-        '    "upgrade_applications, retailers, orders, order_items, instance_settings"\n)',
+        '    "upgrade_applications, retailers, orders, order_items, order_adjustments"\n)',
+        '    "upgrade_applications, retailers, orders, order_items, order_adjustments, instance_settings"\n)',
         "replace_all_without_the_sheet_leaves_settings_alone or replace_all_updates_the_settings",
     ),
     (
@@ -2116,6 +2187,2389 @@ CASES = [
         '            params={"total": total, "maximum": MAX_TOTAL_FANOUT},',
         '            params={"total": total, "maximum": MAX_TOTAL_FANOUT, "unrendered": "probe"},',
         "test_the_borrowed_bridge_matrix_covers_the_large_quantity_and_fanout_codes",
+    ),
+    # --- #186 (M6-1): the ingress guard — queued on PR #196 as `ing-` (19 tuples at the
+    # --- reviewed head plus 7 for the Codex round's three P3s, all killed there by
+    # --- a scratch runner), relabelled `ingr-` here because `-k ing-` substring-
+    # --- matches wdr-8's "missing-application"; anchors re-checked at fold-in (ingr-15's original
+    # --- anchor, the bare-`*` check, was replaced by the round-1 grammar, so it
+    # --- now removes the validation call outright; ingr-22 restores the old raw
+    # --- check on the same site). ingr-25/26 are the first cases against a SHELL
+    # --- file — the clean-tree check covers ENVSH since this fold-in. -----------
+    (
+        "ingr-1. origin rule skips POST",
+        ING,
+        'SAFE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})',
+        'SAFE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS", "POST"})',
+        "hostile_origin",
+    ),
+    (
+        "ingr-2. Host check dropped",
+        ING,
+        "        if not self.policy.host_allowed(host, server[0] if server else None):",
+        "        if False and not self.policy.host_allowed(host, server[0] if server else None):",
+        "hostile_host",
+    ),
+    (
+        "ingr-3. every peer is internal",
+        ING,
+        "        return ip_address(client[0]).is_loopback",
+        "        return True or ip_address(client[0]).is_loopback",
+        "readyz",
+    ),
+    (
+        "ingr-4. FastMCP guard switched off",
+        MAIN,
+        "        host_origin_protection=True,",
+        "        host_origin_protection=False,",
+        "mcp_guard or mcp_child",
+    ),
+    (
+        "ingr-5. MCP child keeps slash redirects",
+        MAIN,
+        "    mcp_app.router.redirect_slashes = False\n",
+        "    mcp_app.router.redirect_slashes = True\n",
+        "never_redirects",
+    ),
+    (
+        "ingr-6. parent keeps slash redirects",
+        MAIN,
+        "        redirect_slashes=False,",
+        "        redirect_slashes=True,",
+        "non_canonical",
+    ),
+    (
+        "ingr-7. loopback-to-loopback origin rule dropped",
+        ING,
+        "        if is_loopback_host(origin_host(origin)) and is_loopback_host(host):\n            return True",
+        "        if False:\n            return True",
+        "loopback_origin",
+    ),
+    (
+        "ingr-8. same-origin equality dropped",
+        ING,
+        '        return normalized == normalize_origin(f"{scheme}://{host}")',
+        "        return False",
+        "same_origin",
+    ),
+    (
+        "ingr-9. canonical origin not listed",
+        ING,
+        "        if canonical_origin is not None:\n            allowed_origins.append(canonical_origin)",
+        "        if False:\n            allowed_origins.append(canonical_origin)",
+        "canonical_origin",
+    ),
+    (
+        "ingr-10. WEB_BIND not added",
+        ING,
+        "            extra_hosts.append(bind)",
+        "            pass",
+        "web_bind or policy_derivation",
+    ),
+    (
+        "ingr-11. forwarded trust ignored",
+        ING,
+        "        if not self.is_trusted_proxy(peer):\n            return peer",
+        "        if False:\n            return peer",
+        "forwarded_client",
+    ),
+    (
+        "ingr-12. Referer fallback removed",
+        ING,
+        "                if referer is not None:\n                    origin = origin_of_referer(referer)",
+        "                if False:\n                    origin = origin_of_referer(referer)",
+        "referer",
+    ),
+    (
+        "ingr-13. unspecified bind treated as a name",
+        HOSTS,
+        "        return ip_address(host).is_unspecified\n    except ValueError:\n        return False",
+        "        return False and ip_address(host).is_unspecified\n    except ValueError:\n        return False",
+        "unspecified or policy_derivation or web_bind",
+    ),
+    (
+        "ingr-14. 421 names the wrong setting",
+        ING,
+        "                error_codes.INGRESS_HOST_NOT_ALLOWED,\n                HOST_SETTING,",
+        "                error_codes.INGRESS_HOST_NOT_ALLOWED,\n                ORIGIN_SETTING,",
+        "hostile_host",
+    ),
+    (
+        "ingr-15. ALLOWED_HOSTS validation removed",
+        CFG,
+        '            validate_host_pattern(entry, setting="ALLOWED_HOSTS", allow_wildcard=True)',
+        "            pass",
+        "wildcard or port_qualified",
+    ),
+    (
+        "ingr-16. forwarded address overwrites the raw peer",
+        ING,
+        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = address\n',
+        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = address\n            if address:\n                scope["client"] = (address, 0)\n',
+        "raw_peer or forge",
+    ),
+    (
+        "ingr-17. null Origin admitted",
+        ING,
+        "        normalized = normalize_origin(origin)\n        if any(",
+        '        normalized = normalize_origin(origin)\n        if normalized == "null":\n            return True\n        if any(',
+        "null_origin",
+    ),
+    (
+        "ingr-18. host match ignores the list",
+        ING,
+        "    return any(fnmatchcase(host, normalize_host(pattern)) for pattern in patterns)",
+        "    return True",
+        "hostile_host or lan_name",
+    ),
+    (
+        "ingr-19. PUBLIC_BASE_URL host not allowed",
+        ING,
+        '            extra_hosts.append(normalize_host(parsed.hostname or ""))',
+        "            pass",
+        "public_base_url or policy_derivation",
+    ),
+    (
+        "ingr-20. terminal DNS dot kept on the app side",
+        HOSTS,
+        '    return host.removesuffix(".")',
+        "    return host",
+        "terminal_dot or dotted or server_names_equal",
+    ),
+    (
+        "ingr-21. loopback class excluded from binds again",
+        ING,
+        "        if not is_unspecified_host(bind) and bind not in _LOOPBACK_NORMALIZED:",
+        "        if not is_unspecified_host(bind) and not is_loopback_host(bind):",
+        "alternate_loopback or explicit_bind or server_names_equal",
+    ),
+    (
+        "ingr-22. ALLOWED_HOSTS judged on the raw spelling again",
+        CFG,
+        '            validate_host_pattern(entry, setting="ALLOWED_HOSTS", allow_wildcard=True)',
+        '            if entry.strip("*") == "":\n                raise ValueError("ALLOWED_HOSTS bare *")',
+        "wildcard_equivalents or port_qualified",
+    ),
+    (
+        "ingr-23. PUBLIC_BASE_URL host unvalidated",
+        CFG,
+        '        validate_host_pattern(parsed.hostname, setting="PUBLIC_BASE_URL", allow_wildcard=False)',
+        "        pass",
+        "every_host_producing",
+    ),
+    (
+        "ingr-24. dotted names withheld from FastMCP",
+        ING,
+        '                names.append(f"{host}.")',
+        "                pass",
+        "dotted_name_passes_on_mcp or policy_derivation",
+    ),
+    (
+        "ingr-25. generator keeps the terminal dot (sh)",
+        ENVSH,
+        '    name="${name%.}"                                      # one terminal DNS dot, as the API\n',
+        "",
+        "server_names_equal or generator_drops",
+    ),
+    (
+        "ingr-26. generator drops loopback binds (sh)",
+        ENVSH,
+        '    ""|0.0.0.0|::|"[::]") ;;                              # binds everything, names nothing',
+        '    ""|0.0.0.0|::|"[::]"|127.*) ;;',
+        "server_names_equal",
+    ),
+    # --- #187 / PR #198 (M6-2): the auth foundation — queued on the PR as `auth-` --
+    # --- (15 tuples at round 2 plus 8 at round 3, all killed there by hand); auth-5
+    # --- was retired at round 3 when `response_profile_for` was removed — auth-16 is
+    # --- its successor, so the numbering keeps the gap. Anchors re-checked at fold-in
+    # --- against `6604658`: none had moved. auth-24 onward are the round-1 set the PR
+    # --- body queued by name only — the principal algebra, the dependency's 401/403
+    # --- branches, the classifications, `plan_requires_admin`, the owner seed, the
+    # --- tool scope map, the generated nginx rejections — written and measured at
+    # --- fold-in. Every behavioural kill runs against `create_app(authorization=
+    # --- True)`: the shipped app is unenforced until #188. auth-39/40 mutate the auth
+    # --- MIGRATION under the mig- set's clean-tree cover. ----------------------------
+    (
+        "auth-1. stamp only when no header is present (the setdefault behaviour)",
+        DEP,
+        "    value = final_cache_control(profile, existing)\n    if value is None:\n        return\n",
+        "    value = final_cache_control(profile, existing)\n    if value is None or existing:\n        return\n",
+        "replaces_every_handler or carries_no_store_over",
+    ),
+    (
+        "auth-2. only a lowercase cache-control key is removed",
+        DEP,
+        '    message["headers"] = [(k, v) for k, v in raw if k.lower() != _CACHE_CONTROL] + [',
+        '    message["headers"] = [(k, v) for k, v in raw if k != _CACHE_CONTROL] + [',
+        "capitalised",
+    ),
+    (
+        "auth-3. nothing kept beside no-store",
+        DEP,
+        'KEPT_BESIDE_NO_STORE = frozenset({"no-transform"})',
+        "KEPT_BESIDE_NO_STORE = frozenset()",
+        "replaces_every_handler or carries_no_store_over",
+    ),
+    (
+        "auth-4. a declared cache directive is dropped",
+        DEP,
+        "    if not profile.no_store:\n        return required\n",
+        "    if not profile.no_store:\n        return None\n",
+        "declared_cache_directive",
+    ),
+    (
+        "auth-6. dispatch-entry conflict dropped",
+        REG,
+        '                self.conflicts.append(f"{label} shares dispatch entry {pattern} with {other}")',
+        "                pass",
+        "one_dispatch_entry or renamed_path_parameter or wildcard_route",
+    ),
+    (
+        "auth-7. dispatch pattern keeps parameter names",
+        REG,
+        '    return _PATH_PARAMETER.sub("{}", path)',
+        "    return path",
+        "renamed_path_parameter",
+    ),
+    (
+        "auth-8. shared-endpoint conflict dropped",
+        REG,
+        '            self.conflicts.append(f"{label} shares its endpoint with {self._by_endpoint[endpoint]}")',
+        "            pass",
+        "one_endpoint_on_two_routes",
+    ),
+    (
+        "auth-9. an unknown route type is skipped",
+        REG,
+        '            raise UndeclaredRouteError(\n                "route policy registry cannot enumerate a "',
+        '            continue\n            raise UndeclaredRouteError(\n                "route policy registry cannot enumerate a "',
+        "unrecognised_route_type",
+    ),
+    (
+        "auth-10. a nested mount is not descended",
+        REG,
+        "            sub_routes = route.routes\n            if sub_routes:",
+        "            sub_routes = route.routes if not mounted else []\n            if sub_routes:",
+        "added_under_the_mount",
+    ),
+    (
+        "auth-11. every mounted route declared as the transport",
+        REG,
+        '    if route.path == "/mcp/":\n        return MCP_TRANSPORT_POLICY',
+        "    if True:\n        return MCP_TRANSPORT_POLICY",
+        "added_under_the_mount or bare_asgi_mount",
+    ),
+    (
+        "auth-12. transport declares PUT",
+        REG,
+        '    frozenset({"GET", "POST", "DELETE"}),\n    _NO_STORE,\n    spellings=frozenset({"/mcp/", "/mcp"}),',
+        '    frozenset({"GET", "POST", "DELETE", "PUT"}),\n    _NO_STORE,\n    spellings=frozenset({"/mcp/", "/mcp"}),',
+        "accepts_exactly_the_declared_methods",
+    ),
+    (
+        "auth-13. no_store beside cache allowed",
+        REG,
+        "        if self.no_store and self.cache is not None:\n            raise ValueError(",
+        "        if False:\n            raise ValueError(",
+        "cannot_be_no_store_and_cacheable",
+    ),
+    (
+        "auth-14. /healthz gains POST",
+        MAIN,
+        '    app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)',
+        '    app.add_api_route("/healthz", healthz, methods=["GET", "POST"], include_in_schema=False)',
+        "rest_surface_matches_the_snapshot or 405_exactly",
+    ),
+    (
+        "auth-15. no-store becomes no-cache",
+        REG,
+        '        if self.no_store:\n            return "no-store"',
+        '        if self.no_store:\n            return "no-cache"',
+        "replaces_every_handler or status_axis",
+    ),
+    (
+        "auth-16. mounted routes never bound",
+        DEP,
+        "    for mounted in index.mounted_routes:\n        policy = index.mounted_by_endpoint.get(mounted.endpoint)",
+        "    for mounted in ():\n        policy = index.mounted_by_endpoint.get(mounted.endpoint)",
+        "carries_no_store_over or mounted_route_is_bound or refuses_undeclared_verbs",
+    ),
+    (
+        "auth-17. the binding does not stamp",
+        DEP,
+        '            if message["type"] == "http.response.start":\n                started = True\n                _stamp_cache_control(message, self.policy.response)\n            await send(message)\n\n        if self.policy.methods',
+        "            if False:\n                started = True\n                _stamp_cache_control(message, self.policy.response)\n            await send(message)\n\n        if self.policy.methods",
+        "replaces_every_handler or carries_no_store_over",
+    ),
+    (
+        "auth-18. the binding's verb gate removed",
+        DEP,
+        '        if self.policy.methods and scope["method"] not in self.policy.methods:',
+        '        if False and scope["method"] not in self.policy.methods:',
+        "refuses_undeclared_verbs or accepts_exactly_the_declared_methods",
+    ),
+    (
+        "auth-19. the refusal message drifts from the SDK's",
+        DEP,
+        'error=ErrorData(code=INVALID_REQUEST, message="Method Not Allowed"),',
+        'error=ErrorData(code=INVALID_REQUEST, message="Method not allowed"),',
+        "refusal_is_the_sdk_protocol_error",
+    ),
+    (
+        "auth-20. Allow sorted instead of the SDK's order",
+        DEP,
+        '    return ", ".join(ordered + sorted(declared - set(_METHOD_ORDER)))',
+        '    return ", ".join(sorted(declared))',
+        "refusal_is_the_sdk_protocol_error or refuses_undeclared_verbs",
+    ),
+    (
+        "auth-21. the profile middleware never added",
+        MAIN,
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n",
+        "",
+        "middleware_is_innermost or no_store_on_a_collection_read",
+    ),
+    # auth-22 MOVES the add_middleware call to the tail of create_app — after the
+    # two ingress guards, so the profile middleware lands outermost. The PR-body
+    # tuple only appended a second copy there and left the inner one in place, and
+    # that survived at fold-in (the inner copy still stamps; the position pin still
+    # holds): the round-3 hand run had made two edits. One anchor now spans both
+    # sites, so the harness's single replacement is the fault that was measured.
+    (
+        "auth-22. the profile middleware added last (outermost)",
+        MAIN,
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n        # principal resolved once, before Starlette routes and FastAPI parses,\n        # so an anonymous caller is refused ahead of the router's 404/405 and\n        # the parser's 422 — none of which the dependency can reach. It renders\n        # through the same envelope handler the dependency's errors take.\n        app.add_middleware(\n            PreRoutingAuthMiddleware,\n            index=route_index,\n            table=DispatchTable.from_app(app),\n            render=domain_error_handler,\n        )\n\n        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n            # Lazy import keeps the ingress policy independent of persistence;\n            # the service owns the audit transaction (rule 1).\n            from app.services.audit import record_ingress_rejection as record\n\n            await record(event_type, scope, policy=policy, setting=setting)\n\n    app.add_exception_handler(DomainError, domain_error_handler)\n    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n    app.add_exception_handler(RequestValidationError, request_validation_handler)\n    app.add_exception_handler(Exception, unhandled_error_envelope)\n\n    # Outermost last: the guard answers a hostile Host before anything else\n    # runs, and the forwarded-client resolver sees only requests that passed it.\n    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n    app.add_middleware(\n        HostOriginGuardMiddleware,\n        policy=policy,\n        rejection_recorder=record_ingress_rejection if authorization else None,\n    )\n    return app",
+        "        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n        # principal resolved once, before Starlette routes and FastAPI parses,\n        # so an anonymous caller is refused ahead of the router's 404/405 and\n        # the parser's 422 — none of which the dependency can reach. It renders\n        # through the same envelope handler the dependency's errors take.\n        app.add_middleware(\n            PreRoutingAuthMiddleware,\n            index=route_index,\n            table=DispatchTable.from_app(app),\n            render=domain_error_handler,\n        )\n\n        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n            # Lazy import keeps the ingress policy independent of persistence;\n            # the service owns the audit transaction (rule 1).\n            from app.services.audit import record_ingress_rejection as record\n\n            await record(event_type, scope, policy=policy, setting=setting)\n\n    app.add_exception_handler(DomainError, domain_error_handler)\n    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n    app.add_exception_handler(RequestValidationError, request_validation_handler)\n    app.add_exception_handler(Exception, unhandled_error_envelope)\n\n    # Outermost last: the guard answers a hostile Host before anything else\n    # runs, and the forwarded-client resolver sees only requests that passed it.\n    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n    app.add_middleware(\n        HostOriginGuardMiddleware,\n        policy=policy,\n        rejection_recorder=record_ingress_rejection if authorization else None,\n    )\n    if authorization:\n        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n    return app",
+        "middleware_is_innermost",
+    ),
+    (
+        "auth-23. transport declares CONNECT",
+        REG,
+        '    frozenset({"GET", "POST", "DELETE"}),\n    _NO_STORE,\n    spellings=frozenset({"/mcp/", "/mcp"}),',
+        '    frozenset({"GET", "POST", "DELETE", "CONNECT"}),\n    _NO_STORE,\n    spellings=frozenset({"/mcp/", "/mcp"}),',
+        "accepts_exactly_the_declared_methods or refuses_undeclared_verbs",
+    ),
+    # --- the round-1 set, written at fold-in ------------------------------------------
+    (
+        "auth-24. write no longer implies read",
+        PRIN,
+        "        if scope is Scope.READ and Scope.WRITE in self.scopes:\n            return True",
+        "        if False:\n            return True",
+        "write_only_scope_set_reads_through_the_implication",
+    ),
+    (
+        "auth-25. admin implies read",
+        PRIN,
+        "        if scope is Scope.READ and Scope.WRITE in self.scopes:",
+        "        if scope is Scope.READ and (Scope.WRITE in self.scopes or Scope.ADMIN in self.scopes):",
+        "write_implies_read_admin_implies_nothing or write_only_scope_set_reads_through_the_implication",
+    ),
+    (
+        "auth-26. the owner drops instance:admin",
+        PRIN,
+        "        scopes=frozenset({Scope.READ, Scope.WRITE, Scope.ADMIN}),",
+        "        scopes=frozenset({Scope.READ, Scope.WRITE}),",
+        "settings_patch_is_admin_only or permits_matches_the_scope_algebra",
+    ),
+    # The bare scopes line also appears in `mcp()`; the return line makes it the pat
+    # factory's.
+    (
+        "auth-27. a write token gains instance:admin",
+        PRIN,
+        "    scopes = {Scope.READ, Scope.WRITE} if write else {Scope.READ}\n    return Principal(kind=PrincipalKind.PAT,",
+        "    scopes = {Scope.READ, Scope.WRITE, Scope.ADMIN} if write else {Scope.READ}\n    return Principal(kind=PrincipalKind.PAT,",
+        "settings_patch_is_admin_only or permits_matches_the_scope_algebra",
+    ),
+    (
+        "auth-28. anon on a scoped route is 403, not 401",
+        DEP,
+        "    if principal.kind is PrincipalKind.ANON:\n        raise UnauthenticatedError(\n            _UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED, challenge=BEARER_CHALLENGE\n        )\n    if not principal.has_scope(scope):",
+        "    if not principal.has_scope(scope):",
+        "dependency_alone_refuses_anonymous",
+    ),
+    (
+        "auth-29. the scope check dropped",
+        DEP,
+        "    if not principal.has_scope(scope):\n        raise ForbiddenError(_FORBIDDEN, code=error_codes.AUTH_FORBIDDEN)\n    return principal",
+        "    return principal",
+        "a_write_needs_write_scope or settings_patch_is_admin_only",
+    ),
+    (
+        "auth-30. the anonymous family enforced",
+        DEP,
+        "    if credential == CredentialPolicy.ANONYMOUS:\n        return principal\n    if credential == CredentialPolicy.INTERNAL:",
+        "    if credential == CredentialPolicy.INTERNAL:",
+        "liveness_is_anonymous",
+    ),
+    (
+        "auth-31. readiness no longer passed to its own peer guard",
+        DEP,
+        "        # Readiness self-guards on the raw peer; let it answer its own 404.\n        return principal",
+        "        pass",
+        "readiness_answers_the_loopback_peer",
+    ),
+    (
+        "auth-32. PATCH /settings classified write",
+        REG,
+        "        credential = CredentialPolicy.READ if is_safe else CredentialPolicy.ADMIN",
+        "        credential = CredentialPolicy.READ if is_safe else CredentialPolicy.WRITE",
+        "settings_patch_is_admin_only or sensitive_routes_are_classified_as_intended",
+    ),
+    # The route self-guards on the peer, so only the classification pin can see
+    # these two today; #188's flip makes the docs one behavioural.
+    (
+        "auth-33. readiness declared anonymous",
+        REG,
+        '            10, CredentialPolicy.INTERNAL, route.methods, spellings=frozenset({"internal"})',
+        '            10, CredentialPolicy.ANONYMOUS, route.methods, spellings=frozenset({"internal"})',
+        "sensitive_routes_are_classified_as_intended",
+    ),
+    (
+        "auth-34. schema and docs declared anonymous",
+        REG,
+        "            11, CredentialPolicy.READ, route.methods, _NO_STORE, spellings=frozenset({root})",
+        "            11, CredentialPolicy.ANONYMOUS, route.methods, _NO_STORE, spellings=frozenset({root})",
+        "sensitive_routes_are_classified_as_intended",
+    ),
+    (
+        "auth-35. a mutating tool declared read",
+        REG,
+        '    "create_kit": Scope.WRITE,',
+        '    "create_kit": Scope.READ,',
+        "every_mutating_tool_holds_write",
+    ),
+    (
+        "auth-36. replace_all no longer needs admin",
+        IMP,
+        "    if plan.mode is ImportMode.REPLACE_ALL:\n        return True\n    return any(",
+        "    return any(",
+        "replace_all_always_requires_admin",
+    ),
+    (
+        "auth-37. any table's UPDATE needs admin",
+        IMP,
+        "        table.table == INSTANCE_SETTINGS.key\n        and any(row.action is RowAction.UPDATE for row in table.rows)",
+        "        any(row.action is RowAction.UPDATE for row in table.rows)",
+        "collection_only_merge_does_not_require_admin",
+    ),
+    (
+        "auth-38. a settings sheet's presence needs admin",
+        IMP,
+        "        and any(row.action is RowAction.UPDATE for row in table.rows)",
+        "        and any(True for row in table.rows)",
+        "unchanged_settings_sheet_does_not_require_admin or add_only_skips_a_settings_change",
+    ),
+    (
+        "auth-39. owner seeded claimed",
+        AUTH_MIG,
+        '    op.execute(sa.text("INSERT INTO owner (id, claimed_at) VALUES (1, NULL)"))',
+        '    op.execute(sa.text("INSERT INTO owner (id, claimed_at) VALUES (1, now())"))',
+        "owner_is_seeded_unclaimed_and_singular",
+    ),
+    (
+        "auth-40. owner not seeded",
+        AUTH_MIG,
+        '    op.execute(sa.text("INSERT INTO owner (id, claimed_at) VALUES (1, NULL)"))',
+        "    pass  # neutered",
+        "owner_is_seeded_unclaimed_and_singular",
+    ),
+    (
+        "auth-41. the /openapi.json alias rejection dropped",
+        REG,
+        '    ApiAliasRejection("/openapi.json", exact=True, family=11),\n',
+        "",
+        "root_canonical_live_route_is_covered or template_region_equals_the_registry_render",
+    ),
+    (
+        "auth-42. the generated rejection answers 403",
+        REG,
+        '        lines.append(f"{indent}    return 404;")',
+        '        lines.append(f"{indent}    return 403;")',
+        "template_region_equals_the_registry_render",
+    ),
+    # --- #188 (M6-3) local owner auth — the m63- set from PR #200 (Codex round 1, f3:
+    # m63-1, -2 and -4 survived the tests as first written; the re-anchored tests
+    # kill them on the named control — the compare_digest call list, the
+    # verifier's DUMMY_HASH argument, a pinned claimed_at) ------------------------
+    (
+        "m63-1. CSRF compared with ==",
+        CRED,
+        "    return hmac.compare_digest(presented, csrf_token_for(raw_session_token))",
+        "    return presented == csrf_token_for(raw_session_token)",
+        "csrf_token_is_bound",
+    ),
+    (
+        "m63-2. verify_password(None) short-circuits before Argon2",
+        CRED,
+        "    try:\n        return _hasher.verify(encoded if encoded is not None else DUMMY_HASH, password)",
+        "    if encoded is None:\n        return False\n    try:\n        return _hasher.verify(encoded if encoded is not None else DUMMY_HASH, password)",
+        "dummy_hash",
+    ),
+    (
+        "m63-3. opaque tokens compared with ==",
+        CRED,
+        "    return hmac.compare_digest(digest(presented), expected_digest)",
+        "    return digest(presented) == expected_digest",
+        "opaque_tokens",
+    ),
+    (
+        "m63-4. recovery re-stamps claimed_at unconditionally",
+        AUTH_SVC,
+        "    if owner.claimed_at is None:\n        owner.claimed_at = _now()\n    await _replace_credential",
+        "    owner.claimed_at = _now()\n    await _replace_credential",
+        "recovery_reset_password_claims_and_revokes",
+    ),
+    (
+        "m63-5. recovery never claims an unclaimed instance",
+        AUTH_SVC,
+        "    if owner.claimed_at is None:\n        owner.claimed_at = _now()\n    await _replace_credential",
+        "    if owner.claimed_at is not None:\n        owner.claimed_at = _now()\n    await _replace_credential",
+        "recovery_on_an_unclaimed",
+    ),
+    (
+        "m63-6. CSRF never enforced",
+        DEP,
+        "    if request.method in _SAFE_METHODS or not principal.cookie_borne:\n        return",
+        "    if True:\n        return",
+        "without_the_csrf_token or without_an_origin or multipart_import",
+    ),
+    (
+        "m63-7. bulk revocation not audited",
+        AUTH_SVC,
+        "    await audit.record_event(\n        session,\n        audit.SESSIONS_REVOKED,",
+        "    if False:\n        await audit.record_event(\n        session,\n        audit.SESSIONS_REVOKED,",
+        "recovery",
+    ),
+    (
+        "m63-8. cookie mode never announced",
+        MAIN,
+        "            sessions.announce_cookie_mode(config)",
+        "            pass",
+        "cookie_mode",
+    ),
+    (
+        "m63-9. the plain-http warning demoted to info",
+        SESS,
+        '    log.warning(\n        "Session cookie mode: %s is NOT Secure',
+        '    log.info(\n        "Session cookie mode: %s is NOT Secure',
+        "cookie_mode",
+    ),
+    (
+        "m63-10. a login success does not reset the budget",
+        AUTH_SVC,
+        "    budget.reset()\n    if credentials.password_needs_rehash",
+        "    if credentials.password_needs_rehash",
+        "throttle_then_a_success_resets",
+    ),
+    # --- #189 (M6-4, PR #202): personal access tokens — the pat- set. The token
+    # format and the shared bearer helper (the dummy compare, revoked/expired,
+    # last-used, the audit rows), the resolver's strict presented-and-failed
+    # 401 (malformed, fall-through, the committed audit row, the query string),
+    # the family-3 bearer refusal, the family-6 classification, the MCP
+    # verifier and tool-scope middleware (the seam order, the scope grant), the
+    # mount built with the verifier, the 401 challenge, and the two review-round
+    # fixes (pat-24: the value normalised in the helper; pat-25: rejected form
+    # credentials are 403). Hand-run on the branch across six Codex rounds, all
+    # killed; folded in here after merge (`f685c30`). ----------------------------
+    (
+        "pat-1. an unknown id skips the compare (no dummy digest)",
+        TOK_SVC,
+        "    expected = row.secret_hash if row is not None else token_format.DUMMY_DIGEST\n    matched = credentials.tokens_match(raw, expected)\n",
+        "    matched = row is not None and credentials.tokens_match(raw, row.secret_hash)\n",
+        "do_the_same_compare",
+    ),
+    (
+        "pat-2. a revoked token still resolves",
+        TOK_SVC,
+        "    if row.revoked_at is not None:\n        await audit.record_event(",
+        "    if False and row.revoked_at is not None:\n        await audit.record_event(",
+        "use_after_revoke or same_401_on_every_route",
+    ),
+    (
+        "pat-3. expiry compared the wrong way",
+        TOK_SVC,
+        "    if row.expires_at is not None and now >= row.expires_at:",
+        "    if row.expires_at is not None and now < row.expires_at:",
+        "expired or future_expiry",
+    ),
+    (
+        "pat-4. admin scope mintable",
+        TOK_SVC,
+        "    if not granted or not granted <= token_format.GRANTABLE_SCOPES:",
+        "    if not granted:",
+        "no_admin_and_no_unknown",
+    ),
+    (
+        "pat-5. write no longer implies read in the column",
+        TOK_FMT,
+        "    if Scope.WRITE in granted:\n        granted.add(Scope.READ)\n",
+        "",
+        "stored_grant_is_canonical",
+    ),
+    (
+        "pat-6. a malformed Authorization header is anon",
+        RESOLVER,
+        "    if presented is token_format.MALFORMED:\n        raise UnauthenticatedError(\n            _BEARER_INVALID,\n            code=error_codes.AUTH_BEARER_INVALID,\n            challenge=INVALID_TOKEN_CHALLENGE,\n        )\n",
+        "    if presented is token_format.MALFORMED:\n        return anonymous()\n",
+        "same_401_on_every_route",
+    ),
+    (
+        "pat-7. a failed bearer falls through to anon",
+        RESOLVER,
+        "        await session.commit()\n        raise UnauthenticatedError(\n            _BEARER_INVALID,\n            code=error_codes.AUTH_BEARER_INVALID,\n            challenge=INVALID_TOKEN_CHALLENGE,\n        )\n    return resolution.principal\n",
+        "        await session.commit()\n        return anonymous()\n    return resolution.principal\n",
+        "beside_a_cookie or same_401_on_every_route",
+    ),
+    (
+        "pat-8. the use-after-revoke audit row is rolled back with the 401",
+        RESOLVER,
+        "        await session.commit()\n        raise UnauthenticatedError(",
+        "        raise UnauthenticatedError(",
+        "use_after_revoke_is_audited_even",
+    ),
+    (
+        "pat-9. a query-string token is a credential",
+        RESOLVER,
+        "    presented = token_format.bearer_from_headers(request.headers)\n",
+        '    presented = token_format.bearer_from_headers(request.headers) or request.query_params.get(\n        "access_token"\n    )\n',
+        "query_string",
+    ),
+    (
+        "pat-10. the dependency ignores bearer_refused",
+        DEP,
+        "    if policy.bearer_refused and principal.bearer_borne:",
+        "    if False:",
+        "refused_on_the_auth_actions",
+    ),
+    (
+        "pat-11. the registry never sets bearer_refused",
+        REG,
+        "            bearer_refused=(family == 3),",
+        "            bearer_refused=False,",
+        "refused_on_the_auth_actions",
+    ),
+    (
+        "pat-12. token management is a family-5 write",
+        REG,
+        "        return RoutePolicy(\n            6, CredentialPolicy.ADMIN, route.methods, _NO_STORE, spellings=api_spelling\n        )\n",
+        "        return RoutePolicy(\n            5, CredentialPolicy.WRITE, route.methods, _NO_STORE, spellings=api_spelling\n        )\n",
+        "cannot_manage_tokens or rest_surface_matches",
+    ),
+    (
+        "pat-13. the tool-scope check is skipped",
+        MCP_AUTH,
+        "        if not principal.has_scope(required):",
+        "        if False:",
+        "every_write_tool_refuses or tool_scope_over_http",
+    ),
+    (
+        "pat-14. an HTTP request without a token falls back to the seam",
+        MCP_AUTH,
+        "        if _http_request_in_flight():\n            raise ToolError(_UNAUTHENTICATED)\n",
+        "",
+        "open_mount_still_refuses",
+    ),
+    (
+        "pat-15. the verifier grants every scope",
+        MCP_AUTH,
+        "                scopes=[scope.value for scope in Scope if scope in principal.scopes],",
+        "                scopes=[scope.value for scope in Scope],",
+        "tool_scope_over_http",
+    ),
+    (
+        "pat-16. the mount is built without the verifier",
+        MAIN,
+        "        auth=auth,",
+        "        auth=None,",
+        "takes_a_bearer_and_never_a_cookie or carries_no_store_over",
+    ),
+    (
+        "pat-17. no WWW-Authenticate on the 401 envelope",
+        MAIN,
+        '    if isinstance(exc, UnauthenticatedError) and exc.challenge:\n        headers["WWW-Authenticate"] = exc.challenge\n',
+        "",
+        "anonymous_401_carries or same_401_on_every_route",
+    ),
+    (
+        "pat-18. the mint audit row carries the secret",
+        TOK_SVC,
+        '        detail=f"token={row.id} scopes={row.scopes}",',
+        '        detail=f"token={raw} scopes={row.scopes}",',
+        "audited_without_the_secret or leaves_no_secret",
+    ),
+    (
+        "pat-19. revoke re-stamps an already-revoked row",
+        TOK_SVC,
+        "    if row.revoked_at is None:\n        row.revoked_at = _now()\n",
+        "    row.revoked_at = _now()\n",
+        "revoke_is_idempotent",
+    ),
+    (
+        "pat-20. the bearer scheme is case-sensitive",
+        TOK_FMT,
+        '    if scheme.lower() != "bearer" or not value:',
+        '    if scheme != "Bearer" or not value:',
+        "only_a_bearer_header",
+    ),
+    (
+        "pat-21. last_used_at is never touched",
+        TOK_SVC,
+        "    if row.last_used_at is None or now - row.last_used_at >= LAST_USED_WRITE_INTERVAL:\n        row.last_used_at = now\n",
+        "",
+        "last_used_is_touched",
+    ),
+    (
+        "pat-22. every verified token is a write token",
+        MCP_AUTH,
+        "        return pat(write=Scope.WRITE in scopes, subject=token.client_id, via=VIA_BEARER)",
+        "        return pat(write=True, subject=token.client_id, via=VIA_BEARER)",
+        "tool_scope_over_http",
+    ),
+    (
+        "pat-23. the transport route keeps FastMCP's declared methods",
+        MAIN,
+        "                route.methods = None  # type: ignore[attr-defined]",
+        "                pass",
+        "mounted_surface_matches or accepts_exactly_the_declared or carries_no_store_over",
+    ),
+    (
+        "pat-24. the shared helper no longer strips the presented value (round 1, f1)",
+        TOK_SVC,
+        "    raw = raw.strip()\n",
+        "",
+        "header_form",
+    ),
+    (
+        "pat-25. a rejected form credential is 401 again (round 2, f4)",
+        MAIN,
+        "    CredentialRejectedError: 403,\n",
+        "    CredentialRejectedError: 401,\n",
+        "every_401_carries or wrong_password_is_403 or wrong_setup_token_is_403",
+    ),
+    # The #204 (f13-) set: the pre-routing gate (§5.5 family 13), folded from PR
+    # #205. f13-1…13 hand-run on the branch; f13-14/15 added when CI Integration
+    # caught the family-8 namespace miss. f13-6's only witness is the
+    # resolution-count test (Codex round 1, f2: the audit-row test cannot see
+    # it — a revoked token is refused at the gate); f13-11 is structural.
+    (
+        "f13-1. the gate passes everything through",
+        PRE,
+        "        if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):\n            await self.app(scope, receive, send)\n            return\n",
+        "        if True:\n            await self.app(scope, receive, send)\n            return\n",
+        "is_401_for_anon or resolver_s_401",
+    ),
+    (
+        "f13-2. no match is not refused",
+        PRE,
+        "    if outcome.kind is Dispatch.NONE:\n        return True\n",
+        "    if outcome.kind is Dispatch.NONE:\n        return False\n",
+        "unrouted_path_is_401_for_anon",
+    ),
+    (
+        "f13-3. a partial match admits INTERNAL (405 names /readyz)",
+        PRE,
+        "        else {CredentialPolicy.ANONYMOUS, CredentialPolicy.PROTOCOL}\n",
+        "        else {CredentialPolicy.ANONYMOUS, CredentialPolicy.PROTOCOL, CredentialPolicy.INTERNAL}\n",
+        "wrong_verb_on_a_scoped_path_is_401_for_anon or decided_by_policy",
+    ),
+    (
+        "f13-4. a full match no longer admits INTERNAL (loopback /readyz → 401)",
+        PRE,
+        "        {CredentialPolicy.ANONYMOUS, CredentialPolicy.INTERNAL, CredentialPolicy.PROTOCOL}\n        if outcome.kind is Dispatch.FULL",
+        "        {CredentialPolicy.ANONYMOUS, CredentialPolicy.PROTOCOL}\n        if outcome.kind is Dispatch.FULL",
+        "readiness_is_still_decided or decided_by_policy",
+    ),
+    (
+        "f13-5. an endpoint the index does not know fails open",
+        PRE,
+        "        if policy is None or policy.credential not in admitted:",
+        "        if policy is not None and policy.credential not in admitted:",
+        "decided_by_policy",
+    ),
+    (
+        "f13-6. the dependency ignores the stashed principal (resolves twice)",
+        DEP,
+        "    principal = getattr(request.state, REQUEST_PRINCIPAL_ATTR, None)\n    if principal is None:",
+        "    principal = None\n    if principal is None:",
+        "resolved_by_the_gate or one_audit_row",
+    ),
+    (
+        "f13-7. the gate's refusal drops Cache-Control",
+        PRE,
+        "        if cache_control is not None:",
+        "        if cache_control is None:",
+        "unrouted_path_is_401_for_anon",
+    ),
+    (
+        "f13-8. the early return keys on NONE, not MOUNT (a cookie is resolved under /mcp)",
+        PRE,
+        "        if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):\n            await self.app",
+        "        if outcome.kind in (Dispatch.NONE, Dispatch.PROTOCOL):\n            await self.app",
+        "resolved_by_the_gate or unrouted_path_is_401_for_anon",
+    ),
+    (
+        "f13-9. the dispatch table adds HEAD beside GET the way Starlette's Route would",
+        PRE,
+        "entries.append(_Leaf(regex=regex, methods=entry.methods, endpoint=entry.endpoint))",
+        "entries.append(_Leaf(regex=regex, methods=entry.methods | ({'HEAD'} if 'GET' in entry.methods else set()), endpoint=entry.endpoint))",
+        "agree_on_every_declared_route",
+    ),
+    (
+        "f13-10. a failed bearer is refused with the bare challenge, not the resolver's",
+        PRE,
+        "            await self._refuse(request, exc, scope, receive, send)\n            return\n        setattr",
+        "            await self._refuse(request, UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED, challenge=BEARER_CHALLENGE), scope, receive, send)\n            return\n        setattr",
+        "resolver_s_401",
+    ),
+    (
+        "f13-11. the gate and the profile layer swap positions",
+        MAIN,
+        "            render=domain_error_handler,\n        )\n",
+        "            render=domain_error_handler,\n        )\n        app.user_middleware.reverse()\n",
+        "sits_between or profile_middleware_is_innermost",
+    ),
+    (
+        "f13-12. the dependency's fallback resolution removed",
+        DEP,
+        "    if principal is None:\n        principal = await resolve_principal(request, session)",
+        "    if False:\n        principal = await resolve_principal(request, session)",
+        "denies_without_the_gate",
+    ),
+    (
+        "f13-13. a partial match considers only the first route on the path",
+        PRE,
+        "    for endpoint in outcome.endpoints:\n        policy = index.policy_for(endpoint)",
+        "    for endpoint in outcome.endpoints[:1]:\n        policy = index.policy_for(endpoint)",
+        "decided_by_policy",
+    ),
+    (
+        "f13-14. the protocol-namespace pass-through disabled (the first head's family-8 miss)",
+        PRE,
+        "        if any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):",
+        "        if False and any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):",
+        "protocol_namespace or decided_by_policy or agree_on_every",
+    ),
+    (
+        "f13-15. the early return keeps MOUNT only (a principal is resolved under /.well-known/)",
+        PRE,
+        "        if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):\n            await self.app",
+        "        if outcome.kind is Dispatch.MOUNT:\n            await self.app",
+        "resolved_by_the_gate",
+    ),
+    # --- #191 (M6-6, PR #209): browser OIDC — the oidc- set. The id_token claim
+    # --- contract (`validate_id_token_claims`), the login transaction and its binding
+    # --- cookie, the `(issuer, subject)` binding, the mode gate, the rebind, and — from
+    # --- the Codex rounds — a session being authority only in the mode that minted it
+    # --- (`session.auth_mode`, the resolver, the start-up sweep) and the NumericDate
+    # --- domain. oidc-4…20 hand-run on the branch; 21…38 from round 1 (two P2s), 39
+    # --- from round 2 (a P3). oidc-1/2/3/11 anchored on the joserfc registry the round
+    # --- replaced and are superseded by 23/22/27/26; oidc-13 (HS256 on the allowlist)
+    # --- is equivalent — the JWKS holds no symmetric key — and stays out; oidc-20 and
+    # --- oidc-25 re-anchored at fold-in. oidc-30's kill is a 500 at the callback's
+    # --- required 302, accepted by Codex round 2 as a semantic regression. -----------
+    (
+        "oidc-4. binding cookie not checked",
+        OIDC_SVC,
+        "        or binding is None\n        or not credentials.tokens_match(binding, row.binding_hash)\n",
+        "",
+        "callback_needs_a_live_transaction",
+    ),
+    (
+        "oidc-5. transaction never spent",
+        OIDC_SVC,
+        "    row.used_at = now\n    claiming, nonce, verifier",
+        "    claiming, nonce, verifier",
+        "callback_needs_a_live_transaction",
+    ),
+    (
+        "oidc-6. expiry not checked",
+        OIDC_SVC,
+        "        or now >= row.expires_at\n",
+        "",
+        "expired_transaction_is_refused",
+    ),
+    (
+        "oidc-7. binding compares subject only",
+        OIDC_SVC,
+        "    if (owner.oidc_issuer, owner.oidc_subject) != (provider.issuer, subject):",
+        "    if owner.oidc_subject != subject:",
+        "binding_is_the_issuer_too",
+    ),
+    (
+        "oidc-8. unbound = unclaimed only",
+        OIDC_SVC,
+        "    return owner.claimed_at is None or owner.oidc_subject is None",
+        "    return owner.claimed_at is None",
+        "rebind_revokes_every_session",
+    ),
+    (
+        "oidc-9. bind without the token having matched",
+        OIDC_SVC,
+        "        if not claiming:\n            raise await _refuse(",
+        "        if False:\n            raise await _refuse(",
+        "unbound_owner_without_the_token_at_start",
+    ),
+    (
+        "oidc-10. setup token never required at start",
+        OIDC_SVC,
+        "        if setup_token is None or not setup_state.matches(setup_token):",
+        "        if False:",
+        "start_on_an_unbound_instance_needs_the_setup_token",
+    ),
+    (
+        "oidc-12. provider error still exchanges",
+        OIDC_SVC,
+        "    if error is not None or not code:",
+        "    if not code:",
+        "owner_cancelling_at_the_provider",
+    ),
+    (
+        "oidc-14. rebind keeps sessions",
+        OIDC_SVC,
+        '    revoked = await auth_service.revoke_all_sessions(\n        session, target="recovery rebind-oidc", principal=internal(), client_address="host"\n    )',
+        "    revoked = 0",
+        "rebind_revokes_every_session",
+    ),
+    (
+        "oidc-15. refused stranger still gets a session",
+        OIDC_SVC,
+        "        await session.commit()\n        raise OidcLoginRefused(CallbackError.IDENTITY_REFUSED)",
+        "        await session.commit()",
+        "different_identity_is_refused",
+    ),
+    (
+        "oidc-16. discovery issuer mismatch accepted",
+        OIDC_SVC,
+        "            if issuer != self.issuer:",
+        "            if False:",
+        "discovery_document_with_another_issuer",
+    ),
+    (
+        "oidc-17. mode gate inverted",
+        AUTH_ROUTER,
+        "    if (provider is not None) != oidc:",
+        "    if (provider is None) != oidc:",
+        "password_routes_are_404_in_oidc_mode",
+    ),
+    (
+        "oidc-18. modes undeclared on the OIDC pair",
+        REG,
+        'OIDC_MODE_ROUTES: frozenset[str] = frozenset({"/auth/oidc/start", "/auth/oidc/callback"})',
+        "OIDC_MODE_ROUTES: frozenset[str] = frozenset()",
+        "registry_declares_the_mode_axis",
+    ),
+    (
+        "oidc-19. callback Location built from the request",
+        AUTH_ROUTER,
+        "    response = RedirectResponse(provider.home_url, status_code=302)",
+        "    response = RedirectResponse(str(request.base_url), status_code=302)",
+        "callback_redirects_to_public_base_url",
+    ),
+    (
+        "oidc-20. setup token consumed at start, not at the bind",
+        OIDC_SVC,
+        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "first_login_with_the_setup_token_binds_the_owner",
+    ),
+    (
+        "oidc-21. azp not checked",
+        OIDC_SVC,
+        '    if "azp" in claims and claims["azp"] != client_id:\n        raise refused("azp", "is not this client")\n',
+        "",
+        "azp-other",
+    ),
+    (
+        "oidc-22. aud membership instead of exactly this client",
+        OIDC_SVC,
+        "        or set(audiences) != {client_id}\n",
+        "        or client_id not in audiences\n",
+        "extra-audience-own-azp",
+    ),
+    (
+        "oidc-23. nonce matched by membership (the registry's semantics)",
+        OIDC_SVC,
+        "    if not isinstance(token_nonce, str) or token_nonce != nonce:\n",
+        "    if nonce not in ([token_nonce] if isinstance(token_nonce, str) else (token_nonce or [])):\n",
+        "nonce-list",
+    ),
+    (
+        "oidc-24. iat optional",
+        OIDC_SVC,
+        '    if not _numeric_date(iat):\n        raise refused("iat", "is missing or not a NumericDate")\n    if iat > clock + leeway:\n',
+        '    if iat is not None and not _numeric_date(iat):\n        raise refused("iat", "is missing or not a NumericDate")\n    if iat is not None and iat > clock + leeway:\n',
+        "iat-missing",
+    ),
+    (
+        "oidc-25. bool accepted as a NumericDate",
+        OIDC_SVC,
+        "    if isinstance(value, bool):\n        return False\n    if isinstance(value, int):\n        return True\n",
+        "    if isinstance(value, int):\n        return True\n",
+        "iat-bool",
+    ),
+    (
+        "oidc-26. sub not checked by the validator",
+        OIDC_SVC,
+        '    sub = claims.get("sub")\n    if not isinstance(sub, str) or not sub:\n        raise refused("sub", "is missing or not a string")\n',
+        "",
+        "no-subject",
+    ),
+    (
+        "oidc-27. iss matched by membership",
+        OIDC_SVC,
+        "    if not isinstance(iss, str) or iss != issuer:\n",
+        "    if iss != issuer and not (isinstance(iss, list) and issuer in iss):\n",
+        "issuer-list",
+    ),
+    (
+        "oidc-28. exp leeway applied the wrong way",
+        OIDC_SVC,
+        "    if exp < clock - leeway:\n",
+        "    if exp < clock + leeway:\n",
+        "claim_validator_holds_the_clock_leeway",
+    ),
+    (
+        "oidc-29. nbf not checked",
+        OIDC_SVC,
+        '    if "nbf" in claims:\n        nbf = claims["nbf"]\n        if not _numeric_date(nbf):\n            raise refused("nbf", "is not a NumericDate")\n        if nbf > clock + leeway:\n            raise refused("nbf", "is in the future")\n',
+        "",
+        "nbf-future",
+    ),
+    (
+        "oidc-30. exp type not checked",
+        OIDC_SVC,
+        '    if not _numeric_date(exp):\n        raise refused("exp", "is missing or not a NumericDate")\n',
+        '    if exp is None:\n        raise refused("exp", "is missing or not a NumericDate")\n',
+        "exp-string",
+    ),
+    (
+        "oidc-31. resolver ignores the session's mode",
+        AUTH_SVC,
+        "    if row is None or row.revoked_at is not None or row.auth_mode != auth_mode:\n",
+        "    if row is None or row.revoked_at is not None:\n",
+        "local_mode_session_is_not_the_owner_in_oidc_mode",
+    ),
+    (
+        "oidc-32. sweep revokes every mode's sessions",
+        AUTH_SVC,
+        "        .where(SessionRow.revoked_at.is_(None), SessionRow.auth_mode != auth_mode)\n",
+        "        .where(SessionRow.revoked_at.is_(None))\n",
+        "restart_in_the_same_mode_signs_nobody_out",
+    ),
+    (
+        "oidc-33. sweep touches instead of revoking",
+        AUTH_SVC,
+        '        .values(revoked_at=_now())\n    )\n    revoked = result.rowcount or 0\n    if revoked:\n        await audit.record_event(\n            session,\n            audit.SESSIONS_REVOKED,\n            principal=internal(),\n            target="startup",',
+        '        .values(last_used_at=_now())\n    )\n    revoked = result.rowcount or 0\n    if revoked:\n        await audit.record_event(\n            session,\n            audit.SESSIONS_REVOKED,\n            principal=internal(),\n            target="startup",',
+        "starting_in_the_other_mode_revokes",
+    ),
+    (
+        "oidc-34. lifespan never sweeps",
+        MAIN,
+        "                await auth_service.revoke_sessions_of_other_modes(\n                    session, auth_mode=auth_mode_of(app_)\n                )\n",
+        "",
+        "starting_in_the_other_mode_revokes",
+    ),
+    (
+        "oidc-35. the OIDC bind mints a local-mode session",
+        OIDC_SVC,
+        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.LOCAL)\n",
+        "first_login_with_the_setup_token_binds_the_owner",
+    ),
+    (
+        "oidc-36. the local claim mints an OIDC-mode session",
+        AUTH_SVC,
+        "    owner.claimed_at = now\n    raw, row = new_session_row(now, auth_mode=AuthMode.LOCAL)\n",
+        "    owner.claimed_at = now\n    raw, row = new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "local_mode_session_is_not_the_owner_in_oidc_mode",
+    ),
+    (
+        "oidc-37. mode_changed audit row not written",
+        AUTH_SVC,
+        '        await audit.record_event(\n            session,\n            audit.AUTH_MODE_CHANGED,\n            principal=internal(),\n            target="startup",\n            detail=f"auth_mode={auth_mode} sessions_revoked={revoked}",\n            client_address="host",\n        )\n',
+        "",
+        "starting_in_the_other_mode_revokes",
+    ),
+    (
+        "oidc-38. auth_mode_of inverted",
+        MODE,
+        "    if getattr(app.state, OIDC_PROVIDER_ATTR, None) is not None:\n        return AuthMode.OIDC\n    return AuthMode.LOCAL\n",
+        "    if getattr(app.state, OIDC_PROVIDER_ATTR, None) is None:\n        return AuthMode.OIDC\n    return AuthMode.LOCAL\n",
+        "first_login_with_the_setup_token_binds_the_owner",
+    ),
+    (
+        "oidc-39. non-finite floats accepted as NumericDates",
+        OIDC_SVC,
+        "    return isinstance(value, float) and math.isfinite(value)\n",
+        "    return isinstance(value, float)\n",
+        "exp-nan",
+    ),
+    # --- #192 (M6-7): MCP OAuth — the moa- set ------------------------------------------
+    # The proxy's policy on FastMCP's extension points (app/auth/mcp_oauth.py), the
+    # family-8 registry declarations, the pre-routing gate's namespace rule, the
+    # principal mapping and the settings contract. Every kill runs against an
+    # OIDC-mode app built in-process with the fake provider (tests/oidc_fake.py).
+    (
+        "moa-1. the synthesised upstream-id client admitted",
+        MCP_OAUTH,
+        "        if client_id == self._upstream_client_id:\n            # The synthesised",
+        "        if False:\n            # The synthesised",
+        "synthesised_upstream_id_client_is_refused",
+    ),
+    (
+        "moa-2. a DCR client not wrapped in the registration binding",
+        MCP_OAUTH,
+        "        return BoundDCRClient(**client.model_dump(), allow_unregistered_redirect_uris=False)",
+        "        return client",
+        "allowlist_narrows_registration_and_keeps_the_registration_binding",
+    ),
+    (
+        "moa-3. the registration check inside BoundDCRClient removed",
+        MCP_OAUTH,
+        "        if redirect_uri is not None and self.cimd_document is None:\n            if not _matches_registered_redirect_uri(redirect_uri, self.redirect_uris):",
+        "        if False:\n            if not _matches_registered_redirect_uri(redirect_uri, self.redirect_uris):",
+        "allowlist_narrows_registration_and_keeps_the_registration_binding",
+    ),
+    (
+        "moa-4. the owner check at issuance skipped",
+        MCP_OAUTH,
+        "            if verdict.binding is None:\n                # Consume the code first",
+        "            if False:\n                # Consume the code first",
+        "stranger_is_refused_at_the_token_endpoint or unbound_instance_issues_nothing",
+    ),
+    (
+        "moa-5. the binding comparison always passes",
+        MCP_OAUTH,
+        '        if bound != (provider.issuer, subject):\n            return OwnerVerdict(None, "identity", subject)',
+        '        if False:\n            return OwnerVerdict(None, "identity", subject)',
+        "stranger_is_refused_at_the_token_endpoint or rebind_refuses_an_issued_token",
+    ),
+    (
+        "moa-6. the grant no longer bounded by the upstream token's expiry",
+        MCP_OAUTH,
+        '        bounds a grant."""\n        return True',
+        '        bounds a grant."""\n        return False',
+        "upstream_token_bounds_a_grant_the_provider_cannot_refresh",
+    ),
+    (
+        "moa-7. a personal access token no longer routed to its verifier on the mount",
+        MCP_OAUTH,
+        '        if token.startswith(f"{token_format.TOKEN_KIND}_"):',
+        "        if False:",
+        "personal_access_token_still_works_on_the_mount_in_oidc_mode",
+    ),
+    (
+        "moa-8. the mcp grant mapped read-only",
+        MCP_AUTH,
+        '        return mcp(write=True, subject=token.claims.get("sub"))',
+        '        return mcp(write=False, subject=token.claims.get("sub"))',
+        "owner_links_a_client_and_the_token_drives_the_tools or mcp_kind_maps_to_the_fixed_scopes",
+    ),
+    (
+        "moa-9. any kind maps to the mcp principal",
+        MCP_AUTH,
+        "    if kind == PrincipalKind.MCP.value:\n        return mcp(",
+        "    if True:\n        return mcp(",
+        "mcp_kind_maps_to_the_fixed_scopes_and_nothing_else_is_a_principal",
+    ),
+    (
+        "moa-10. the identity refusal not audited as one",
+        MCP_OAUTH,
+        "            await self._record(\n                audit.MCP_IDENTITY_REFUSED,",
+        "            await self._record(\n                audit.OIDC_LOGIN_FAILED,",
+        "stranger_is_refused_at_the_token_endpoint",
+    ),
+    (
+        "moa-11. the grant not audited as one",
+        MCP_OAUTH,
+        "            await self._record(\n                audit.MCP_GRANT_ISSUED,",
+        "            await self._record(\n                audit.OIDC_LOGIN_FAILED,",
+        "owner_links_a_client_and_the_token_drives_the_tools",
+    ),
+    (
+        "moa-12. authorize does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        # Re-anchored in round 7 (the docstring `authorize` gained sits between the
+        # `def` line and the `try:` the old anchor spanned).
+        "        try:\n            await self._resolve_upstream()\n        except UnavailableError as exc:\n            raise AuthorizeError(",
+        "        try:\n            pass\n        except UnavailableError as exc:\n            raise AuthorizeError(",
+        "provider_down_at_authorize_is_temporarily_unavailable",
+    ),
+    (
+        "moa-13. a provider outage at authorize escapes as an exception",
+        MCP_OAUTH,
+        '        except UnavailableError as exc:\n            raise AuthorizeError(\n                error="temporarily_unavailable", error_description=_PROVIDER_UNAVAILABLE\n            ) from exc',
+        "        except UnavailableError as exc:\n            raise exc",
+        "provider_down_at_authorize_is_temporarily_unavailable",
+    ),
+    (
+        "moa-14. the callback does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        "    async def _handle_idp_callback(self, request: Request):\n        try:\n            await self._resolve_upstream()",
+        "    async def _handle_idp_callback(self, request: Request):\n        try:\n            pass",
+        "process_whose_start_missed_the_provider",
+    ),
+    (
+        "moa-15. the refresh exchange does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        '        try:\n            await self._resolve_upstream()\n        except UnavailableError as exc:\n            raise TokenError("invalid_request", _PROVIDER_UNAVAILABLE) from exc',
+        '        try:\n            pass\n        except UnavailableError as exc:\n            raise TokenError("invalid_request", _PROVIDER_UNAVAILABLE) from exc',
+        "process_whose_start_missed_the_provider",
+    ),
+    (
+        "moa-17. the child's well-known aliases not pruned",
+        MCP_OAUTH,
+        '        if not (isinstance(route, Route) and route.path.startswith("/.well-known/"))',
+        "        if True",
+        "mounted_surface_in_oidc_mode_matches_its_snapshot",
+    ),
+    (
+        "moa-18. the protocol routes keep the SDK's own method metadata",
+        MCP_OAUTH,
+        "        if isinstance(route, Route) and MCP_MOUNT + route.path in MCP_OAUTH_ROUTES:\n            route.methods = None",
+        "        if False:\n            route.methods = None",
+        "each_protocol_route_accepts_exactly_its_declared_verbs",
+    ),
+    (
+        "moa-19. the bare OpenID document installed at the root",
+        MCP_OAUTH,
+        "        if route.path not in DISCOVERY_ROUTES:\n            continue",
+        "        if False:\n            continue",
+        "mounted_surface_in_oidc_mode_matches_its_snapshot or three_root_documents_name_this_instance",
+    ),
+    (
+        "moa-20. the local-mode stub answers 200",
+        MCP_OAUTH,
+        "            status_code=404,\n        )\n        await response(scope, receive, send)",
+        "            status_code=200,\n        )\n        await response(scope, receive, send)",
+        "every_family_8_path_is_404_in_local_mode",
+    ),
+    (
+        "moa-21. no protocol routes registered in local mode",
+        MCP_OAUTH,
+        "    return [Route(_child_path(path), endpoint=NotInThisMode(path)) for path in MCP_OAUTH_ROUTES]",
+        "    return []",
+        "mounted_surface_matches_the_snapshot or every_family_8_path_is_404_in_local_mode",
+    ),
+    (
+        "moa-22. the storage key is the signing key",
+        MCP_OAUTH,
+        "    return base64.urlsafe_b64encode(derived)",
+        "    return base64.urlsafe_b64encode(signing_key)",
+        "storage_key_differs_from_the_signing_key",
+    ),
+    (
+        "moa-23. the audit rows name the wrong route",
+        MCP_OAUTH,
+        '        self, event: str, *, detail: str, principal=None, target: str = f"{MCP_MOUNT}/token"',
+        '        self, event: str, *, detail: str, principal=None, target: str = f"{MCP_MOUNT}/authorize"',
+        "id_token_that_fails_the_claim_contract_issues_nothing or owner_links_a_client",
+    ),
+    (
+        "moa-24. discovery declared no-store",
+        REG,
+        '    path: _protocol(path, ("GET", "HEAD", "OPTIONS"), ProtocolRole.DISCOVERY, _PUBLIC_DISCOVERY)',
+        '    path: _protocol(path, ("GET", "HEAD", "OPTIONS"), ProtocolRole.DISCOVERY)',
+        "three_root_documents_name_this_instance or every_transaction_and_credential_response",
+    ),
+    (
+        "moa-25. the authorization endpoint declared with PUT",
+        REG,
+        '        f"{MCP_MOUNT}/authorize", ("GET", "POST"), ProtocolRole.AUTHORIZATION',
+        '        f"{MCP_MOUNT}/authorize", ("GET", "POST", "PUT"), ProtocolRole.AUTHORIZATION',
+        "each_protocol_route_accepts_exactly_its_declared_verbs",
+    ),
+    (
+        "moa-26. the gate resolves a principal under the protocol namespace",
+        PRE,
+        "        if any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):\n            # Family 8's namespace is the protocol's, route or no route (#192):",
+        "        if False:\n            # Family 8's namespace is the protocol's, route or no route (#192):",
+        "discovery_resolves_no_principal or gate_and_the_router_agree",
+    ),
+    (
+        "moa-27. a scoped route admitted under the protocol namespace",
+        REG,
+        "            and policy.credential != CredentialPolicy.PROTOCOL\n            and any(leaf.path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES)",
+        "            and False",
+        "non_protocol_route_under_the_protocol_namespace_fails_the_build",
+    ),
+    (
+        "moa-28. a discovery route's verbs not pinned",
+        REG,
+        "        if route.methods != declared.methods:\n            raise UndeclaredRouteError(",
+        "        if False:\n            raise UndeclaredRouteError(",
+        "discovery_route_serving_other_verbs_than_declared_fails_the_build",
+    ),
+    (
+        "moa-29. the signing key optional in OIDC mode",
+        CFG,
+        '                ("MCP_OAUTH_SIGNING_KEY", self.mcp_oauth_signing_key),\n',
+        "",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-30. a plain-http LAN base URL admitted in OIDC mode",
+        CFG,
+        '        if parsed.scheme != "https" and parsed.hostname not in MCP_OAUTH_PLAIN_HTTP_HOSTS:',
+        "        if False:",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-31. the signing key's shape not checked",
+        CFG,
+        '        if not re.fullmatch(r"[0-9a-f]{64}", value):',
+        "        if False:",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-32. the nonce check no longer skippable — the proxy's tokens refused",
+        OIDC_SVC,
+        '    if nonce is None:\n        return\n    token_nonce = claims.get("nonce")',
+        '    token_nonce = claims.get("nonce")',
+        "owner_links_a_client_and_the_token_drives_the_tools",
+    ),
+    (
+        "moa-33. the nonce check skipped for the browser login too",
+        OIDC_SVC,
+        '    if nonce is None:\n        return\n    token_nonce = claims.get("nonce")',
+        '    if True:\n        return\n    token_nonce = claims.get("nonce")',
+        "id_token_that_fails_a_check_opens_no_session and nonce",
+    ),
+    # --- Codex #212 round 1: the grant as one state machine (f1–f5) ------------------
+    (
+        "moa-34. revocation leaves the grant record (the presented token stays live)",
+        MCP_OAUTH,
+        "                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)\n                    await self._upstream_token_store.delete(key=mapping.upstream_token_id)",
+        "                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)",
+        "successful_revocation_kills_every_credential_of_the_grant",
+    ),
+    (
+        "moa-35. the provider not asked to revoke its refresh token",
+        MCP_OAUTH,
+        "        await self._revoke_upstream(grant)",
+        "        pass",
+        "successful_revocation_kills_every_credential_of_the_grant",
+    ),
+    (
+        "moa-36. revocation audited as issuance",
+        MCP_OAUTH,
+        "            audit.MCP_GRANT_REVOKED,\n            principal=mcp_principal(write=True, subject=handle[1].subject),",
+        "            audit.MCP_GRANT_ISSUED,\n            principal=mcp_principal(write=True, subject=handle[1].subject),",
+        "successful_revocation_kills_every_credential_of_the_grant",
+    ),
+    (
+        "moa-37. no transition takes its lock (two redemptions of a code mint)",
+        MCP_OAUTH,
+        "        await self._lock.__aenter__()\n        self._declared = _transition_in_flight.set(self._transition)",
+        "        self._lock._session = get_sessionmaker()()\n        self._declared = _transition_in_flight.set(self._transition)",
+        "two_redemptions_of_one_authorization_code_yield_one_grant",
+    ),
+    (
+        "moa-38. no transition takes its lock (two redemptions of a refresh token mint)",
+        MCP_OAUTH,
+        "        await self._lock.__aenter__()\n        self._declared = _transition_in_flight.set(self._transition)",
+        "        self._lock._session = get_sessionmaker()()\n        self._declared = _transition_in_flight.set(self._transition)",
+        "two_redemptions_of_one_refresh_token_yield_one_successor_lineage",
+    ),
+    (
+        "moa-39. the lock key is the handle itself, as a SQL parameter (the code in the log)",
+        MCP_OAUTH,
+        '                "SELECT pg_advisory_xact_lock(CAST(:namespace AS integer), CAST(:key AS integer))"\n            ),\n            {"namespace": GRANT_LOCK_NAMESPACE, "key": _lock_key(self._handle)},',
+        '                "SELECT pg_advisory_xact_lock(CAST(:namespace AS integer), hashtext(CAST(:key AS text)))"\n            ),\n            {"namespace": GRANT_LOCK_NAMESPACE, "key": self._handle},',
+        "full_link_and_tool_run_leaves_no_secret_in_the_logs",
+    ),
+    (
+        "moa-40. the per-request owner check skipped (a rebind changes nothing)",
+        MCP_OAUTH,
+        "        if not await self._owner_check.still_bound(binding):\n            log.warning",
+        "        if False:\n            log.warning",
+        "rebind_refuses_an_issued_token_at_the_next_request",
+    ),
+    (
+        "moa-41. the rebind check on a refresh skipped",
+        MCP_OAUTH,
+        "        if not await self._owner_check.still_bound(carried):",
+        "        if False:",
+        "rebind_refuses_the_refresh_token_too",
+    ),
+    (
+        "moa-42. a refresh's new id_token carried forward unverified",
+        MCP_OAUTH,
+        "        if isinstance(id_token, str) and _digest(id_token) == established.id_token_digest:\n            binding = established",
+        "        if True:\n            binding = established",
+        "refresh_response_becomes_the_grant_only_once_it_is_verified",
+    ),
+    (
+        "moa-43. the consent handler does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        "    async def _handle_consent(self, request: Request):",
+        "    async def _handle_consent_unused(self, request: Request):",
+        "restart_between_the_consent_page_and_its_approval",
+    ),
+    (
+        "moa-44. the endpoint properties read the placeholder even once resolved",
+        MCP_OAUTH,
+        "        return metadata.authorization_endpoint if metadata is not None else UNRESOLVED_ENDPOINT",
+        "        return UNRESOLVED_ENDPOINT",
+        "upstream_authorization_request_is_built_from_configuration",
+    ),
+    (
+        "moa-45. the registration body guard not installed",
+        MAIN,
+        "        prune_child_well_known(mcp_app)\n        guard_registration_body(mcp_app)",
+        "        prune_child_well_known(mcp_app)",
+        "registration_body_that_is_not_client_metadata_is_the_dcr_400",
+    ),
+    (
+        "moa-46. a protocol route's failure not stamped with the profile",
+        DEP,
+        "            if not started:\n                await JSONResponse",
+        "            if False:\n                await JSONResponse",
+        "exception_under_a_protocol_route_still_carries_the_profile",
+    ),
+    (
+        "moa-48. an unhandled 500 on a REST route without the profile",
+        MAIN,
+        '        content={"detail": "Internal Server Error"},\n        headers={"Cache-Control": "no-store"},',
+        '        content={"detail": "Internal Server Error"},',
+        "no_store_on_an_unhandled_500_too",
+    ),
+    (
+        "moa-47. a revoked refresh token's own hash entry left behind",
+        MCP_OAUTH,
+        "        if isinstance(token, RefreshToken):\n            # Its own hash entry",
+        "        if False:\n            # Its own hash entry",
+        "successful_revocation_kills_every_credential_of_the_grant",
+    ),
+    # --- Codex #212 round 2: the grant record as the unit of authority (f6–f7) ---------
+    (
+        "moa-49. the gate takes the binding off the client's tokens, not the record",
+        MCP_OAUTH,
+        "            current = await self._inner.get(key=key)\n            if current is None or current.owner is None:\n                raise _GrantEnded()\n            established = current.owner",
+        "            established = transition.binding",
+        "binding_verified_on_a_transparent_refresh_carries_to_the_next_exchange",
+    ),
+    (
+        "moa-50. revocation not under the grant's lock (a refresh in flight recreates the record)",
+        MCP_OAUTH,
+        "                async with _GrantLock(mapping.upstream_token_id):",
+        "                if True:",
+        "refresh_in_flight_cannot_recreate_a_grant_that_revocation_removed",
+    ),
+    (
+        "moa-51. the transparent refresh not a transition of the grant (the SDK's own runs)",
+        MCP_OAUTH,
+        "    async def _try_transparent_refresh(\n        self, upstream_token_set: UpstreamTokenSet\n    ) -> UpstreamTokenSet:",
+        "    async def _try_transparent_refresh_unused(\n        self, upstream_token_set: UpstreamTokenSet\n    ) -> UpstreamTokenSet:",
+        "transparent_refresh_that_finds_the_grant_gone or (becomes_the_grant_only_once and transparent and stranger)",
+    ),
+    (
+        "moa-52. load_access_token ignores what the transition learned (the SDK's fallback answers)",
+        MCP_OAUTH,
+        "        if validated is None or transition.outcome is not None:",
+        "        if validated is None:",
+        "transparent_refresh_that_finds_the_grant_gone",
+    ),
+    (
+        "moa-53. a refused refresh response leaves the grant standing",
+        MCP_OAUTH,
+        '        if verdict.reason != "unavailable":',
+        "        if False:",
+        "becomes_the_grant_only_once and stranger",
+    ),
+    (
+        "moa-54. the upstream ending audited as a client revocation",
+        MCP_OAUTH,
+        '                    f"ended_by={ENDED_BY_UPSTREAM}"',
+        '                    f"presented=refresh_token"',
+        "becomes_the_grant_only_once and forged",
+    ),
+    (
+        "moa-55. the verified binding not written to the record (every refresh finds an unbound grant)",
+        MCP_OAUTH,
+        "        record.owner = binding\n",
+        "        record.owner = None\n",
+        "refresh_issues_a_new_pair_through_the_provider",
+    ),
+    (
+        "moa-56. a new id_token stored unverified (the record's binding taken for it)",
+        MCP_OAUTH,
+        "            verdict = await self._proxy._owner_check.check(id_token)\n            if verdict.binding is None:\n                raise _GrantRefused(verdict)\n            if (verdict.binding.issuer",
+        '            verdict = OwnerVerdict(established, "ok", established.subject)\n            if verdict.binding is None:\n                raise _GrantRefused(verdict)\n            if (verdict.binding.issuer',
+        "becomes_the_grant_only_once and explicit and forged",
+    ),
+    # --- Codex #212 round 3: revocation's own lookup; the grant's identity (f9–f10) ------
+    (
+        "moa-57. revocation's lookup is the bearer's (the /revoke route not rebuilt over it)",
+        MCP_OAUTH,
+        "        routes = super().get_routes(mcp_path)\n        revocation = GrantRevocation(",
+        "        routes = super().get_routes(mcp_path)\n        return routes\n        revocation = GrantRevocation(",
+        "locates_its_grant_without_asking_the_provider and access_token",
+    ),
+    (
+        "moa-58. the lookup consults the owner row (a grant the row no longer names cannot be ended)",
+        MCP_OAUTH,
+        '        jti = payload["jti"]\n        if await self._jti_mapping_store.get(key=jti) is None:\n            return None\n',
+        '        jti = payload["jti"]\n        if not await self._owner_check.still_bound(binding):\n            return None\n        if await self._jti_mapping_store.get(key=jti) is None:\n            return None\n',
+        "end_a_grant_the_owner_row_no_longer_names and access_token",
+    ),
+    (
+        "moa-59. the gate adopts a candidate that names the owner now, not the grant's identity",
+        MCP_OAUTH,
+        "            if (verdict.binding.issuer, verdict.binding.subject) != (\n                established.issuer,\n                established.subject,\n            ):",
+        "            if False:",
+        "keeps_the_identity_that_authorized_the_grant",
+    ),
+    (
+        "moa-60. the lookup's shell carries no client binding (the handler's ownership check never matches)",
+        MCP_OAUTH,
+        "        return AccessToken(\n            token=_reference(token),\n            client_id=client_id,",
+        '        return AccessToken(\n            token=_reference(token),\n            client_id="",',
+        "successful_revocation_kills_every_credential_of_the_grant and access_token",
+    ),
+    # --- Codex #212 round 4: one downstream client contract (f11–f13) -------------------------
+    (
+        "moa-61. the registration response left as the SDK built it (a secret advertised over a public client)",
+        MCP_OAUTH,
+        '        client_info.token_endpoint_auth_method = "none"\n        client_info.client_secret = None\n        client_info.client_secret_expires_at = None\n',
+        "        pass\n",
+        "every_dynamic_registration_is_a_public_client and client_secret_post",
+    ),
+    (
+        "moa-62. the revocation form requires a secret again (the public form is 400)",
+        MCP_OAUTH,
+        "    token: str\n    token_type_hint:",
+        "    token: str\n    client_secret: str\n    token_type_hint:",
+        "every_dynamic_registration_is_a_public_client and absent",
+    ),
+    (
+        "moa-63. the revocation authenticator is the SDK's plain one (private_key_jwt refused at /revoke)",
+        MCP_OAUTH,
+        "        if self._cimd_manager is None:  # pragma: no cover — CIMD is always on here",
+        "        if True:  # pragma: no cover — CIMD is always on here",
+        "cimd_client_authenticates_as_its_document_says and private_key_jwt",
+    ),
+    (
+        "moa-64. a revocation assertion's audience is the token endpoint",
+        MCP_OAUTH,
+        "            self._client_authenticator(REVOCATION_PATH),\n        )\n        token = TokenHandler(",
+        "            self._client_authenticator(TOKEN_PATH),\n        )\n        token = TokenHandler(",
+        "private_key_jwt_client_is_refused_without_a_valid_assertion and revoke and wrong_audience",
+    ),
+    (
+        "moa-65. the revocation handler skips the client-ownership check",
+        MCP_OAUTH,
+        "        if token is not None and token.client_id == client.client_id:",
+        "        if token is not None:",
+        "client_cannot_revoke_another_clients_grant",
+    ),
+    (
+        "moa-66. a failed client authentication at /revoke answers 200",
+        MCP_OAUTH,
+        '            return PydanticJSONResponse(\n                status_code=401,\n                content=RevocationRefused(error="invalid_client", error_description=exc.message),',
+        '            return PydanticJSONResponse(\n                status_code=200,\n                content=RevocationRefused(error="invalid_client", error_description=exc.message),',
+        "private_key_jwt_client_is_refused_without_a_valid_assertion and revoke and absent",
+    ),
+    # --- Codex #212 round 5: discovery says the contract; the hint is advice (f14–f15) ------
+    (
+        "moa-67. discovery left as the SDK built it (the AS document not rebuilt over the contract)",
+        MCP_OAUTH,
+        '            elif isinstance(route, Route) and route.path.startswith(\n                "/.well-known/oauth-authorization-server"\n            ):',
+        "            elif False:",
+        "discovery_advertises_exactly_the_admitted_client_authentication",
+    ),
+    (
+        "moa-68. the revocation endpoint's methods advertised as the SDK's shared-secret pair",
+        MCP_OAUTH,
+        "        metadata.revocation_endpoint_auth_methods_supported = list(CLIENT_AUTH_METHODS)",
+        '        metadata.revocation_endpoint_auth_methods_supported = ["client_secret_post", "client_secret_basic"]',
+        "discovery_advertises_exactly_the_admitted_client_authentication and openid",
+    ),
+    (
+        "moa-69. no assertion algorithm advertised beside a JWT method",
+        MCP_OAUTH,
+        "        metadata.token_endpoint_auth_signing_alg_values_supported = list(\n            CLIENT_ASSERTION_ALGORITHMS\n        )",
+        "        metadata.token_endpoint_auth_signing_alg_values_supported = None",
+        "discovery_advertises_exactly_the_admitted_client_authentication and oauth-authorization",
+    ),
+    (
+        "moa-70. the hint a requirement again (an unknown value is a 400)",
+        MCP_OAUTH,
+        "    token: str\n    token_type_hint: str | None = None",
+        '    token: str\n    token_type_hint: Literal["access_token", "refresh_token"] | None = None',
+        "hint_is_advice_and_either_half_ends_the_grant and unknown_type",
+    ),
+    # --- Codex #212 round 6: the protocol boundary, field by field (f16–f19) ------------------
+    (
+        "moa-71. the claim contract not applied (the SDK's authenticator alone judges the assertion)",
+        MCP_OAUTH,
+        # Re-anchored in round 8: the authenticator owns admission end to end now
+        # (f29/f30), so "the SDK's alone" is the claim contract skipped in it.
+        "                validate_client_assertion_claims(assertion, now=time.time())\n",
+        "                pass\n",
+        "claim_that_fails_the_contract_is_refused_first and nbf_future",
+    ),
+    (
+        "moa-72. nbf not enforced",
+        MCP_OAUTH,
+        "    if not_before is not None and not_before > now + CLIENT_ASSERTION_SKEW:",
+        "    if False:",
+        "assertion_not_yet_valid_is_the_same_assertion_later and revoke",
+    ),
+    (
+        "moa-73. jti not required to be a string (a list reaches the SDK's dictionary key)",
+        MCP_OAUTH,
+        '    for name in ("iss", "sub", "jti"):',
+        '    for name in ("iss", "sub"):',
+        "claim_that_fails_the_contract_is_refused_first and jti_list",
+    ),
+    (
+        "moa-74. a boolean taken for a NumericDate",
+        MCP_OAUTH,
+        # Re-anchored in round 7 (f21 moved the finiteness check onto the range line).
+        "    if isinstance(value, bool) or not isinstance(value, (int, float)):",
+        "    if not isinstance(value, (int, float)):",
+        "claim_that_fails_the_contract_is_refused_first and iat_bool",
+    ),
+    (
+        "moa-75. a null redirect list not refused (FastMCP's localhost default invented)",
+        MCP_OAUTH,
+        "        if not client_info.redirect_uris:\n            raise RegistrationError(",
+        "        if False:\n            raise RegistrationError(",
+        "registration_response_describes_the_stored_client and null_redirects",
+    ),
+    (
+        # Repaired in round 7 (f25): the previous replacement closed the `get`
+        # call and left the `put`'s outer `)` behind — a SyntaxError at import,
+        # counted as killed by nothing. The tuple below keeps the constructor's
+        # closing parentheses by binding the two arguments to a name instead.
+        "moa-76. the stored client not the admitted contract (FastMCP's record left standing)",
+        MCP_OAUTH,
+        "        await self._client_store.put(\n            key=client_info.client_id,\n            value=ProxyDCRClient(",
+        "        _unwritten = (\n            client_info.client_id,\n            ProxyDCRClient(",
+        "registration_response_describes_the_stored_client and display",
+    ),
+    (
+        "moa-77. a repeated parameter not refused (the SDK's last value wins again)",
+        MCP_OAUTH,
+        "        if repeated:\n            return (",
+        "        if False:\n            return (",
+        "repeated_token_parameter_is_refused and client_id",
+    ),
+    (
+        "moa-78. empty values not treated as omitted",
+        MCP_OAUTH,
+        '        pairs = [(name, value) for name, value in pairs if value != ""]',
+        "        pairs = list(pairs)",
+        "empty_value_is_an_omitted_one",
+    ),
+    (
+        "moa-79. an omitted code_challenge_method left to the SDK's S256 default",
+        MCP_OAUTH,
+        '            pairs.append(("code_challenge_method", "plain"))',
+        "            pass",
+        "pkce_must_be_declared_s256 and absent",
+    ),
+    (
+        "moa-80. the unregistered-client guidance left pointing at the pruned child alias",
+        MCP_OAUTH,
+        '        if "authorization_server_metadata" in body:\n            body["authorization_server_metadata"] = self._discovery_url',
+        '        if False:\n            body["authorization_server_metadata"] = self._discovery_url',
+        "unregistered_client_is_pointed_at_the_root_discovery_document",
+    ),
+    # --- Codex #212 round 7 (f20–f22, f24, f26, and the call-14 qualification):
+    # --- admission, decoding, cardinality and the SDK hand-off together. -------
+    (
+        "moa-81. the media type read by a case-sensitive prefix, any other body passed through",
+        MCP_OAUTH,
+        "            if media_type.strip().lower() != FORM_MEDIA_TYPE:\n                await self._refuse(",
+        '            if not media_type.startswith("application/x-www-form-urlencoded"):\n                await self.app(scope, self._replay(body), send)\n                return\n            if False:\n                await self._refuse(',
+        "body_representation and mixed_case",
+    ),
+    (
+        "moa-82. the NumericDate range not applied (the float conversion overflows)",
+        MCP_OAUTH,
+        "    if not (-NUMERIC_DATE_BOUND <= value <= NUMERIC_DATE_BOUND):",
+        "    if not (-NUMERIC_DATE_BOUND <= value <= NUMERIC_DATE_BOUND) and False:",
+        "claim_that_fails_the_contract_is_refused_first and exp_huge",
+    ),
+    (
+        "moa-83. resource counted under the repetition rule again",
+        MCP_OAUTH,
+        "            name for name, count in counts.items() if count > 1 and name != RESOURCE_PARAMETER",
+        "            name for name, count in counts.items() if count > 1",
+        "resource_indicator_is_a_set and identical",
+    ),
+    (
+        "moa-84. a set with a foreign target handed to the SDK as its first value (the wrong repair)",
+        MCP_OAUTH,
+        "        chosen = foreign[0] if foreign else resources[0]",
+        "        chosen = resources[0]",
+        "resource_indicator_is_a_set and authorize and foreign_last",
+    ),
+    (
+        "moa-85. a foreign target at /token handed to the SDK, which reads the field and judges nothing",
+        MCP_OAUTH,
+        "        if foreign and self.endpoint == TOKEN_PATH:",
+        "        if False:",
+        "resource_indicator_is_a_set and token and foreign_only",
+    ),
+    (
+        "moa-86. a second client authentication mechanism beside an assertion admitted",
+        MCP_OAUTH,
+        # Re-anchored in round 8 (the header inventory moved in front; f29).
+        '        if presented and form.get("client_secret"):\n            raise AuthenticationError(',
+        "        if False:\n            raise AuthenticationError(",
+        "second_mechanism_beside_an_assertion and secret",
+    ),
+    (
+        "moa-87. an assertion from a client not registered for private_key_jwt accepted unread",
+        MCP_OAUTH,
+        # Re-anchored in round 8 (dispatch by the snapshot's method; f30).
+        "            if presented:\n                raise AuthenticationError(",
+        "            if False:\n                raise AuthenticationError(",
+        "assertion_from_a_client_not_registered_for_it and dcr",
+    ),
+    (
+        "moa-88. the 401 to an HTTP-authenticating client without its challenge",
+        MCP_OAUTH,
+        "            if response.status_code == 401 and scheme is not None:",
+        "            if False:",
+        "second_mechanism_beside_an_assertion and basic",
+    ),
+    (
+        "moa-89. jwks and jwks_uri admitted together",
+        MCP_OAUTH,
+        "        if client_info.jwks is not None and client_info.jwks_uri is not None:\n            raise RegistrationError(",
+        "        if False:\n            raise RegistrationError(",
+        "registration_response_describes_the_stored_client and both_key_sources",
+    ),
+    (
+        "moa-90. invalid_target left to the SDK's vocabulary (server_error on the redirect)",
+        MCP_OAUTH,
+        # Re-anchored in round 8: the refusal is the proxy's own now (f27), so the
+        # vocabulary mutant is its code.
+        '                    error="invalid_target",\n                    error_description="this server issues tokens for its own resource only",',
+        '                    error="server_error",\n                    error_description="this server issues tokens for its own resource only",',
+        "resource_indicator_is_a_set and authorize and foreign_first",
+    ),
+    (
+        "moa-91. a resource that does not parse handed to the SDK",
+        MCP_OAUTH,
+        "        if any(verdict is None for verdict in verdicts.values()):",
+        "        if False:",
+        "resource_indicator_is_a_set and authorize and unparseable",
+    ),
+    # --- Codex #212 round 8 (f27–f30): admitted once — recognised fields, every
+    # --- credential occurrence, one client snapshot, the resource on the whole URI.
+    (
+        # Redesigned in round 9: the URI grammar (f31) refuses a fragment on its own,
+        # so "the check removed" became an equivalent mutant (GREEN on the full pass).
+        # The behaviour worth catching is FastMCP's original erasure — the fragment
+        # stripped before comparing — which the grammar then never sees.
+        "moa-92. a fragment stripped before comparing (the normaliser's erasure again)",
+        MCP_OAUTH,
+        '    if "#" in value:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
+        '    if "#" in value:\n        value = value.split("#", 1)[0]\n    if False:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
+        "resource_is_compared_on_the_whole_uri and token and fragment",
+    ),
+    (
+        "moa-93. the path compared without its parameters",
+        MCP_OAUTH,
+        '    return parsed.scheme, parsed.netloc, parsed.path.rstrip("/")',
+        '    return parsed.scheme, parsed.netloc, parsed.path.split(";", 1)[0].rstrip("/")',
+        "resource_is_compared_on_the_whole_uri and token and path_parameter",
+    ),
+    (
+        "moa-94. the owned resource decision not applied at /authorize (FastMCP's looser one decides)",
+        MCP_OAUTH,
+        "            if not accepted:\n                return construct_redirect_uri(",
+        "            if False:\n                return construct_redirect_uri(",
+        "resource_is_compared_on_the_whole_uri and authorize and path_parameter",
+    ),
+    (
+        "moa-95. unknown parameters counted under the repetition rule",
+        MCP_OAUTH,
+        "        pairs = [(name, value) for name, value in pairs if name in self.recognised]",
+        "        pairs = list(pairs)",
+        "unknown_parameter_is_ignored and token",
+    ),
+    (
+        "moa-96. an Authorization header ignored when no assertion is presented",
+        MCP_OAUTH,
+        "        if header_attempts:\n            raise AuthenticationError(",
+        "        if header_attempts and presented:\n            raise AuthenticationError(",
+        "http_authentication_attempt_is_refused and dcr and token and Basic",
+    ),
+    (
+        "moa-97. only the first Authorization occurrence inventoried",
+        MCP_OAUTH,
+        '        header_attempts = request.headers.getlist("authorization")',
+        '        header_attempts = [h for h in [request.headers.get("authorization", "")] if h]',
+        "every_authorization_occurrence_counts and empty_first",
+    ),
+    (
+        "moa-98. the client looked up a second time before dispatch",
+        MCP_OAUTH,
+        '        method = client.token_endpoint_auth_method\n        if method == "private_key_jwt":',
+        '        client = await self.provider.get_client(client_id) or client\n        method = client.token_endpoint_auth_method\n        if method == "private_key_jwt":',
+        "one_snapshot_per_request and none_then_private",
+    ),
+    (
+        "moa-99. the challenge read from the first Authorization occurrence only",
+        MCP_OAUTH,
+        '    for header in request.headers.getlist("authorization"):',
+        '    for header in [request.headers.get("authorization", "")]:',
+        "every_authorization_occurrence_counts and empty_first",
+    ),
+    # --- Codex #212 round 9 (f31–f32): parsing is not validation; the inline key
+    # --- set's contract in front of the SDK's extraction. ------------------------
+    # moa-101 (the inline key set handed to the SDK's extraction unchecked) and
+    # moa-103 (the filtered copy not handed to the validator) retired in round 11:
+    # once the inline selection was the validator's own, the copy-based filter
+    # they mutated was a second owner of the same decision and both went
+    # equivalent (GREEN on the full pass); the filter retired into the selection.
+    (
+        "moa-100. the URI grammar not applied (urlsplit as validation again)",
+        MCP_OAUTH,
+        "    if not ABSOLUTE_URI.fullmatch(value):\n        raise ValueError(",
+        "    if False:\n        raise ValueError(",
+        "resource_is_compared_on_the_whole_uri and token and bad_percent",
+    ),
+    (
+        # Re-anchored in round 11 (f35 made the predicate the remote path's).
+        "moa-102. unusable entries not dropped from the set (RFC 7517 §5.1 not applied)",
+        MCP_OAUTH,
+        "        usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
+        "        usable = list(keys)",
+        "malformed_inline_key_set and revoke and null_beside_key",
+    ),
+    # --- Codex #212 round 10 (f33): the selected key keeps its authorization — the
+    # --- JWK itself, not its PEM, through FastMCP's verifier on both paths. ----------
+    (
+        # Re-anchored in round 11 (the inline selection is ours and returns the record).
+        "moa-104. the inline selection converted to a PEM again (the metadata lost)",
+        MCP_OAUTH,
+        "        return selected\n\n    async def validate_assertion(",
+        "        return _pem_of(selected)\n\n    async def validate_assertion(",
+        "published_key_s_restrictions_are_enforced and token and inline and use_enc",
+    ),
+    (
+        "moa-105. the remote verifier left as FastMCP's (PEMs cached by kid)",
+        MCP_OAUTH,
+        "            if not isinstance(self._verifier_cache.get(cache_key), RestrictedKeyVerifier):",
+        "            if False:",
+        "published_key_s_restrictions_are_enforced and token and remote and use_enc",
+    ),
+    (
+        # Re-anchored in round 11 (the record the kid named, checked against the PEM).
+        "moa-106. the remote selection handed on as its PEM (the JWK kept but not used)",
+        MCP_OAUTH,
+        "        return chosen\n",
+        "        return pem\n",
+        "published_key_s_restrictions_are_enforced and revoke and remote and alg_rs512",
+    ),
+    # --- Codex #212 round 11 (f34–f35): the record the kid named, not the first with its
+    # --- material; the inline usability predicate the remote path's. -------------------
+    (
+        "moa-107. the inline record re-identified by material (the first copy judged)",
+        MCP_OAUTH,
+        "        return selected\n\n    async def validate_assertion(",
+        "        return next(key for key in keys if _pem_of(key) == _pem_of(selected))\n\n    async def validate_assertion(",
+        "key_selected_by_kid_is_the_one_judged and inline and allowed_first",
+    ),
+    (
+        # Re-anchored in round 13 (the candidates named over records, the SDK's PEM the tie-break).
+        "moa-108. the remote record re-identified by material (the first copy judged)",
+        MCP_OAUTH,
+        "        chosen = next((key for key in reversed(candidates) if _pem_of(key) == pem), None)",
+        "        chosen = next((key for key in self._jwks_records if _pem_of(key) == pem), None)",
+        "key_selected_by_kid_is_the_one_judged and remote and allowed_first",
+    ),
+    (
+        "moa-109. an object-shaped unusable inline key counted before the fallback",
+        MCP_OAUTH,
+        "        usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
+        "        usable = [key for key in keys if isinstance(key, dict)]",
+        "unusable_inline_key_is_ignored and inline and token and unsupported_kty",
+    ),
+    # --- Codex #212 round 12 (f36): a named kid must match; the single-key fallback is
+    # --- for a header naming none — the SDK's remote rule on both paths. -----------------
+    (
+        # Re-anchored in round 13 (the rule is `select_records`, one owner for both paths).
+        "moa-110. the inline fallback restored for a named kid (the SDK's inline rule)",
+        MCP_OAUTH,
+        "        if not named:\n            raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
+        "        if not named and len(usable) == 1:\n            return usable\n        if not named:\n            raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
+        "named_kid_must_match and inline and token and unknown",
+    ),
+    (
+        "moa-111. an empty kid read as a name (the sole key refused on both paths)",
+        MCP_OAUTH,
+        "    return kid if isinstance(kid, str) and kid else None",
+        "    return kid if isinstance(kid, str) else None",
+        "naming_no_kid and empty and token",
+    ),
+    (
+        # Re-anchored in round 13 (the comparison is the one rule's).
+        "moa-112. the inline kid compared case-insensitively",
+        MCP_OAUTH,
+        '        named = [key for key in usable if key.get("kid") == kid]',
+        '        named = [key for key in usable if str(key.get("kid")).lower() == kid.lower()]',
+        "named_kid_must_match and inline and token and case_variant",
+    ),
+    # --- Codex #212 round 13 (f37): the fallback counts usable records, not the slots a
+    # --- cache keeps them in — one rule over records for both paths. ---------------------
+    (
+        "moa-113. the fetched records kept by cache slot again (two unnamed records one)",
+        MCP_OAUTH,
+        "        self._jwks_records = [\n            key for key in keys if isinstance(key, dict) and _pem_of(key) is not None\n        ]",
+        '        by_slot = {\n            key.get("kid") or "_default": key\n            for key in keys\n            if isinstance(key, dict) and _pem_of(key) is not None\n        }\n        self._jwks_records = list(by_slot.values())',
+        "two_unnamed_records and remote and token and missing",
+    ),
+    (
+        "moa-114. the no-kid fallback taking the last of several usable records",
+        MCP_OAUTH,
+        "    if len(usable) == 1:\n        return usable",
+        "    if usable:\n        return usable[-1:]",
+        "two_unnamed_records and inline and token and missing",
+    ),
+    # --- Codex #212 round 14 (f38): the SDK consumes the records the rule is stated over,
+    # --- not the raw array (its skip loop choked on an unhashable record kid). ----------
+    (
+        "moa-115. the raw fetched array handed back to the SDK (its skip loop runs on it)",
+        MCP_OAUTH,
+        '        return {"keys": list(self._jwks_records)}\n',
+        "        return data\n",
+        "unusable_record_beside_the_signer and remote and token and list and named",
+    ),
+    # --- #294: the upstream authorization request is the proxy's, not the client's --------
+    # --- — neither its RFC 8707 resource nor its scope (or its omission) reaches the
+    # --- provider. Two places, each killed apart: the resource cases with a scope sent,
+    # --- and the scope-omitted cases with no resource. ------------------------------------
+    (
+        "moa-116. the client's resource forwarded to the provider again",
+        MCP_OAUTH,
+        "            forward_resource=False,\n",
+        "            forward_resource=True,\n",
+        "nothing_the_client_sends and openid and not None",
+    ),
+    (
+        "moa-117. the upstream scope left to the client's request again",
+        MCP_OAUTH,
+        '            extra_authorize_params={**UPSTREAM_AUTHORIZE_PARAMS, "scope": UPSTREAM_SCOPE},\n',
+        "            extra_authorize_params=dict(UPSTREAM_AUTHORIZE_PARAMS),\n",
+        "nothing_the_client_sends and None-None",
+    ),
+    # --- #193 (M6-8): audit events, request budgets and log hygiene — the aud- set --
+    # Folded from PR #208's record after the merge (`bd40687`). aud-1…17 were hand-run
+    # on the branch and recorded as descriptions; their exact anchors were
+    # reconstructed here against the merged tree (aud-14 re-anchored to the
+    # normalised snapshot, as the record said it must be). aud-18…37 are the
+    # integration record's exact recipes, aud-38…58 the P3-5/P3-6 round's. Two
+    # stay out: aud-34 (raw `$request_uri` in the access log) and aud-35 (nginx's
+    # request diagnostics restored) have no pytest witness — only the packaged
+    # log scan the release gate runs. aud-17 and aud-36, packaged-only in the
+    # record, are killed here by the literal assertions the P3 round added to
+    # the four-families test. aud-9/10 kill in the token suite (use after
+    # revoke through MCP); aud-18…21 in the deployment-hygiene suite, which
+    # reads the Dockerfile's CMD and exercises the matrix's private output.
+    # aud-23 survived the fold-in's first pass on the record's reconstructed
+    # selection (the id_token-rejected test asserts the row's detail, not its
+    # actor) and is re-pointed at the cancel-at-provider test, which asserts
+    # the actor on the row the same `_refuse` writes. -----------------------------
+    (
+        "aud-1. prune boundary inclusive",
+        AUDIT_SVC,
+        "delete(AuditEvent).where(AuditEvent.occurred_at < before)",
+        "delete(AuditEvent).where(AuditEvent.occurred_at <= before)",
+        "prune_deletes_only",
+    ),
+    (
+        "aud-2. prune actor internal becomes anon",
+        AUDIT_SVC,
+        "        AUDIT_PRUNED,\n        principal=internal(),\n",
+        "        AUDIT_PRUNED,\n        principal=anonymous(),\n",
+        "prune_deletes_only",
+    ),
+    (
+        "aud-3. prune event type becomes recovery_run",
+        AUDIT_SVC,
+        '        AUDIT_PRUNED,\n        principal=internal(),\n        target="maintenance prune-audit",\n',
+        '        RECOVERY_RUN,\n        principal=internal(),\n        target="maintenance prune-audit",\n',
+        "empty_prune",
+    ),
+    (
+        "aud-4. the app's ingress rejection recorder disconnected",
+        MAIN,
+        "        rejection_recorder=record_ingress_rejection if authorization else None,\n",
+        "        rejection_recorder=None,\n",
+        "host_and_origin_rejections_are_audited",
+    ),
+    (
+        "aud-5. ingress rejection actor anon becomes null",
+        AUDIT_SVC,
+        "            event_type,\n            principal=anonymous(),\n",
+        "            event_type,\n            principal=None,\n",
+        "host_and_origin_rejections_are_audited",
+    ),
+    (
+        "aud-6. ingress audit address is the raw peer",
+        AUDIT_SVC,
+        "            client_address=client_address_from_scope(scope, policy),\n",
+        '            client_address=scope["client"][0],\n',
+        "host_and_origin_rejections_are_audited",
+    ),
+    (
+        "aud-7. failed-login actor anon becomes null",
+        AUTH_SVC,
+        "            audit.LOGIN_FAILED,\n            principal=anonymous(),\n",
+        "            audit.LOGIN_FAILED,\n            principal=None,\n",
+        "repeated_failures_throttle",
+    ),
+    (
+        "aud-8. throttled-login actor anon becomes null",
+        AUTH_SVC,
+        "        audit.LOGIN_THROTTLED,\n        principal=anonymous(),\n",
+        "        audit.LOGIN_THROTTLED,\n        principal=None,\n",
+        "repeated_failures_throttle",
+    ),
+    (
+        "aud-9. MCP verifier address becomes null",
+        MCP_AUTH,
+        "                client_address=current_client_address(),\n",
+        "                client_address=None,\n",
+        "mcp_use_after_revoke",
+    ),
+    (
+        "aud-10. async client-address context set to null",
+        ING,
+        "            context_token = _CURRENT_CLIENT_ADDRESS.set(address)\n",
+        "            context_token = _CURRENT_CLIENT_ADDRESS.set(None)\n",
+        "mcp_use_after_revoke",
+    ),
+    (
+        "aud-11. Compose-only ingress flag forced false",
+        ING,
+        "            bundled_ingress=settings.plamotrack_bundled_ingress,\n",
+        "            bundled_ingress=False,\n",
+        "bundled_ingress_header",
+    ),
+    (
+        "aud-12. an invalid proxy entry returns success",
+        ENVSH,
+        '                echo "plamotrack: invalid TRUSTED_PROXIES entry: $entry" >&2\n                return 1\n',
+        '                echo "plamotrack: invalid TRUSTED_PROXIES entry: $entry" >&2\n                return 0\n',
+        "generator_refuses_trusted_proxy_config_injection",
+    ),
+    (
+        "aud-13. the valid proxy directive accumulator becomes a no-op",
+        ENVSH,
+        '        PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES="${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}set_real_ip_from ${entry};\n"\n',
+        '        PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES="${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}"\n',
+        "generator_renders_only_validated_trusted_proxy_directives",
+    ),
+    (
+        "aud-14. the family-2 map reads $uri, not the normalised snapshot",
+        TEMPLATE,
+        "map $plamotrack_normalized_request_uri $plamotrack_family_2_key {\n",
+        "map $uri $plamotrack_family_2_key {\n",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-15. the family-9 limiter points at family 8",
+        TEMPLATE,
+        "    limit_req zone=plamotrack_family_9 burst=10 nodelay;\n",
+        "    limit_req zone=plamotrack_family_8 burst=10 nodelay;\n",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-16. one private-header overwrite removed (six of seven paths)",
+        TEMPLATE,
+        "    location = /openapi.json {\n        set $upstream http://api:8000;\n        proxy_pass $upstream;\n        proxy_http_version 1.1;\n        proxy_set_header Host $http_host;\n        proxy_set_header X-Plamotrack-Client-Address $remote_addr;\n",
+        "    location = /openapi.json {\n        set $upstream http://api:8000;\n        proxy_pass $upstream;\n        proxy_http_version 1.1;\n        proxy_set_header Host $http_host;\n        proxy_set_header X-Plamotrack-Client-Addr $remote_addr;\n",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-17. the normalised-URI snapshot reads raw $request_uri",
+        TEMPLATE,
+        "    set $plamotrack_normalized_request_uri $uri;\n",
+        "    set $plamotrack_normalized_request_uri $request_uri;\n",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-18. omit the explicit worker pin",
+        DOCKERFILE,
+        ', "--workers", "1"',
+        "",
+        "packaged_worker_count",
+    ),
+    (
+        "aud-19. omit O_NOFOLLOW on the private output",
+        MATRIX,
+        " | os.O_NOFOLLOW",
+        "",
+        "private_output_refuses_symlinks",
+    ),
+    (
+        "aud-20. omit the descriptor chmod",
+        MATRIX,
+        "        os.fchmod(output.fileno(), 0o600)\n",
+        "",
+        "private_output_creates_or_restricts",
+    ),
+    (
+        "aud-21. reopen the pathname to write",
+        MATRIX,
+        "        output.write(content)",
+        '        path.write_text(content, encoding="utf-8")',
+        "private_output_keeps_the_open_file",
+    ),
+    (
+        "aud-22. hardcode the failed-setup target",
+        AUTH_SVC,
+        "        audit.SETUP_FAILED,\n        principal=anonymous(),\n        request=request,\n        target=target,",
+        '        audit.SETUP_FAILED,\n        principal=anonymous(),\n        request=request,\n        target="/auth/setup",',
+        "start_on_an_unbound_instance_needs_the_setup_token",
+    ),
+    (
+        "aud-23. omit anon on the browser refusal (`_refuse`, every callback failure)",
+        OIDC_SVC,
+        "        audit.OIDC_LOGIN_FAILED,\n        principal=anonymous(),\n",
+        "        audit.OIDC_LOGIN_FAILED,\n",
+        "the_owner_cancelling_at_the_provider_spends_the_transaction",
+    ),
+    (
+        "aud-24. omit anon on the browser identity refusal",
+        OIDC_SVC,
+        "            audit.OIDC_IDENTITY_REFUSED,\n            principal=anonymous(),\n",
+        "            audit.OIDC_IDENTITY_REFUSED,\n",
+        "a_different_identity_is_refused",
+    ),
+    (
+        "aud-25. omit internal on the start-up session revocation",
+        AUTH_SVC,
+        "            audit.SESSIONS_REVOKED,\n            principal=internal(),\n",
+        "            audit.SESSIONS_REVOKED,\n",
+        "starting_in_the_other_mode",
+    ),
+    (
+        "aud-26. omit internal on the start-up mode change",
+        AUTH_SVC,
+        "            audit.AUTH_MODE_CHANGED,\n            principal=internal(),\n",
+        "            audit.AUTH_MODE_CHANGED,\n",
+        "starting_in_the_other_mode",
+    ),
+    (
+        "aud-27. omit internal on the rebind session revocation",
+        OIDC_SVC,
+        'session, target="recovery rebind-oidc", principal=internal(), client_address="host"',
+        'session, target="recovery rebind-oidc", principal=None, client_address="host"',
+        "rebind_revokes_every_session",
+    ),
+    (
+        "aud-28. omit internal on the OIDC rebind",
+        OIDC_SVC,
+        "        audit.OIDC_REBIND,\n        principal=internal(),\n",
+        "        audit.OIDC_REBIND,\n",
+        "rebind_revokes_every_session",
+    ),
+    (
+        "aud-29. omit internal on the rebind recovery run",
+        OIDC_SVC,
+        "        audit.RECOVERY_RUN,\n        principal=internal(),\n",
+        "        audit.RECOVERY_RUN,\n",
+        "rebind_revokes_every_session",
+    ),
+    (
+        "aud-30. omit anon on the MCP identity refusal",
+        MCP_OAUTH,
+        "                audit.MCP_IDENTITY_REFUSED,\n                principal=anonymous(),\n",
+        "                audit.MCP_IDENTITY_REFUSED,\n",
+        "stranger_is_refused or refresh_response_becomes",
+    ),
+    (
+        "aud-31. omit anon on the failed MCP OIDC claim",
+        MCP_OAUTH,
+        "            audit.OIDC_LOGIN_FAILED,\n            principal=anonymous(),\n",
+        "            audit.OIDC_LOGIN_FAILED,\n",
+        "fails_the_claim_contract or refresh_response_becomes",
+    ),
+    (
+        "aud-32. omit the log-policy installation in create_app",
+        MAIN,
+        "    install_log_hygiene()\n",
+        "",
+        "access_logs_keep_requests",
+    ),
+    (
+        "aud-33. keep the full uvicorn target (query and all)",
+        LOG_HYG,
+        'target.partition("?")[0]',
+        "target",
+        "access_logs_keep_requests",
+    ),
+    (
+        "aud-36. remove the family-8 limit_req",
+        TEMPLATE,
+        "    limit_req zone=plamotrack_family_8 burst=20 nodelay;\n",
+        "",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-37. omit the SDK diagnostic sanitisation",
+        LOG_HYG,
+        'elif record.name.startswith(("fastmcp.server.auth.", "mcp.server.auth.")):',
+        "elif False:",
+        "auth_library_diagnostics or failed_oauth_callbacks",
+    ),
+    (
+        "aud-38. validate and canonicalize before assignment",
+        ING,
+        "    return str(ip_address(value))\n",
+        "    return value\n",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-39. stop at malformed hops",
+        ING,
+        "            except ValueError:\n                break\n",
+        "            except ValueError:\n                continue\n",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-40. empty hops are boundaries",
+        ING,
+        '        chain = forwarded_for.split(",")\n',
+        '        chain = [v for v in forwarded_for.split(",") if v.strip()]\n',
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-41. validate optional port",
+        ING,
+        '        raise ValueError("Malformed forwarded address port")',
+        "        pass",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-42. validate complete brackets",
+        ING,
+        '            raise ValueError("Malformed bracketed IP address")',
+        "            pass",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-43. reject interface scope",
+        ING,
+        '    if "%" in value:\n        raise ValueError("A forwarded address cannot carry an interface scope")\n',
+        "",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-44. preserve private-header validation",
+        ING,
+        "                return _parse_address(bundled)",
+        "                return bundled",
+        "bundled_audit_address",
+    ),
+    (
+        "aud-45. fingerprint client on issuance",
+        MCP_OAUTH,
+        'detail=f"client={audit.external_reference(client.client_id)}",',
+        'detail=f"client={client.client_id}",',
+        "oauth_client_audit_references and issue",
+    ),
+    (
+        "aud-46. fingerprint client on upstream ending",
+        MCP_OAUTH,
+        '                    f"client={audit.external_reference(transition.client_id)} "',
+        '                    f"client={transition.client_id} "',
+        "oauth_client_audit_references and explicit-claim",
+    ),
+    (
+        "aud-47. fingerprint client on identity refusal",
+        MCP_OAUTH,
+        '                    f"client={audit.external_reference(transition.client_id)}"',
+        '                    f"client={transition.client_id}"',
+        "oauth_client_audit_references and identity",
+    ),
+    (
+        "aud-48. fingerprint client on claim refusal",
+        MCP_OAUTH,
+        'f"id_token_{verdict.reason} client={audit.external_reference(transition.client_id)}"',
+        'f"id_token_{verdict.reason} client={transition.client_id}"',
+        "oauth_client_audit_references and claim",
+    ),
+    (
+        "aud-49. fingerprint client on either-half revocation",
+        MCP_OAUTH,
+        'detail=f"client={audit.external_reference(token.client_id)} presented={presented}",',
+        'detail=f"client={token.client_id} presented={presented}",',
+        "oauth_client_audit_references and revoke",
+    ),
+    (
+        "aud-50. fingerprint refused MCP subject",
+        MCP_OAUTH,
+        'f"subject={audit.external_reference(verdict.subject)} "',
+        'f"subject={verdict.subject} "',
+        "oauth_client_audit_references and identity",
+    ),
+    (
+        "aud-51. fingerprint refused browser subject",
+        OIDC_SVC,
+        'detail=f"subject={audit.external_reference(subject)}",',
+        'detail=f"subject={subject}",',
+        "browser_identity_audit",
+    ),
+    (
+        "aud-52. categorize opaque browser callback errors",
+        OIDC_SVC,
+        '            category = "other"',
+        "            category = error",
+        "browser_callback_audit",
+    ),
+    (
+        "aud-53. omit opaque token endpoint error payload",
+        OIDC_SVC,
+        'log.warning("OIDC code exchange refused: status=%s", response.status_code)',
+        'log.warning("OIDC code exchange refused: status=%s error=%s", response.status_code, body)',
+        "browser_token_error_logs",
+    ),
+    (
+        "aud-54. fingerprint the whole opaque identifier",
+        AUDIT_SVC,
+        'hashlib.sha256(value.encode("utf-8", errors="surrogatepass"))',
+        'hashlib.sha256(value.partition("?")[0].encode("utf-8", errors="surrogatepass"))',
+        "external_audit_reference",
+    ),
+    (
+        "aud-55. absent identifier differs from empty",
+        AUDIT_SVC,
+        '    if value is None:\n        return "none"',
+        '    if not value:\n        return "none"',
+        "external_audit_reference",
+    ),
+    (
+        "aud-56. handle every string without raising",
+        AUDIT_SVC,
+        'value.encode("utf-8", errors="surrogatepass")',
+        'value.encode("utf-8")',
+        "external_audit_reference",
+    ),
+    (
+        "aud-57. callback URI at start comes from public configuration",
+        OIDC_SVC,
+        '            "redirect_uri": provider.redirect_uri,',
+        '            "redirect_uri": str(request.base_url) + "api/auth/oidc/callback",',
+        "start_ignores_a_forwarded_host",
+    ),
+    (
+        "aud-58. refused callback Location comes from public configuration",
+        AUTH_ROUTER,
+        'f"{provider.home_url}?{AUTH_ERROR_PARAM}={refused.code}", status_code=302',
+        'f"{request.base_url}?{AUTH_ERROR_PARAM}={refused.code}", status_code=302',
+        "callback_redirects_to_public_base_url and access_denied",
     ),
 ]
 
@@ -3045,10 +5499,1845 @@ async def test_review_a_new_line_refuses_more_uploaded_kits_than_its_quantity(cl
 #: `test_order_invariants.py`, `main`'s named `test_cell_semantics.py`, and the
 #: merge kept one list under the union of both case sets, so every `cell-`
 #: mutant selected zero tests and pytest's exit 5 read as a kill.
+
+# --- the `rbp-` set (#214): `recovery rebind-oidc` purges the MCP OAuth grants -------------
+# The purge in `services/oidc.py` (`_purge_mcp_grants`), the provider half
+# (`revoke_purged_grants_upstream`, `OidcProvider.revoke_token`), the shared
+# collection contract in `auth/mcp_oauth_state.py`, and the command's wiring.
+# Not listed, deliberately: the `settings.mcp_oauth_signing_key` early-out before
+# the records are read — an empty key derives a Fernet key that decrypts nothing,
+# so dropping the check changes nothing observable; it saves a pool, not a decision.
+CASES += [
+    (
+        "rbp-1. the purge's DELETE never runs",
+        OIDC_SVC,
+        """    await session.execute(
+        text(f"DELETE FROM {MCP_OAUTH_STATE_TABLE} WHERE collection IN :collections").bindparams(
+            bindparam("collections", expanding=True)
+        ),
+        {"collections": sorted(GRANT_COLLECTIONS)},
+    )
+""",
+        "    pass  # neutered\n",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-2. the grant locks not taken before the read",
+        OIDC_SVC,
+        '    for grant_id in grant_ids:\n        await session.execute(\n            text(\n                "SELECT pg_advisory_xact_lock',
+        '    for grant_id in ():\n        await session.execute(\n            text(\n                "SELECT pg_advisory_xact_lock',
+        "waits_for_a_refresh_in_flight",
+    ),
+    (
+        "rbp-3. the registered clients and the consent transactions purged too",
+        OIDC_SVC,
+        '        {"collections": sorted(GRANT_COLLECTIONS)},',
+        '        {"collections": sorted(GRANT_COLLECTIONS | {"mcp-oauth-proxy-clients", "mcp-oauth-transactions"})},',
+        "purges_every_grant",
+    ),
+    (
+        "rbp-4. no audit row and no upstream material per grant",
+        OIDC_SVC,
+        "    for grant_id in grant_ids:\n        record = records.get(grant_id)",
+        "    for grant_id in ():\n        record = records.get(grant_id)",
+        "purges_every_grant or purges_the_grants_unread",
+    ),
+    (
+        "rbp-5. the access-token fallback removed (a grant the provider gave no refresh token)",
+        OIDC_SVC,
+        '    if isinstance(access, str) and access:\n        return access, "access_token"',
+        '    if False:\n        return access, "access_token"',
+        "purges_every_grant",
+    ),
+    (
+        "rbp-6. the provider never asked",
+        OIDC_SVC,
+        "        if await provider.revoke_token(grant.token, token_type_hint=grant.token_type_hint):\n            accepted += 1",
+        "        if False:\n            accepted += 1",
+        "purges_every_grant or waits_for_a_refresh_in_flight",
+    ),
+    (
+        "rbp-7. a provider outage raises instead of standing down",
+        OIDC_SVC,
+        '    except UnavailableError:\n        log.warning("OIDC rebind: provider unreachable; %d upstream token(s) stay", len(purged))\n        return 0',
+        "    except UnavailableError:\n        raise",
+        "best_effort and provider_down",
+    ),
+    (
+        "rbp-8. a refused revocation counted as accepted",
+        OIDC_SVC,
+        '        if response.status_code != 200:\n            log.warning("OIDC revocation refused: status=%s", response.status_code)\n            return False',
+        '        if response.status_code != 200:\n            log.warning("OIDC revocation refused: status=%s", response.status_code)\n            return True',
+        "best_effort and refused",
+    ),
+    (
+        "rbp-9. no revocation endpoint advertised: posts anyway",
+        OIDC_SVC,
+        '        if metadata.revocation_endpoint is None:\n            log.info("OIDC revocation: the provider advertises no revocation endpoint")\n            return False',
+        '        if False:\n            log.info("OIDC revocation: the provider advertises no revocation endpoint")\n            return False',
+        "best_effort and no_endpoint",
+    ),
+    (
+        "rbp-10. the rebind rolled back instead of committed",
+        OIDC_SVC,
+        "    await session.commit()\n    return RebindOutcome(",
+        "    await session.rollback()\n    return RebindOutcome(",
+        "purges_every_grant or asks_the_provider_after_the_commit",
+    ),
+    (
+        "rbp-11. the grant count reported as zero",
+        OIDC_SVC,
+        "    return len(grant_ids), len(code_keys), upstream",
+        "    return 0, len(code_keys), upstream",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-12. the recovery-run row loses the purge count",
+        OIDC_SVC,
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged} codes_purged={codes}",',
+        '        detail=f"sessions_revoked={revoked} codes_purged={codes}",',
+        "rebind_revokes_every_session or purges_every_grant",
+    ),
+    (
+        "rbp-13. the command hands the provider step nothing",
+        RECOVERY,
+        "    revoked_upstream = await oidc_service.revoke_purged_grants_upstream(settings, outcome.upstream)",
+        "    revoked_upstream = await oidc_service.revoke_purged_grants_upstream(settings, [])",
+        "asks_the_provider_after_the_commit",
+    ),
+    (
+        "rbp-14. an unexchanged code is not a grant's (stays behind)",
+        MCP_OAUTH_STATE,
+        "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
+        "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION}",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-15. the JTI mappings stay behind",
+        MCP_OAUTH_STATE,
+        "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
+        "    {GRANT_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-16. the refresh-token entries stay behind",
+        MCP_OAUTH_STATE,
+        "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
+        "    {GRANT_COLLECTION, JTI_COLLECTION, CODE_COLLECTION}",
+        "purges_every_grant",
+    ),
+    # Cursor #219 round 1, P3-1: the unexchanged codes were purged unread.
+    (
+        "rbp-17. the unexchanged codes purged unread (provider never asked for their tokens)",
+        OIDC_SVC,
+        "            for code in code_keys:\n                record = await wrapped.get(key=code, collection=CODE_COLLECTION)",
+        "            for code in ():\n                record = await wrapped.get(key=code, collection=CODE_COLLECTION)",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-18. the code record read at the top level, not under idp_tokens",
+        OIDC_SVC,
+        '        token, hint = _upstream_credential(record.get("idp_tokens") or {})',
+        "        token, hint = _upstream_credential(record)",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-19. the recovery-run row loses the code count",
+        OIDC_SVC,
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged} codes_purged={codes}",',
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged}",',
+        "rebind_revokes_every_session or purges_every_grant",
+    ),
+    # --- #221 (the 0.3.0 scan): the scan- set. Item 4 — the ladders and the
+    # --- verification budget; item 3 — the refusal budget and retention; item 1
+    # --- — the gate, the reader, the three guards, the field cap, the render;
+    # --- item 2 — the lifetime, the link, the cap, the quota, the cull, the cache.
+    (
+        "scan-1. one ladder for every address (the keying dropped)",
+        AUTH_SVC,
+        "    ladder = budgets.ladder(target, audit.client_address_of(request))\n    retry_after = ladder.retry_after()\n",
+        "    ladder = budgets.ladder(target, None)\n    retry_after = ladder.retry_after()\n",
+        "one_address_at_the_ceiling_does_not_exclude_another",
+    ),
+    (
+        "scan-2. a ladder never decays",
+        BUDGET,
+        "        if now - self.last_failure > DECAY_AFTER:\n            self.failures = 0\n",
+        "        if False:\n            self.failures = 0\n",
+        "restarts_after_a_quiet_period",
+    ),
+    (
+        "scan-3. the verification budget is never consulted",
+        AUTH_SVC,
+        '            retry_after = budgets.verification.take()\n            budget = "instance"\n',
+        '            retry_after = None\n            budget = "instance"\n',
+        "verification_budget_bounds_the_instance",
+    ),
+    (
+        "scan-4. a successful login leaves the ladder as it was",
+        AUTH_SVC,
+        "    ladder.reset()\n    if credentials.password_needs_rehash(credential.secret_hash):\n",
+        "    if credentials.password_needs_rehash(credential.secret_hash):\n",
+        "repeated_failures_throttle_then_a_success_resets",
+    ),
+    (
+        "scan-5. every refusal is recorded, budget or not",
+        AUDIT_SVC,
+        "        admitted, summary = budget.admit(address)\n        if not admitted:\n            return\n",
+        "        admitted, summary = budget.admit(address)\n        if not admitted and False:\n            return\n",
+        "hostile_origin_flood_writes_the_bound",
+    ),
+    (
+        "scan-6. the suppressed count is never written",
+        AUDIT_SVC,
+        "        if summary:\n            await record_event(\n                session,\n                REFUSALS_SUPPRESSED,\n",
+        "        if summary and False:\n            await record_event(\n                session,\n                REFUSALS_SUPPRESSED,\n",
+        "hostile_origin_flood_writes_the_bound",
+    ),
+    (
+        "scan-7. only the instance bound, no per-address bound",
+        BUDGET,
+        "        if self.total >= REFUSALS_PER_WINDOW or self._per_address.get(address, 0) >= (\n            REFUSALS_PER_ADDRESS\n        ):\n",
+        "        if self.total >= REFUSALS_PER_WINDOW:\n",
+        "each_address_and_the_instance_have_a_bound",
+    ),
+    (
+        "scan-8. a failed retention pass ends the loop",
+        AUDIT_SVC,
+        '        except Exception:\n            log.exception("audit retention pass failed; next in %ss", interval)\n',
+        "        except Exception:\n            raise\n",
+        "retention_loop_survives_a_failed_pass",
+    ),
+    (
+        "scan-9. the gate enforces no budget",
+        PRE,
+        "    if outcome.kind is not Dispatch.FULL:\n        return None\n    (endpoint,) = outcome.endpoints\n",
+        "    if outcome.kind is not Dispatch.FULL or True:\n        return None\n    (endpoint,) = outcome.endpoints\n",
+        "declared_length_past_the_budget_is_413 or chunked_body_is_judged",
+    ),
+    (
+        "scan-10. a declared length is not judged before reading",
+        BODY,
+        "    if declared is not None and declared > limit:\n        return None\n",
+        "    if False:\n        return None\n",
+        "declared_length_over_the_budget_reads_nothing",
+    ),
+    (
+        "scan-11. the streamed total is not judged",
+        BODY,
+        "        if total > limit:\n            return None\n",
+        "        if False:\n            return None\n",
+        "chunked_body_is_judged or declared_length_over_the_budget_reads_nothing",
+    ),
+    (
+        "scan-12. the protocol form guard reads without a budget",
+        MCP_OAUTH,
+        "                body = await read_bounded(scope, receive, self.max_body_bytes)\n            except Disconnected:\n                return  # the client left mid-body: nothing to answer, nothing to run\n            if body is None:\n                await refuse_too_large(scope, receive, send, self.max_body_bytes)\n                return\n            media_type = ",
+        "                body = await read_bounded(scope, receive, 10**9)\n            except Disconnected:\n                return  # the client left mid-body: nothing to answer, nothing to run\n            if body is None:\n                await refuse_too_large(scope, receive, send, self.max_body_bytes)\n                return\n            media_type = ",
+        "protocol_body_past_the_budget_is_413 and token",
+    ),
+    (
+        "scan-13. the registration guard reads without a budget",
+        MCP_OAUTH,
+        "            body = await read_bounded(scope, receive, self.max_body_bytes)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        try:\n            json.loads(body)\n",
+        "            body = await read_bounded(scope, receive, 10**9)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        try:\n            json.loads(body)\n",
+        "protocol_body_past_the_budget_is_413 and register",
+    ),
+    (
+        "scan-14. the consent guard reads without a budget",
+        MCP_OAUTH,
+        "            body = await read_bounded(scope, receive, self.max_body_bytes)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        await self.app(scope, replay(body), send)\n",
+        "            body = await read_bounded(scope, receive, 10**9)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        await self.app(scope, replay(body), send)\n",
+        "protocol_body_past_the_budget_is_413 and consent",
+    ),
+    (
+        "scan-15. no cap on form fields",
+        MCP_OAUTH,
+        "MAX_FORM_FIELDS = 64\n",
+        "MAX_FORM_FIELDS = 10**6\n",
+        "more_form_fields_than_the_cap",
+    ),
+    (
+        "scan-16. the render forgets the budget directive (template stale)",
+        REG,
+        '        lines.append(f"{indent}    client_max_body_size {nginx_size(limit)};")\n',
+        "",
+        "body_budget_region_equals_the_registry_render or every_body_budget_block",
+    ),
+    (
+        "scan-17. the family-3 actions declare no budget",
+        REG,
+        "            max_body_bytes=AUTH_BODY_LIMIT if route.path in AUTH_BODY_ROUTES else None,\n",
+        "            max_body_bytes=None,\n",
+        "every_anonymous_route_that_takes_a_body_declares_a_budget or declared_length_past_the_budget_is_413",
+    ),
+    (
+        "scan-18. a client record is written with no lifetime",
+        MCP_OAUTH,
+        "        if ttl is None and not (existing is not None and existing_ttl is None):\n",
+        "        if False:\n",
+        "registration_expires_unless_a_grant_links_it or cimd_record_is_stored_with_the_lifetime",
+    ),
+    (
+        "scan-19. issuance does not keep the client",
+        MCP_OAUTH,
+        '            await self._client_store.keep(client.client_id or "")\n',
+        "            pass\n",
+        "registration_expires_unless_a_grant_links_it",
+    ),
+    (
+        "scan-20. the store admits a new record past the cap",
+        MCP_OAUTH,
+        "            if live >= MAX_CLIENT_RECORDS:\n",
+        "            if False:\n",
+        "cimd_lookup_at_the_cap_is_not_a_client",
+    ),
+    (
+        "scan-21. the guard never answers 503",
+        MCP_OAUTH,
+        "        if await self.proxy.registrations_full():\n",
+        "        if False:\n",
+        "collection_is_capped_and_the_guard_answers_503",
+    ),
+    (
+        "scan-22. no registration quota",
+        MCP_OAUTH,
+        "        retry_after = self.quota.admit(audit.client_address_of(Request(scope)))\n",
+        "        retry_after = None\n",
+        "address_has_a_registration_quota",
+    ),
+    (
+        "scan-23. the registration guard never culls",
+        MCP_OAUTH,
+        "        await self.proxy.cull_if_due()\n        if await self.proxy.registrations_full():\n",
+        "        if await self.proxy.registrations_full():\n",
+        "expired_rows_are_culled_at_registration",
+    ),
+    (
+        "scan-24. FastMCP's CIMD cache left unbounded",
+        MCP_OAUTH,
+        "        fetcher._cache = BoundedCache(CIMD_CACHE_ENTRIES)\n",
+        "        fetcher._cache = {}\n",
+        "proxy_installs_the_bounded_cache",
+    ),
+    (
+        "scan-25. the bounded cache never evicts",
+        MCP_OAUTH,
+        "        if key not in self and len(self) >= self.capacity:\n            del self[next(iter(self))]\n",
+        "        if False:\n            del self[next(iter(self))]\n",
+        "cimd_document_cache_forgets_its_oldest_entry",
+    ),
+    # --- Codex #222 round 1 (f1–f3): the cheap paths spend nothing, the reserved
+    # --- bucket, the cull at materialisation, the disconnect abort. ---------------
+    (
+        "scan-26. the setup path charges the verification bucket again",
+        AUTH_ROUTER,
+        '        session, budgets, request=request, target="/auth/setup", verification=False\n',
+        '        session, budgets, request=request, target="/auth/setup", verification=True\n',
+        "wrong_setup_token_spends_no_verification",
+    ),
+    (
+        "scan-27. a known browser is nobody special",
+        AUTH_SVC,
+        '        session, budgets, request=request, target="/auth/login", known_browser=known\n',
+        '        session, budgets, request=request, target="/auth/login", known_browser=False\n',
+        "known_browser_is_admitted_from_the_reserved_bucket",
+    ),
+    (
+        "scan-28. the reserved bucket is charged and the general one too",
+        AUTH_SVC,
+        "        if not admitted_reserved:\n            retry_after = budgets.verification.take()\n",
+        "        if True:\n            retry_after = budgets.verification.take()\n",
+        "known_browser_is_admitted_from_the_reserved_bucket",
+    ),
+    (
+        "scan-29. no cull where a client record is created",
+        MCP_OAUTH,
+        "            await self._store.cull_expired(collection or CLIENT_COLLECTION)\n            live = await self._store.count_live(collection or CLIENT_COLLECTION)\n",
+        "            live = await self._store.count_live(collection or CLIENT_COLLECTION)\n",
+        # Re-pointed by #242: a lookup materialises no record under FastMCP 4,
+        # so the cull at creation has one caller and one witness.
+        "registration_rolls_expired_records_over",
+    ),
+    (
+        "scan-30. a disconnect ends the body as if it were complete",
+        BODY,
+        "            raise Disconnected\n",
+        "            break\n",
+        "abandoned_mid_way or reader_raises_on_a_disconnect",
+    ),
+    (
+        "scan-31. the OIDC start charges the verification bucket again",
+        OIDC_SVC,
+        '            session, budgets, request=request, target="/auth/oidc/start", verification=False\n',
+        '            session, budgets, request=request, target="/auth/oidc/start", verification=True\n',
+        "start_with_wrong_setup_tokens_spends_no_verification",
+    ),
+]
+
+# --- the `home-` set (#233): the order stage and the summary counts (§13.2) ------------
+# One predicate (`services/order_stage.py`) read by the `stage` field on every order
+# row, the per-stage counts (`services/summary.py`) and, through them, Home's columns
+# and the Orders filter; one function for REST's GET /summary and the tool. Each
+# mutant below moves one order between stages, or one count, and is killed by
+# tests/test_summary.py — the MCP parity test for the tool's body, the route-policy
+# suite for the scope declaration.
+CASES += [
+    (
+        "home-1. a received order is not received",
+        STAGE,
+        '    if order.received_at is not None:\n        return "received"\n',
+        "",
+        "every_order_row_carries_its_stage or order_counts_are_per_stage",
+    ),
+    (
+        "home-2. a shipped order is not in transit",
+        STAGE,
+        '    if order.shipped_at is not None:\n        return "in_transit"\n',
+        "",
+        "every_order_row_carries_its_stage or order_counts_are_per_stage",
+    ),
+    (
+        "home-3. one pre-ordered kit makes the order a pre-order (all → any)",
+        STAGE,
+        "    if kits and all(kit.status == KitStatus.PRE_ORDERED for kit in kits):",
+        "    if kits and any(kit.status == KitStatus.PRE_ORDERED for kit in kits):",
+        "every_order_row_carries_its_stage or order_counts_are_per_stage",
+    ),
+    (
+        "home-4. an order with no kits is a pre-order (the at-least-one guard dropped)",
+        STAGE,
+        "    if kits and all(kit.status == KitStatus.PRE_ORDERED for kit in kits):",
+        "    if all(kit.status == KitStatus.PRE_ORDERED for kit in kits):",
+        "every_order_row_carries_its_stage or order_counts_are_per_stage",
+    ),
+    (
+        "home-5. the stage on the wire is always ordered",
+        SCH,
+        "        return order_stage(self)\n",
+        '        return "ordered"\n',
+        "every_order_row_carries_its_stage or shipping_and_receiving_move_the_stage",
+    ),
+    (
+        "home-6. a status with several kits counts one",
+        SUMM,
+        "        kit_counts[KitStatus(status).value] = count\n",
+        "        kit_counts[KitStatus(status).value] = min(count, 1)\n",
+        "kit_counts_are_per_status or order_counts_are_per_stage_and_match",
+    ),
+    (
+        "home-7. every order counts as ordered",
+        SUMM,
+        "        order_counts[order_stage(order)] += 1\n",
+        '        order_counts["ordered"] += 1\n',
+        "order_counts_are_per_stage_and_match or shipping_and_receiving_move_the_stage",
+    ),
+    (
+        # Codex #237 round 1: the complement of home-7 — every order still lands
+        # in its own bucket, but each bucket reads one however many it holds.
+        "home-11. a stage with several orders counts one",
+        SUMM,
+        "        order_counts[order_stage(order)] += 1\n",
+        "        order_counts[order_stage(order)] = 1\n",
+        "order_counts_are_per_stage_and_match",
+    ),
+    (
+        "home-8. the two statements read two snapshots",
+        SUMM,
+        "    await begin_read_snapshot(session)\n",
+        "    pass  # neutered\n",
+        "the_summary_reads_one_snapshot",
+    ),
+    (
+        "home-9. the tool answers with the meta document",
+        MCP,
+        '        return (await collection_summary(session)).model_dump(mode="json")\n',
+        '        return (await instance_meta(session)).model_dump(mode="json")\n',
+        "get_summary_and_list_orders_match_rest_on_mcp",
+    ),
+    (
+        "home-10. the tool ships unscoped",
+        REG,
+        '    "get_summary": Scope.READ,\n',
+        "",
+        "the_mcp_tool_scope_map_matches_the_live_registry",
+    ),
+]
+
+# --- #241: provider revocation off FastMCP's upstream client (M6.1 prep). ----------
+CASES += [
+    (
+        "241-1. a process that never held the document reaches for it anyway",
+        MCP_OAUTH,
+        '        if provider.cached_metadata is None:\n            log.info("MCP OAuth: provider document not held; local revocation stands")\n            return\n',
+        '        if False:\n            log.info("MCP OAuth: provider document not held; local revocation stands")\n            return\n',
+        "fresh_process_with_the_provider_down",
+    ),
+    (
+        "241-2. the hint names the other token",
+        MCP_OAUTH,
+        '            (grant.refresh_token, "refresh_token")\n            if grant.refresh_token\n            else (grant.access_token, "access_token")\n',
+        '            (grant.refresh_token, "access_token")\n            if grant.refresh_token\n            else (grant.access_token, "refresh_token")\n',
+        "kills_every_credential_of_the_grant",
+    ),
+    (
+        "241-3. the revocation request carries no client authentication",
+        OIDC_SVC,
+        "                response = await self._http.post(\n                    metadata.revocation_endpoint,\n                    data=form,\n                    auth=(self.client_id, self._client_secret),\n                )\n",
+        "                response = await self._http.post(\n                    metadata.revocation_endpoint,\n                    data=form,\n                )\n",
+        "kills_every_credential_of_the_grant",
+    ),
+    (
+        "241-4. the best-effort catch forgives a defect again",
+        OIDC_SVC,
+        '        except httpx.HTTPError as exc:\n            log.warning("OIDC revocation failed: %s", type(exc).__name__)\n            return False\n',
+        '        except Exception as exc:\n            log.warning("OIDC revocation failed: %s", type(exc).__name__)\n            return False\n',
+        "defect_in_the_upstream_revocation",
+    ),
+    (
+        "241-5. the provider is asked before the local end",
+        MCP_OAUTH,
+        "                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)\n                    await self._upstream_token_store.delete(key=mapping.upstream_token_id)\n",
+        "                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)\n                    if grant is not None:\n                        await self._revoke_upstream(grant)\n                    await self._upstream_token_store.delete(key=mapping.upstream_token_id)\n",
+        "defect_in_the_upstream_revocation",
+    ),
+    (
+        "241-6. a refused revocation counts as accepted",
+        OIDC_SVC,
+        '            log.warning("OIDC revocation refused: status=%s", response.status_code)\n            return False\n',
+        '            log.warning("OIDC revocation refused: status=%s", response.status_code)\n            return True\n',
+        "upstream_revocation_after_a_rebind_is_best_effort",
+    ),
+]
+
+# --- #243: the FastMCP 4 bump — the seam under FastMCP's own upstream client, the
+# binding's 405 mirroring the SDK's null id, the RFC 9207 discovery flag. --------------
+CASES += [
+    (
+        "243-1. the twin is bypassed and FastMCP's client reaches for the network",
+        MCP_OAUTH,
+        "        client = super()._create_upstream_oauth_client()\n        if self.upstream_transport is not None:\n",
+        "        client = super()._create_upstream_oauth_client()\n        if False:\n",
+        "the_upstream_client_is_fastmcps_own_under_the_twin",
+    ),
+    (
+        "243-2. the binding's 405 keeps SDK 1's id",
+        DEP,
+        '            id=None,\n            error=ErrorData(code=INVALID_REQUEST, message="Method Not Allowed"),\n',
+        '            id="server-error",\n            error=ErrorData(code=INVALID_REQUEST, message="Method Not Allowed"),\n',
+        "the_binding_refusal_is_the_sdk_protocol_error",
+    ),
+    (
+        "243-3. the binding's null id is dropped from the document",
+        DEP,
+        "            error.model_dump_json(by_alias=True, exclude_unset=True),\n",
+        "            error.model_dump_json(by_alias=True, exclude_none=True),\n",
+        "the_binding_refusal_is_the_sdk_protocol_error",
+    ),
+    (
+        "243-4. discovery denies the issuer parameter every redirect carries",
+        MCP_OAUTH,
+        "        metadata.authorization_response_iss_parameter_supported = True\n",
+        "        metadata.authorization_response_iss_parameter_supported = False\n",
+        "discovery_advertises_exactly_the_admitted_client_authentication",
+    ),
+]
+
+# --- #242: the client-record bounds restated DCR-only under FastMCP 4 — the
+# adapter's rule at the seam, and the document cache as the CIMD side's bound. ----------
+CASES += [
+    (
+        "242-1. a later write puts a permanent record back on the clock",
+        MCP_OAUTH,
+        "        if ttl is None and not (existing is not None and existing_ttl is None):\n",
+        "        if ttl is None:\n",
+        "permanent_record_stays_permanent_through_a_later_write",
+    ),
+    (
+        "242-2. the app's document-cache bound is looser than FastMCP's own",
+        MCP_OAUTH,
+        "CIMD_CACHE_ENTRIES = 256\n",
+        "CIMD_CACHE_ENTRIES = 2048\n",
+        "proxy_installs_the_bounded_cache_on_fastmcps_fetcher",
+    ),
+]
+
+# --- #247: a kit list sorted by a build date is sorted by the date the row prints —
+# the sort's own date, undated last, the tie-break, and `newest`'s direction. -----------
+CASES += [
+    (
+        "247-1. undated builds sort first (Postgres's descending default)",
+        KITS,
+        "        return (date.desc().nulls_last(), Kit.created_at.desc(), Kit.id)\n",
+        "        return (date.desc(), Kit.created_at.desc(), Kit.id)\n",
+        "rest_lists_kits_in_the_promised_order and completed",
+    ),
+    (
+        "247-2. builds backfilled to one midnight tie oldest first",
+        KITS,
+        "        return (date.desc().nulls_last(), Kit.created_at.desc(), Kit.id)\n",
+        "        return (date.desc().nulls_last(), Kit.created_at, Kit.id)\n",
+        "rest_lists_kits_in_the_promised_order and completed",
+    ),
+    (
+        "247-3. `completed` reads the status clock (the defect)",
+        KITS,
+        '        date = Kit.build_started_at if sort == "started" else Kit.build_completed_at\n',
+        '        date = Kit.build_started_at if sort == "started" else Kit.status_updated_at\n',
+        "rest_lists_kits_in_the_promised_order and completed",
+    ),
+    (
+        "247-4. an undated build borrows the status clock (the rule the owner declined)",
+        KITS,
+        '        date = Kit.build_started_at if sort == "started" else Kit.build_completed_at\n',
+        "        date = (\n"
+        "            Kit.build_started_at\n"
+        '            if sort == "started"\n'
+        "            else func.coalesce(Kit.build_completed_at, Kit.status_updated_at)\n"
+        "        )\n",
+        "rest_lists_kits_in_the_promised_order and completed-complete",
+    ),
+    (
+        "247-5. `started` and `completed` read each other's date",
+        KITS,
+        '        date = Kit.build_started_at if sort == "started" else Kit.build_completed_at\n',
+        '        date = Kit.build_started_at if sort == "completed" else Kit.build_completed_at\n',
+        "rest_lists_kits_in_the_promised_order and started",
+    ),
+    (
+        "247-6. `newest` is oldest first",
+        KITS,
+        "        return (Kit.created_at.desc(), Kit.id)\n",
+        "        return (Kit.created_at, Kit.id)\n",
+        "rest_lists_kits_in_the_promised_order and newest",
+    ),
+    (
+        "247-7. the service refuses `completed`",
+        KITS,
+        'KIT_SORTS: tuple[KitSort, ...] = ("created", "newest", "recent", "started", "completed", "name")\n',
+        'KIT_SORTS: tuple[KitSort, ...] = ("created", "newest", "recent", "started", "name")\n',
+        "mcp_lists_kits_in_the_same_order and completed",
+    ),
+]
+
+# --- #289: MCP create_order names its shop by id or by name, and an id is never a
+# name — the service's refusal, the spellings it covers, the tool's one-of rule. -------
+CASES += [
+    (
+        "289-1. the select-or-create stops refusing an id as a name",
+        ORD,
+        "    if _parses_as_id(wanted):\n",
+        "    if False:\n",
+        "an_id_given_as_the_retailer_name_is_refused",
+    ),
+    (
+        "289-2. the refusal reads the untrimmed input, not the name as stored",
+        ORD,
+        "    if _parses_as_id(wanted):\n",
+        "    if _parses_as_id(name):\n",
+        "an_id_given_as_the_retailer_name_is_refused",
+    ),
+    (
+        "289-3. only the canonical spelling of an id counts as one",
+        ORD,
+        "        uuid.UUID(value)\n",
+        "        if str(uuid.UUID(value)) != value:\n            return False\n",
+        "an_id_given_as_the_retailer_name_is_refused",
+    ),
+    (
+        "289-4. the tool takes both fields at once",
+        MCP,
+        "    if (retailer is None) == (retailer_id is None):\n",
+        "    if retailer is None and retailer_id is None:\n",
+        "exactly_one_of_retailer_and_retailer_id",
+    ),
+    (
+        "289-5. the tool takes neither field",
+        MCP,
+        "    if (retailer is None) == (retailer_id is None):\n",
+        "    if retailer is not None and retailer_id is not None:\n",
+        "exactly_one_of_retailer_and_retailer_id",
+    ),
+    (
+        "289-6. a malformed retailer_id escapes the tool's own refusal",
+        MCP,
+        '        _parse_uuid(retailer_id, "retailer_id") if retailer_id is not None else None\n',
+        "        uuid.UUID(retailer_id) if retailer_id is not None else None\n",
+        "malformed_retailer_id_is_refused",
+    ),
+    (
+        "289-7. the description stops saying an id as a name is refused",
+        MCP,
+        "    new. An id is never a name: an id passed as `retailer` is refused, not made\n"
+        "    into a shop.",
+        "    new.",
+        "schema_offers_both_fields_and_requires_neither",
+    ),
+]
+
+# --- #299/#300/#301: the database URL from POSTGRES_* — an IPv6 host bracketed, a
+# zone id raw for SQLAlchemy and `%25` for asyncpg's decoder, every `%` doubled on its
+# way into alembic's ConfigParser — and a settings refusal that echoes no secret.
+# One case per place the fix lands. ----------------------------------------------------
+CASES += [
+    (
+        "dsn-1. a bracketed POSTGRES_HOST is not unwrapped",
+        CFG,
+        '    host = value[1:-1] if value.startswith("[") and value.endswith("]") else value\n',
+        "    host = value\n",
+        "round_trips_through_sqlalchemy",
+    ),
+    (
+        "dsn-2. a colon outside an IPv6 literal is let through",
+        CFG,
+        '    if ":" in host:\n        try:\n            IPv6Address(host)\n',
+        "    if False:\n        try:\n            IPv6Address(host)\n",
+        "colon_outside_an_ipv6_literal",
+    ),
+    (
+        "dsn-3. the host is written into the URL unbracketed (the #299 defect)",
+        CFG,
+        "            self.database_url = URL.create(\n"
+        '                "postgresql+asyncpg",\n'
+        "                username=self.postgres_user,\n"
+        "                password=self.postgres_password,\n"
+        "                host=_database_host(self.postgres_host),\n"
+        "                port=self.postgres_port,\n"
+        "                database=self.postgres_db,\n"
+        "            ).render_as_string(hide_password=False)\n",
+        "            from urllib.parse import quote\n"
+        "\n"
+        "            user = quote(self.postgres_user, safe='')\n"
+        "            password = quote(self.postgres_password, safe='')\n"
+        "            host = _database_host(self.postgres_host)\n"
+        "            self.database_url = (\n"
+        '                f"postgresql+asyncpg://{user}:{password}"\n'
+        '                f"@{host}:{self.postgres_port}/{self.postgres_db}"\n'
+        "            )\n",
+        "round_trips_through_sqlalchemy",
+    ),
+    (
+        "dsn-4. the zone id is RFC 6874-encoded for SQLAlchemy, which never decodes it",
+        CFG,
+        "    return host\n",
+        '    return host.replace("%", "%25")\n',
+        "engine_hands_asyncpg_the_bare_host",
+    ),
+    # dsn-5 judges the host and never reassembles. Its first form, `if True:`, made
+    # every Settings ignore DATABASE_URL, so the harness session's alembic and
+    # truncating teardown ran against the POSTGRES_* (dev) database (GLM, PR #302
+    # round 1, finding 1). Round 1's re-anchor, reassembling when the host has a
+    # colon, still did that for a developer whose .env says POSTGRES_HOST=::1. A
+    # mutant here must leave an explicit DATABASE_URL alone for every valid host.
+    (
+        "dsn-5. POSTGRES_HOST is judged when DATABASE_URL is set explicitly",
+        CFG,
+        "        if not self.database_url:\n",
+        "        if not self.database_url or _database_host(self.postgres_host) is None:\n",
+        "explicit_database_url_is_left_alone",
+    ),
+    (
+        "dsn-6. alembic is handed the URL's `%` unescaped (the #300 defect)",
+        ALEMBIC_ENV,
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))\n',
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url)\n',
+        "alembic_reads_the_url_it_was_given",
+    ),
+    (
+        "dsn-7. alembic's escape is doubled: accepted, and read back altered",
+        ALEMBIC_ENV,
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))\n',
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%%%"))\n',
+        "alembic_reads_the_url_it_was_given",
+    ),
+    (
+        "dsn-8. the state store's DSN carries the zone id raw to asyncpg's decoder",
+        MCP_OAUTH_STATE,
+        '    if url.host and "%" in url.host:\n',
+        "    if False:\n",
+        "state_store_dsn_round_trips_through_asyncpg",
+    ),
+    (
+        "dsn-9. a settings refusal echoes its input, secrets included (the #301 defect)",
+        CFG,
+        '        env_file=_ENV_FILES, extra="ignore", hide_input_in_errors=True\n',
+        '        env_file=_ENV_FILES, extra="ignore"\n',
+        "refusal_names_its_setting_and_echoes_no_secret",
+    ),
+    (
+        "dsn-10. the state store's DSN decodes a `%25` first (reads zone 25 as RFC 6874)",
+        MCP_OAUTH_STATE,
+        '        url = url.set(host=url.host.replace("%", "%25"))\n',
+        '        url = url.set(host=url.host.replace("%25", "%").replace("%", "%25"))\n',
+        "state_store_dsn_round_trips_through_asyncpg or state_store_reads_the_host",
+    ),
+]
+
+# --- #303: the archive's CSV contract, pinned by the golden fixture. -----------------
+CASES += [
+    (
+        "303-1. a header changes its spelling",
+        SPEC,
+        '            "retailer_name",\n            parse_text,\n            get=lambda o: None,  # filled by the exporter',
+        '            "retailer",\n            parse_text,\n            get=lambda o: None,  # filled by the exporter',
+        "the_header_is_pinned",
+    ),
+    (
+        "303-2. every table is written with a byte-order mark",
+        EXP,
+        "            archive.writestr(spec.filename, _write_csv(spec.header, table_rows[spec.key]))\n",
+        '            archive.writestr(spec.filename, "\\ufeff" + _write_csv(spec.header, table_rows[spec.key]))\n',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-3. records end in LF instead of CRLF",
+        EXP,
+        'extrasaction="ignore", lineterminator="\\r\\n")',
+        'extrasaction="ignore", lineterminator="\\n")',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-4. every cell is quoted",
+        EXP,
+        'extrasaction="ignore", lineterminator="\\r\\n")',
+        'extrasaction="ignore", lineterminator="\\r\\n", quoting=csv.QUOTE_ALL)',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-5. timestamps always carry microseconds",
+        SPEC,
+        "        return value.astimezone(UTC).isoformat()\n",
+        '        return value.astimezone(UTC).isoformat(timespec="microseconds")\n',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-6. the README is written before the manifest",
+        EXP,
+        '        archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))\n        archive.writestr("README.txt", _README)\n',
+        '        archive.writestr("README.txt", _README)\n        archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))\n',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-7. the manifest is formatted differently",
+        EXP,
+        "        archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))\n",
+        "        archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=4))\n",
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-8. applications at one instant lose their tiebreak",
+        EXP,
+        "                        UpgradeApplication.applied_at, UpgradeApplication.id\n",
+        "                        UpgradeApplication.applied_at\n",
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-9. git is allowed to normalise the fixture's line endings",
+        GITATTR,
+        "backend/tests/fixtures/golden/archive/** -text\n",
+        "",
+        "git_leaves_the_fixture_bytes_alone",
+    ),
+    (
+        "303-10. the manifest's exported_at loses its zone (excluded from the bytes, not from checking)",
+        EXP,
+        '        "exported_at": datetime.now(UTC).isoformat(),\n',
+        '        "exported_at": datetime.now().isoformat(),\n',
+        "reproduces_the_fixture",
+    ),
+]
+
+# --- #305: the importer holds a value to its column's domain. ----------------------
+CASES += [
+    (
+        "305-1. the minimum itself is refused",
+        IMP,
+        "            if column.minimum is not None and value < column.minimum:\n",
+        "            if column.minimum is not None and value <= column.minimum:\n",
+        "the_bound_itself_imports",
+    ),
+    (
+        "305-2. one below the minimum gets through",
+        IMP,
+        "            if column.minimum is not None and value < column.minimum:\n",
+        "            if column.minimum is not None and value < column.minimum - 1:\n",
+        "outside_its_range",
+    ),
+    (
+        "305-3. the maximum itself is refused",
+        IMP,
+        "            elif column.maximum is not None and value > column.maximum:\n",
+        "            elif column.maximum is not None and value >= column.maximum:\n",
+        "the_bound_itself_imports",
+    ),
+    (
+        "305-4. the planner never asks",
+        IMP,
+        "                self._check_ranges(spec, row)\n",
+        "",
+        "outside_its_range",
+    ),
+    (
+        "305-5. a scaled amount is named as the minor-unit column",
+        IMP,
+        "                row.scaled_from[column.mirrors] = column.name\n",
+        "",
+        "outside_its_range",
+    ),
+    (
+        "305-6. the refusal quotes the parsed value, not the cell as written",
+        IMP,
+        "            stated, shown = row.written.get(stated, (stated, render(value)))\n",
+        "            shown = render(value)\n",
+        "outside_its_range",
+    ),
+    (
+        "305-7. a kit's rating loses its maximum",
+        SPEC,
+        '            help="1-5, set on completion.",\n            minimum=RATING_MIN,\n            maximum=RATING_MAX,\n',
+        '            help="1-5, set on completion.",\n            minimum=RATING_MIN,\n',
+        "every_range_check_is_declared",
+    ),
+    (
+        "305-8. low_stock_threshold, which no CHECK holds, loses its floor",
+        SPEC,
+        'col("low_stock_threshold", parse_int, minimum=0),',
+        'col("low_stock_threshold", parse_int),',
+        "every_declared_bound_is_the_request_schemas",
+    ),
+    (
+        "305-9. the request schema's rating drifts from the importer's",
+        SCHNUM,
+        "Rating = Annotated[int, Field(ge=RATING_MIN, le=RATING_MAX), _NotBool]",
+        "Rating = Annotated[int, Field(ge=RATING_MIN, le=10), _NotBool]",
+        "every_declared_bound_is_the_request_schemas",
+    ),
+    (
+        "305-10. a retired header is quoted as the current name",
+        IMP,
+        "            column.name: (key, cell.strip())\n",
+        "            column.name: (column.name, cell.strip())\n",
+        "retired_header_is_quoted_as_written",
+    ),
+]
+
+# --- #307: behaviour scenarios — each rule broken once, its scenario goes red. -----
+CASES += [
+    (
+        "scn-1. an order can be received twice",
+        ORD,
+        '    if order.received_at is not None:\n        raise ConflictError(\n            "order is already marked received",\n',
+        '    if False:\n        raise ConflictError(\n            "order is already marked received",\n',
+        "receive-applies-stock-once",
+    ),
+    (
+        "scn-2. an order can be shipped twice",
+        ORD,
+        '    if order.shipped_at is not None:\n        raise ConflictError(\n            "order is already marked shipped",\n',
+        '    if False:\n        raise ConflictError(\n            "order is already marked shipped",\n',
+        "ship-advances-kits-once",
+    ),
+    (
+        "scn-3. a kit on the bench no longer counts as progressed",
+        ORD,
+        "        kit.status in PROGRESSED_STATUSES\n",
+        "        False\n",
+        "kit-has-progressed-is-refused",
+    ),
+    (
+        "scn-4. stock may not reach zero",
+        CAT,
+        '        if new_quantity < 0:\n            raise ConflictError(\n                f"cannot adjust',
+        '        if new_quantity <= 0:\n            raise ConflictError(\n                f"cannot adjust',
+        "down-to-zero-is-allowed",
+    ),
+    (
+        "scn-5. an application may not spend the last of the stock",
+        UPG,
+        "    if upgrade.quantity_on_hand < quantity:\n",
+        "    if upgrade.quantity_on_hand <= quantity:\n",
+        "applying-an-upgrade-spends-its-stock",
+    ),
+    (
+        "scn-6. restore_stock reads backwards",
+        UPG,
+        "    if restore_stock:\n        upgrade.quantity_on_hand = guard_stock_ceiling(\n",
+        "    if not restore_stock:\n        upgrade.quantity_on_hand = guard_stock_ceiling(\n",
+        "withdrawing",
+    ),
+    (
+        "scn-7. names are compared exactly, case and all",
+        NAMES,
+        "    return select(model).where(func.lower(func.btrim(model.name, WHITESPACE)) == func.lower(name))\n",
+        "    return select(model).where(model.name == name)\n",
+        "named-like-another",
+    ),
+    (
+        "scn-8. a stated null is overwritten by the stamp",
+        KITS,
+        "    if field is None or field in supplied:\n",
+        "    if field is None:\n",
+        "stated-with-the-change-stays-empty",
+    ),
+    (
+        "scn-9. restating a kit's status counts as a change",
+        KITS,
+        '    if "status" in fields and fields["status"] != kit.status:\n',
+        '    if "status" in fields:\n',
+        "is-not-a-change-stamps-nothing",
+    ),
+    (
+        "scn-10. a receipt adds each catalog line twice",
+        ORD,
+        "            await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "            await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity * 2)\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "receive-applies-stock-once",
+    ),
+    (
+        "scn-11. a backdated receipt is stamped now",
+        ORD,
+        "    now = received_at or datetime.now(UTC)\n    order.received_at = now\n",
+        "    now = datetime.now(UTC)\n    order.received_at = now\n",
+        "receipt-in-the-past-stamps-its-own-instant",
+    ),
+    (
+        "scn-12. a spawned kit forgets its order line",
+        ORD,
+        "            order_item_id=item.id,\n",
+        "            order_item_id=None,\n",
+        "spawned-kits-arrive-with-their-order",
+    ),
+    (
+        "scn-13. a status change leaves the status clock where it was",
+        KITS,
+        "        kit.status_updated_at = datetime.now(UTC)\n",
+        "",
+        "starting-a-build-stamps-its-start",
+    ),
+    (
+        "scn-14. a receipt advances kits without moving their clock",
+        ORD,
+        "                    kit.status = KitStatus.BACKLOG\n                    kit.status_updated_at = now\n",
+        "                    kit.status = KitStatus.BACKLOG\n",
+        "receive-applies-stock-once",
+    ),
+    (
+        "scn-15. shipping advances kits without moving their clock",
+        ORD,
+        "                    kit.status = KitStatus.IN_TRANSIT\n                    kit.status_updated_at = now\n",
+        "                    kit.status = KitStatus.IN_TRANSIT\n",
+        "ship-advances-kits-once",
+    ),
+]
+
+# --- #309: the shipping-cost and low-stock-threshold CHECKs, and the model/schema
+# CHECK agreement. Migration mutants under the mig- set's clean-tree cover. ------
+CHECKS_309 = VERS / "20261002_5cbec7813500_shipping_cost_and_low_stock_checks_309.py"
+CASES += [
+    (
+        "309-1. the upgrade adds the CHECKs without clearing the negatives",
+        CHECKS_309,
+        '        clear = f"UPDATE {table} SET {column} = NULL WHERE {column} < 0"\n',
+        '        clear = "SELECT 1"\n',
+        "non_negative_checks_clear_negatives",
+    ),
+    (
+        "309-2. the upgrade clears zero as well",
+        CHECKS_309,
+        'WHERE {column} < 0"\n',
+        'WHERE {column} <= 0"\n',
+        "non_negative_checks_clear_negatives",
+    ),
+    (
+        "309-3. the CHECK admits -1",
+        CHECKS_309,
+        '        op.create_check_constraint(name, table, f"{column} >= 0")\n',
+        '        op.create_check_constraint(name, table, f"{column} >= -1")\n',
+        "non_negative_checks_clear_negatives",
+    ),
+    (
+        "309-4. the downgrade keeps the CHECKs",
+        CHECKS_309,
+        '        op.drop_constraint(name, table, type_="check")\n',
+        "        pass\n",
+        "non_negative_checks_clear_negatives",
+    ),
+    (
+        "309-5. the model forgets the orders CHECK the migration adds",
+        ROOT / "app/models/orders.py",
+        '    __table_args__ = (\n        CheckConstraint("shipping_cost_minor >= 0", name="shipping_cost_non_negative"),\n    )\n',
+        "",
+        "every_check_the_models_declare",
+    ),
+    (
+        "309-6. the upgrade reads a row count offline as well (the round-1 crash)",
+        CHECKS_309,
+        "        if context.is_offline_mode():\n",
+        "        if False:\n",
+        "every_migration_renders_offline",
+    ),
+    (
+        "309-7. the model's CHECK keeps its name and changes its bound",
+        ROOT / "app/models/orders.py",
+        'CheckConstraint("shipping_cost_minor >= 0", name="shipping_cost_non_negative")',
+        'CheckConstraint("shipping_cost_minor >= 1", name="shipping_cost_non_negative")',
+        "every_check_the_models_declare",
+    ),
+]
+
+# --- #341/#343: an upload's damage is a refusal, never a 500 (rule 6). ---------------
+CASES += [
+    (
+        "341-1. a member's open() ValueError escapes the budget",
+        IMP,
+        "            NotImplementedError,\n            ValueError,\n        ) as exc:",
+        "            NotImplementedError,\n        ) as exc:",
+        "zipfile_raises_besides or manifest_that_cannot_be_unpacked",
+    ),
+    (
+        "341-2. ZipFile()'s UnicodeDecodeError escapes",
+        IMP,
+        "except (zipfile.BadZipFile, ValueError, NotImplementedError) as exc:",
+        "except (zipfile.BadZipFile, NotImplementedError) as exc:",
+        "zipfile_raises_besides",
+    ),
+    (
+        "341-3. ZipFile()'s NotImplementedError escapes",
+        IMP,
+        "except (zipfile.BadZipFile, ValueError, NotImplementedError) as exc:",
+        "except (zipfile.BadZipFile, ValueError) as exc:",
+        "zipfile_raises_besides or damaged_byte_in_an_archive",
+    ),
+    (
+        "341-4. a manifest that unpacks but isn't UTF-8 refuses the import",
+        IMP,
+        "except (json.JSONDecodeError, ValueError) as exc:\n                warnings.append(",
+        "except json.JSONDecodeError as exc:\n                warnings.append(",
+        "manifest_that_unpacks_but_isnt_utf8",
+    ),
+    (
+        "341-5. csv reads without newline=''",
+        IMP,
+        'io.StringIO(text_content, newline="")',
+        "io.StringIO(text_content)",
+        "bare_cr_line_endings",
+    ),
+    (
+        "341-6. csv keeps its default field limit",
+        IMP,
+        "csv.field_size_limit(max(MAX_EXPANDED_BYTES, MAX_UPLOAD_BYTES))",
+        "pass",
+        "survives_its_own_export",
+    ),
+    (
+        "341-7. csv.Error escapes",
+        IMP,
+        "    except csv.Error as exc:",
+        "    except ZeroDivisionError as exc:",
+        "what_csv_still_refuses",
+    ),
+    (
+        "341-8. the refusal names the line before the bad one",
+        IMP,
+        "line = reader.reader.line_num",
+        "line = reader.line_num",
+        "what_csv_still_refuses",
+    ),
+]
+
+# --- #352/#346: text and archives a decoder or a database refuses (rule 6). ----------
+TEXT = ROOT / "app/services/text.py"
+BASE_SCHEMA = ROOT / "app/schemas/base.py"
+SPEC_FILE = ROOT / "app/services/portability/spec.py"
+KITS_SERVICE = ROOT / "app/services/kits.py"
+CATALOG_SERVICE = ROOT / "app/services/catalog.py"
+ORDERS_SERVICE = ROOT / "app/services/orders.py"
+OAUTH_STATE = ROOT / "app/auth/mcp_oauth_state.py"
+MAIN_APP = ROOT / "app/main.py"
+CASES += [
+    (
+        "352-1. the member read catches a list again",
+        IMP,
+        "        except Exception as exc:\n            # Everything but those two, on purpose.",
+        "        except (zipfile.BadZipFile, EOFError, RuntimeError, NotImplementedError, ValueError) as exc:\n            # Everything but those two, on purpose.",
+        "whatever_a_decompressor_raises",
+    ),
+    (
+        "352-2. running out of memory reads as damage",
+        IMP,
+        "        except (DomainError, MemoryError):",
+        "        except DomainError:",
+        "running_out_of_memory",
+    ),
+    (
+        "352-3. a budget refusal reads as damage",
+        IMP,
+        "        except (DomainError, MemoryError):",
+        "        except MemoryError:",
+        "expanded_budget_is_enforced or budget_is_cumulative",
+    ),
+    (
+        "346-1. a NUL is storable",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\ud800-\\udfff]")',
+        "what_a_column_cannot_hold or a_create_refuses_it",
+    ),
+    (
+        "346-2. an unpaired surrogate is storable",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\x00]")',
+        "what_a_column_cannot_hold or a_create_refuses_it",
+    ),
+    (
+        "346-3. too much is unstorable: other control characters",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\x00-\\x1f\\ud800-\\udfff]")',
+        "what_it_can or ordinary_text",
+    ),
+    (
+        "346-4. the request base checks nothing",
+        BASE_SCHEMA,
+        "    if isinstance(value, str):\n        require_storable_text(value)",
+        "    if isinstance(value, str):\n        pass",
+        "a_create_refuses_it or an_update_refuses_it",
+    ),
+    (
+        "346-5. a stranger model holds a request body",
+        ROOT / "app/schemas/kits.py",
+        "class KitCreate(RequestModel):",
+        "class KitCreate(BaseModel):",
+        "every_request_body_comes_from_the_base",
+    ),
+    (
+        "346-6. the importer's text cell takes anything",
+        SPEC_FILE,
+        "    return require_storable_text(value) or None",
+        "    return value or None",
+        "a_preview_refuses_the_row or every_text_column",
+    ),
+    (
+        "346-7. the kits filter on grade reaches the query",
+        KITS_SERVICE,
+        '    refuse_unstorable_text("grade", grade)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-8. the kits filter on series reaches the query",
+        KITS_SERVICE,
+        '    refuse_unstorable_text("series", series)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-9. the catalog search reaches the query",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("query", query)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-10. the category filter reaches the query",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("category", category)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-11. MCP's stock reason is taken as written",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("reason", reason)\n',
+        "",
+        "an_mcp_argument_is_refused",
+    ),
+    (
+        "346-12. MCP's shop name reaches the lookup",
+        ORDERS_SERVICE,
+        '    refuse_unstorable_text("retailer", name)\n',
+        "",
+        "create_order_s_flat_arguments",
+    ),
+    (
+        "346-13. a client's key reaches the state store's read",
+        OAUTH_STATE,
+        "        if not is_storable_text(key):\n            return None\n",
+        "",
+        "oauth_lookups or nul_code",
+    ),
+    (
+        "346-14. a 422 cannot echo a surrogate",
+        MAIN_APP,
+        "    return _EchoResponse(\n        status_code=422,",
+        "    return JSONResponse(\n        status_code=422,",
+        "can_echo_a_surrogate or credential_with_no_utf8_form",
+    ),
+    (
+        "346-15. every 422 leaves as ASCII",
+        MAIN_APP,
+        "            return super().render(content)\n",
+        '            return json.dumps(content, separators=(",", ":")).encode("ascii")\n',
+        "ordinary_422_keeps_the_default_bytes",
+    ),
+    (
+        "346-17. a manifest's surrogate reaches the response",
+        IMP,
+        "                if not has_utf8_form(data):\n",
+        "                if False:\n",
+        "manifest_string_with_no_utf8_form",
+    ),
+    (
+        "346-18. a manifest nested past the parser escapes",
+        IMP,
+        "except (json.JSONDecodeError, ValueError, RecursionError) as exc:",
+        "except (json.JSONDecodeError, ValueError) as exc:",
+        "nested_past_the_parser",
+    ),
+    (
+        "346-19. a provider's subject reaches the column",
+        ROOT / "app/services/oidc.py",
+        "    if not is_storable_text(sub):\n",
+        "    if False:\n",
+        "unstorable_subject or claim_contract",
+    ),
+    (
+        "346-20. a provider's label reaches the column",
+        ROOT / "app/services/oidc.py",
+        "value.strip() and is_storable_text(value):",
+        "value.strip():",
+        "unstorable_label or label_with_no_utf8_form",
+    ),
+    (
+        "346-21. the setup token is spent before the commit",
+        ROOT / "app/services/oidc.py",
+        "        if owner.claimed_at is None:\n            owner.claimed_at = now\n        raw, session_row",
+        "        if owner.claimed_at is None:\n            owner.claimed_at = now\n        setup_state.consume()\n        raw, session_row",
+        "claim_that_rolls_back",
+    ),
+    (
+        "346-22. the setup token is never spent",
+        ROOT / "app/services/oidc.py",
+        "        # owner unclaimed with no token, and only a restart issues another (#353).\n        setup_state.consume()\n",
+        "        # owner unclaimed with no token, and only a restart issues another (#353).\n",
+        "unstorable_label_is_passed_over",
+    ),
+    (
+        "346-23. a finding leaves with the value it can't echo",
+        MAIN_APP,
+        '                {key: value for key, value in finding.items() if key != "input"}\n',
+        "                finding\n",
+        "whatever_it_cannot_echo",
+    ),
+    (
+        "346-24. a 422 that can't echo only knows about surrogates",
+        MAIN_APP,
+        "        except ValueError:  # `UnicodeEncodeError` is one",
+        "        except UnicodeEncodeError:  # `UnicodeEncodeError` is one",
+        "whatever_it_cannot_echo",
+    ),
+    (
+        "346-25. a required discovery endpoint is believed",
+        ROOT / "app/services/oidc.py",
+        "                if not _is_usable_endpoint(document[name]):\n",
+        "                if False:\n",
+        "discovery_endpoint",
+    ),
+    (
+        "346-26. an unusable revocation endpoint is believed",
+        ROOT / "app/services/oidc.py",
+        "revocation_endpoint=revocation if _is_usable_endpoint(revocation) else None,",
+        "revocation_endpoint=revocation,",
+        "revocation_endpoint",
+    ),
+    (
+        "346-27. a usable revocation endpoint is dropped",
+        ROOT / "app/services/oidc.py",
+        "revocation_endpoint=revocation if _is_usable_endpoint(revocation) else None,",
+        "revocation_endpoint=None,",
+        "usable_revocation_endpoint",
+    ),
+    (
+        "346-28. any scheme is an endpoint",
+        ROOT / "app/services/oidc.py",
+        '        return httpx.URL(value).scheme in ("http", "https")\n',
+        "        httpx.URL(value)\n        return True\n",
+        "discovery_endpoint",
+    ),
+    (
+        "346-29. a client document's surrogate reaches consent",
+        ROOT / "app/auth/mcp_oauth.py",
+        "            if client is not None and not has_utf8_form(client.model_dump()):\n",
+        "            if False:\n",
+        "fetched_client_document_with_no_utf8_form",
+    ),
+    (
+        "346-16. an unreadable required cell also says it is missing",
+        IMP,
+        "            if column.name in unreadable:\n                continue\n",
+        "",
+        "says_so_once",
+    ),
+]
+
+ORDER_SCHEMAS = ROOT / "app/schemas/orders.py"
+CASES += [
+    (
+        "348-1. a note keeps the whitespace around it",
+        ORDER_SCHEMAS,
+        "    return None if value is None else stripped_or_none(value)\n",
+        "    return value\n",
+        "stores_what_a_note_is or re_imports_as_no_change",
+    ),
+    (
+        "348-2. a blank note stays blank",
+        TEXT,
+        "    return value.strip() or None\n",
+        "    return value.strip()\n",
+        "stores_what_a_note_is",
+    ),
+    (
+        "348-3. an update does not read the note",
+        ORDER_SCHEMAS,
+        "    # Omitted leaves it, null or blank clears it (#348).\n    notes: OrderNotes = None\n",
+        "",
+        "an_update_stores_what_a_note_is",
+    ),
+    (
+        "348-4. an update that omits it clears it",
+        ORDERS_SERVICE,
+        '    header = data.model_dump(exclude_unset=True, exclude={"items", "adjustments"})\n    if "retailer_id" in header:',
+        '    header = data.model_dump(exclude_unset=True, exclude={"items", "adjustments"})\n    header.setdefault("notes", None)\n    if "retailer_id" in header:',
+        "omits_it_leaves_it",
+    ),
+    (
+        "348-5. create_order drops the argument",
+        MCP,
+        "            notes=notes,\n",
+        "",
+        "a_create_stores_what_a_note_is",
+    ),
+    (
+        "348-6. the archive has no notes column",
+        SPEC,
+        '        col("notes", parse_text, help="Anything else about this purchase. Free text."),\n',
+        "",
+        "re_imports_as_no_change or merge_states_it",
+    ),
+]
+
+# --- #349: order lines the collection does not track (`item_type: "other"`). -------
+# One place at a time: the request schema's rule (each field it refuses separately),
+# the service's dispatch, the catalog tools' vocabulary, and each of the importer's
+# readings of "a line that moves stock" and "a line with a description".
+CASES += [
+    (
+        "349-1. an other line is dispatched as a catalog line",
+        ORD,
+        "    elif line.item_type in CATALOG_MODELS:\n",
+        "    else:\n",
+        "is_its_description or an-other-line-is-tracked-nowhere",
+    ),
+    (
+        "349-2. an entered other line stores no description",
+        ORD,
+        "        # Null on every line but an `other` one: the schema refuses it elsewhere.\n        description=line.description,\n",
+        "",
+        "is_its_description or an-other-line-is-tracked-nowhere",
+    ),
+    (
+        "349-3. an edit never reaches an other line's own branch",
+        ORD,
+        "    elif item.item_type is ItemType.OTHER:\n",
+        "    elif False:\n",
+        "an_edit_restates",
+    ),
+    (
+        "349-4. an other line needs no description",
+        ORDER_SCHEMAS,
+        "        if line.description is None:\n            raise ValueError(\n",
+        "        if False:\n            raise ValueError(\n",
+        "refuses_a_line_its_type_does_not_take or omits_the_description",
+    ),
+    (
+        "349-5. an other line may carry kit details",
+        ORDER_SCHEMAS,
+        "        if line.kit is not None or line.catalog_ref_id is not None or line.new_item is not None:\n",
+        "        if line.catalog_ref_id is not None or line.new_item is not None:\n",
+        "refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-6. an other line may carry a catalog reference",
+        ORDER_SCHEMAS,
+        "        if line.kit is not None or line.catalog_ref_id is not None or line.new_item is not None:\n",
+        "        if line.kit is not None or line.new_item is not None:\n",
+        "refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-7. an other line may create a catalog item",
+        ORDER_SCHEMAS,
+        "        if line.kit is not None or line.catalog_ref_id is not None or line.new_item is not None:\n",
+        "        if line.kit is not None or line.catalog_ref_id is not None:\n",
+        "refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-8. any line may carry a description",
+        ORDER_SCHEMAS,
+        "    if line.description is not None:\n        raise ValueError(\n",
+        "    if False:\n        raise ValueError(\n",
+        "refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-9. a description keeps the whitespace around it, and blank is one",
+        ORDER_SCHEMAS,
+        "    description: StrippedText = Field(\n",
+        "    description: str | None = Field(\n",
+        "stores_what_a_description_is or refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-10. the catalog tools take any order-line type for a table",
+        MCP,
+        "    if parsed not in _CATALOG_READ_MODELS:\n",
+        "    if parsed is None:\n",
+        "other_names_no_catalog_table",
+    ),
+    (
+        "349-11. the importer lands an other line with no description",
+        INV,
+        "            if value is None:\n                row.refuse(\n                    Diagnostic(\n                        code=error_codes.IMPORT_LINE_DESCRIPTION_REQUIRED,\n",
+        "            if False:\n                row.refuse(\n                    Diagnostic(\n                        code=error_codes.IMPORT_LINE_DESCRIPTION_REQUIRED,\n",
+        "without_a_description or lands_with_a_description",
+    ),
+    (
+        "349-12. a sheet that leaves the column out is read as emptying it",
+        INV,
+        "            if not stated and row.action is not RowAction.CREATE and row.target is not None:\n",
+        "            if False:\n",
+        "lands_with_a_description",
+    ),
+    (
+        "349-13. the importer lands a description on any line",
+        INV,
+        "        elif stated and value is not None:\n",
+        "        elif False:\n",
+        "description_on_any_other_type or invariant_matrix",
+    ),
+    (
+        "349-14. a stored other line counts as stock at a receipt",
+        INV,
+        "        if _moves_stock(item.item_type):\n",
+        "        if item.item_type is not ItemType.KIT:\n",
+        "may_receive_an_order",
+    ),
+    (
+        "349-15. an arriving other line counts as stock at a receipt",
+        INV,
+        "        if item_type is not None and _moves_stock(item_type):\n",
+        "        if item_type is not None and item_type is not ItemType.KIT:\n",
+        "may_receive_an_order",
+    ),
+    (
+        "349-16. an other line may not join a received order",
+        INV,
+        "        if item_type is None or not _moves_stock(item_type):\n            continue\n        parent = by_id",
+        "        if item_type is None or item_type is ItemType.KIT:\n            continue\n        parent = by_id",
+        "joining_a_received_order",
+    ),
+    (
+        "349-17. a catalog reference on an other line is reported as a kit line's",
+        IMP,
+        "                if item_type is ItemType.OTHER:\n",
+        "                if False:\n",
+        "catalog_reference_on_an_other_line",
+    ),
+    (
+        "349-18. a stored other line is fingerprinted by a catalog name it has none of",
+        IMP,
+        "        elif item.item_type is ItemType.OTHER:\n",
+        "        elif False:\n",
+        "matched_by_its_lines_descriptions",
+    ),
+    (
+        "349-19. an incoming other line is fingerprinted by a catalog name it has none of",
+        IMP,
+        "        elif item_type is ItemType.OTHER:\n",
+        "        elif False:\n",
+        "matched_by_its_lines_descriptions",
+    ),
+    (
+        "349-20. the archive has no description column",
+        SPEC,
+        '        col(\n            "description",\n            parse_text,\n',
+        '        col(\n            "description",\n            parse_text,\n            virtual=True,\n            get=lambda i: None,\n',
+        "its_own_export or restores_the_line",
+    ),
+    (
+        "scn-16. a line's type can change",
+        ORD,
+        "    if line.item_type != item.item_type:\n",
+        "    if False:\n",
+        "an-other-line-cannot-become-a-tracked-one",
+    ),
+    # --- #350: order adjustments, the totals and the ceiling -----------------------
+    (
+        "350-1. shipping is left out of the totals",
+        TOT,
+        "    shipping = shipping_cost_minor or 0\n",
+        "    shipping = 0\n",
+        "totals_per_currency or the_ceiling_on_bare_numbers",
+    ),
+    (
+        "350-2. paid is the shelf price: adjustments are not taken off",
+        TOT,
+        "        return self.items_minor + self.shipping_minor - self.adjustments_minor\n",
+        "        return self.items_minor + self.shipping_minor\n",
+        "totals_per_currency",
+    ),
+    (
+        "350-3. adjustments come off every currency, not the order's alone",
+        TOT,
+        "            adjustments_minor=deducted if code == currency_code else 0,\n",
+        "            adjustments_minor=deducted,\n",
+        "totals_per_currency",
+    ),
+    (
+        "350-4. shipping is added to every currency, not the order's alone",
+        TOT,
+        "            shipping_minor=shipping if code == currency_code else 0,\n",
+        "            shipping_minor=shipping,\n",
+        "totals_per_currency",
+    ),
+    (
+        "350-5. free post adds the order's currency to the totals",
+        TOT,
+        "    if currency_code not in items and (shipping or deducted):\n",
+        "    if currency_code not in items:\n",
+        "totals_per_currency",
+    ),
+    (
+        "350-6. adjustments may not come to exactly what was charged",
+        TOT,
+        "    if own is None or own.paid_minor >= 0:\n",
+        "    if own is None or own.paid_minor > 0:\n",
+        "may_come_to_exactly_what_was_charged",
+    ),
+    (
+        "350-7. a line in another currency counts toward the ceiling",
+        TOT,
+        "        items[line_currency] = items.get(line_currency, 0) + quantity * unit_price_minor\n",
+        "        items[currency_code] = items.get(currency_code, 0) + quantity * unit_price_minor\n",
+        "rest_refuses_adjustments_past_what_was_charged",
+    ),
+    (
+        "350-8. a new order is not asked the ceiling",
+        ORD,
+        "    await _set_adjustments(session, order, data.adjustments, stored=[])\n\n    await session.flush()\n    result = await get_order(session, order.id)\n    _refuse_adjustment_overrun(result)\n",
+        "    await _set_adjustments(session, order, data.adjustments, stored=[])\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "refuses_adjustments_past_what_was_charged",
+    ),
+    (
+        "350-9. an edit is not asked the ceiling",
+        ORD,
+        "        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))\n\n    await session.flush()\n    result = await get_order(session, order.id)\n    _refuse_adjustment_overrun(result)\n",
+        "        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "the_ceiling_holds_through_an_edit",
+    ),
+    (
+        "350-10. an edit is asked the ceiling only when it states adjustments",
+        ORD,
+        "        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))\n\n    await session.flush()\n    result = await get_order(session, order.id)\n    _refuse_adjustment_overrun(result)\n",
+        "        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))\n\n    await session.flush()\n    result = await get_order(session, order.id)\n    if data.adjustments is not None:\n        _refuse_adjustment_overrun(result)\n",
+        "the_ceiling_holds_through_an_edit",
+    ),
+    (
+        "350-11. an edit that states no adjustments removes them",
+        ORD,
+        "    if data.adjustments is not None:\n        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))\n",
+        "    if True:\n        await _set_adjustments(session, order, data.adjustments or [], stored=list(order.adjustments))\n",
+        "does_not_state_adjustments_leaves_them",
+    ),
+    (
+        "350-12. restating the stored adjustments rewrites the rows",
+        ORD,
+        "        (entry.label, entry.amount_minor) for entry in adjustments\n    ]:\n        return\n",
+        "        (entry.label, entry.amount_minor) for entry in adjustments\n    ]:\n        pass\n",
+        "restating_the_stored_set_writes_nothing",
+    ),
+    (
+        "350-13. a replacement keeps the rows it replaces",
+        ORD,
+        "    for row in stored:\n        await session.delete(row)\n",
+        "    for row in ():\n        await session.delete(row)\n",
+        "a_stated_list_is_the_whole_set",
+    ),
+    (
+        "350-14. adjustments are stored in reverse",
+        ORD,
+        "            position=position,\n",
+        "            position=len(adjustments) - position,\n",
+        "keep_the_order_they_were_given_in",
+    ),
+    (
+        "350-15. an order's adjustments are read back in reverse",
+        MOD_ORDERS,
+        '        order_by="(OrderAdjustment.position, OrderAdjustment.id)",\n',
+        '        order_by="OrderAdjustment.position.desc()",\n',
+        "keep_the_order_they_were_given_in",
+    ),
+    (
+        "350-16. a blank label is accepted",
+        SCH,
+        '    if stripped is None:\n        raise ValueError("label must not be blank — say what the adjustment was")\n',
+        '    if False:\n        raise ValueError("label must not be blank — say what the adjustment was")\n',
+        "refuses_a_misshapen_adjustment",
+    ),
+    (
+        "350-17. a label keeps its surrounding whitespace",
+        SCH,
+        '        raise ValueError("label must not be blank — say what the adjustment was")\n    return stripped\n',
+        '        raise ValueError("label must not be blank — say what the adjustment was")\n    return value\n',
+        "stored_without_its_surrounding_whitespace",
+    ),
+    (
+        "350-18. an adjustment of nothing is accepted",
+        SCH,
+        '    amount_minor: PositiveInt4 = Field(\n        description=(\n            "How much came off,',
+        '    amount_minor: NonNegativeInt4 = Field(\n        description=(\n            "How much came off,',
+        "refuses_a_misshapen_adjustment",
+    ),
+    (
+        "350-19. the MCP tool drops the adjustments it was given",
+        MCP,
+        "            adjustments=adjustments or [],\n",
+        "            adjustments=[],\n",
+        "records_what_came_off_and_what_was_paid",
+    ),
+    (
+        "350-20. the importer is not asked the ceiling",
+        INV,
+        "    _check_adjustment_totals(rows, by_id=by_id, replace_all=replace_all)\n",
+        "    pass\n",
+        "the_ceiling_holds_through_an_import",
+    ),
+    (
+        "350-21. the importer judges the sheet's adjustments without the stored ones",
+        INV,
+        "        adjustments.setdefault(adjustment.order_id, {})[adjustment.id] = adjustment.amount_minor\n",
+        "        pass\n",
+        "judged_with_what_is_already_stored",
+    ),
+    (
+        "350-22. a replace-all archive is judged against the database it replaces",
+        INV,
+        "        table: {} if replace_all else by_id[table]\n",
+        "        table: by_id[table]\n",
+        "replace_all_archive_is_judged_against_itself",
+    ),
+    (
+        "350-23. an adjustment that moved away is still counted where it was",
+        INV,
+        "            adjustments.get(row.target.order_id, {}).pop(adjustment_id, None)\n",
+        "            pass\n",
+        "moved_away_no_longer_counts",
+    ),
+    (
+        "350-24. a partial sheet is judged on its own blanks, not the stored row",
+        INV,
+        "    if row.target is None or _change(row, field) is not None:\n        return row.values.get(field)\n",
+        "    if True:\n        return row.values.get(field)\n",
+        "states_only_the_price",
+    ),
+    (
+        "350-25. a line with no price is not a number",
+        INV,
+        '            _lands(row, "unit_price_minor") or 0,\n',
+        '            _lands(row, "unit_price_minor"),\n',
+        "new_line_with_no_price",
+    ),
+    (
+        "350-26. a cheaper line is not an input change",
+        INV,
+        "        if row.target is not None and any(_change(row, field) for field in _LINE_INPUTS):\n            _moved(order_id, row)\n",
+        "        if False:\n            _moved(order_id, row)\n",
+        "the_ceiling_holds_through_an_import",
+    ),
+    (
+        "350-27. a changed order currency is not an input change",
+        INV,
+        "        if row.target is not None and any(_change(row, field) for field in _ORDER_INPUTS):\n            _moved(order_id, row)\n",
+        "        if False:\n            _moved(order_id, row)\n",
+        "the_ceiling_holds_through_an_import",
+    ),
+    (
+        "350-28. a restated adjustment is an input change: the unchanged row is blamed",
+        INV,
+        "        if row.target is None or any(_change(row, field) for field in _ADJUSTMENT_INPUTS):\n",
+        "        if True:\n",
+        "the_ceiling_holds_through_an_import",
+    ),
+    (
+        "350-29. every row that moved an input is blamed, not the adjustments first",
+        INV,
+        '        blamed = by_table.get("order_adjustments") or [\n',
+        '        blamed = [\n            *by_table.get("order_adjustments", []),\n',
+        "the_ceiling_holds_through_an_import",
+    ),
+    (
+        "350-30. an id-less adjustment is matched by its label's exact case",
+        SPEC,
+        '    label = (row.get("label") or "").strip().casefold()\n',
+        '    label = (row.get("label") or "").strip()\n',
+        "needs_no_id_and_is_not_added_twice",
+    ),
+    (
+        "350-31. an id-less adjustment with a corrected amount is a different adjustment",
+        SPEC,
+        '    return ("adjustment", str(order_id), label)\n',
+        '    return ("adjustment", str(order_id), label, row.get("amount_minor"))\n',
+        "under_other_ids or two_alike_without_ids",
+    ),
+    (
+        "350-32. the archive writes an order's adjustments in reverse",
+        EXP,
+        "                        OrderAdjustment.order_id, OrderAdjustment.position, OrderAdjustment.id\n",
+        "                        OrderAdjustment.order_id, OrderAdjustment.position.desc(), OrderAdjustment.id\n",
+        "archive_carries_the_adjustments",
+    ),
+    (
+        "scn-17. a new order is not asked the ceiling",
+        ORD,
+        "    await _set_adjustments(session, order, data.adjustments, stored=[])\n\n    await session.flush()\n    result = await get_order(session, order.id)\n    _refuse_adjustment_overrun(result)\n",
+        "    await _set_adjustments(session, order, data.adjustments, stored=[])\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "adjustments-cannot-come-to-more-than-the-order-was-charged",
+    ),
+    (
+        "scn-18. an edit is asked the ceiling only when it states adjustments",
+        ORD,
+        "        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))\n\n    await session.flush()\n    result = await get_order(session, order.id)\n    _refuse_adjustment_overrun(result)\n",
+        "        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))\n\n    await session.flush()\n    result = await get_order(session, order.id)\n    if data.adjustments is not None:\n        _refuse_adjustment_overrun(result)\n",
+        "an-edit-that-leaves-stored-adjustments-too-large-is-refused",
+    ),
+    (
+        "scn-19. adjustments are stored in reverse",
+        ORD,
+        "            position=position,\n",
+        "            position=len(adjustments) - position,\n",
+        "an-order-records-what-came-off-and-keeps-its-line-prices",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
+    # The #349 (349-) set: every 349- kill lives here, bar 349-13's second witness
+    # in the shared matrix and the two scenarios in test_scenarios.py.
+    "tests/test_untracked_lines.py",
+    # The #350 (350-) set, bar the three scenarios in test_scenarios.py.
+    "tests/test_order_adjustments.py",
     "tests/test_cell_semantics.py",
     "tests/test_portability.py",
+    "tests/test_unstorable_text.py",
+    "tests/test_order_notes.py",
     # The fold-in of the #109/#111/#113/#115 queues widened the case set to the
     # suites those branches wrote; each file below is named by at least one
     # case's `-k` expression, and the exit-5 NONE rule is what notices if one of
@@ -3087,6 +7376,56 @@ TEST_FILES = [
     "tests/test_import_diagnostics.py",
     # The #114 (tz-) fold-in.
     "tests/test_naive_csv_dates.py",
+    # The #186 (ingr-) fold-in: every ingr- kill lives here, the sh ones included.
+    "tests/test_ingress.py",
+    # The #187 (auth-) fold-in: the four auth modules — each named by at least one
+    # auth- expression (the generation suite by auth-41/42). The session-level
+    # migration walk in conftest is what applies the auth-39/40 migration mutants.
+    "tests/test_route_policy.py",
+    "tests/test_auth_tables.py",
+    "tests/test_authorization.py",
+    "tests/test_ingress_generation.py",
+    # The #188 (m63-) fold-in: every m63- kill lives here.
+    "tests/test_auth_local.py",
+    # The #189 (pat-) fold-in: the token suite; pat-12/16/23 also kill in
+    # test_route_policy.py / test_authorization.py, listed above.
+    "tests/test_auth_tokens.py",
+    # The #233 (home-) fold-in: every home- kill but home-10 lives here.
+    "tests/test_summary.py",
+    # The #204 (f13-) fold-in: every f13- kill lives here, bar f13-11's second
+    # witness in test_authorization.py (already listed).
+    "tests/test_auth_unrouted.py",
+    "tests/test_auth_oidc.py",
+    # The #192 (moa-) set: MCP OAuth — every moa- kill lives here or in the
+    # route-policy / unrouted / oidc suites above; moa-61…66 (the client
+    # contract, Codex round 4) kill in the wire-level contract suite.
+    "tests/test_mcp_oauth.py",
+    "tests/test_mcp_oauth_clients.py",
+    # The #221 scan- set: the four availability bounds.
+    "tests/test_refusal_budget.py",
+    "tests/test_body_limits.py",
+    "tests/test_mcp_oauth_registrations.py",
+    # The #193 (aud-) fold-in: the audit vocabulary and prune (aud-1…3), the
+    # privacy contract (aud-38…56), the uvicorn/SDK log hygiene (aud-32/33/37)
+    # and the packaging/matrix hygiene (aud-18…21) each live in a file of
+    # their own; the rest kill in suites already listed.
+    "tests/test_audit.py",
+    "tests/test_audit_privacy.py",
+    "tests/test_access_logging.py",
+    "tests/test_deployment_hygiene.py",
+    # The #289 set: every 289- kill lives here.
+    "tests/test_mcp_order_retailer.py",
+    # The #247 set: every 247- kill lives here.
+    "tests/test_kit_sorts.py",
+    # The #299/#300/#301 dsn- set: every dsn- kill lives in these two.
+    "tests/test_database_url.py",
+    "tests/test_settings_errors.py",
+    # The #303 set: every 303- kill lives here.
+    "tests/test_golden_archive.py",
+    # The #305 set: every 305- kill lives here.
+    "tests/test_import_ranges.py",
+    # The #307 scn- set: every scn- kill is a scenario run here.
+    "tests/test_scenarios.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
@@ -3125,7 +7464,25 @@ def tree_is_clean() -> bool:
         # str(FIX): oma-2 mutates the shared registry fixture over in
         # frontend/, which "app tests alembic" never covered — a failed restore
         # there was invisible before this fold-in.
-        ["git", "status", "--porcelain", "app", "tests", "alembic", str(FIX)],
+        # str(ENVSH): ingr-25/26 mutate the nginx server-name generator, a shell
+        # file under frontend/ — same reason.
+        # str(TEMPLATE), "Dockerfile", "ingress_matrix.py": the aud- set mutates
+        # the nginx template, the image's CMD and the matrix's private output.
+        # str(GITATTR): 303-9 mutates the repository's .gitattributes.
+        [
+            "git",
+            "status",
+            "--porcelain",
+            "app",
+            "tests",
+            "alembic",
+            str(FIX),
+            str(ENVSH),
+            str(TEMPLATE),
+            "Dockerfile",
+            "ingress_matrix.py",
+            str(GITATTR),
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -3139,8 +7496,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if not tree_is_clean():
-        print("app/, tests/, alembic/ or the shared error-codes fixture has uncommitted")
-        print("changes — commit or stash first, so that a restore that doesn't happen is")
+        print("app/, tests/, alembic/, the shared error-codes fixture, the nginx generator")
+        print("or template, the Dockerfile, the ingress matrix or the repository's")
+        print(".gitattributes has uncommitted changes —")
+        print("commit or stash first, so that a")
+        print("restore that doesn't happen is")
         print("visible rather than mixed in with your edits.")
         return 2
 

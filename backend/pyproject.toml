@@ -2,7 +2,7 @@
 name = "plamotrack-backend"
 # Keep in step with app/__init__.py — that one is what /meta and the MCP
 # handshake report, so a mismatch is visible to clients.
-version = "0.2.9"
+version = "0.6.0"
 description = "plamotrack API + MCP server"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,19 +13,24 @@ dependencies = [
     "alembic>=1.13",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "fastmcp>=3.0",
+    "fastmcp>=4.0",
+    # The browser login (services/oidc.py) and the MCP OAuth proxy's provider-side
+    # revocation own their HTTP client; FastMCP 4 no longer ships httpx (#241).
+    "httpx>=0.27",
     "python-multipart>=0.0.9",  # FastAPI needs it for the import file upload
     # IANA time-zone db shipped with the app (#23). zoneinfo consults the OS
     # database first and this as the fallback/union, so /settings accepts a
     # current zone list even on an image whose OS tzdata is absent or ancient.
     "tzdata>=2025.1",
+    "argon2-cffi>=25.1.0",
+    "joserfc>=1.7",
 ]
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26",
     "pytest>=8",
     "pytest-asyncio>=0.24",
-    "httpx>=0.27",
     "ruff>=0.6",
 ]
 

@@ -4,9 +4,10 @@ Guidance for AI coding agents (Claude Code, Codex, …) and humans working in th
 
 **plamotrack** is a self-hosted, open-source Gunpla/plamo collection & build tracker:
 kits move through a pipeline (pre_ordered → ordered → in_transit → backlog →
-building → complete; backlog = in hand, not started) on a drag-and-drop Kanban
-board with Build and Orders views, alongside quantity-tracked tools, consumables,
-third-party upgrades, and display gear (stands, bases, diorama scenery). Ships as a
+building → complete; backlog = in hand, not started), shown at a glance on a Home
+page (the bench, the backlog, what's in the mail) and in full on list pages,
+alongside quantity-tracked tools, consumables, third-party upgrades, and display
+gear (stands, bases, diorama scenery). Ships as a
 Docker Compose stack: FastAPI REST API + embedded MCP server (same process, shared service
 layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 
@@ -48,8 +49,29 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   moving parts, not file type: #105 — the rewrite of `AGENTS.md` plus the creation
   of `.agents/` — went through a PR because it was a lot of moving parts, and a
   docs change of that shape should again (owner's call, 2026-08-19).
+- **A milestone whose PRs leave `main` in an intermediate state lands through an
+  integration branch, as one release.** `main` is what a `git clone` — the README's
+  install path — gets, so it never holds a redesign or a migration in progress. The
+  PRs open against the integration branch, not `main`; merge `main` *into* the branch
+  whenever `main` moves, never rebase it (the PRs stack on it); land it on `main`
+  through a release PR with a **merge commit**, gating that commit, tagged. CI runs on
+  every pull request whatever its base. Hand-off entries stay on `main` as usual. A PR
+  that is shippable on its own goes to `main` directly, and the branch is cut after it.
+  Instances: **M6.5** — `m6.5-workbench`, #231–#234, released as v0.4.0-alpha (owner's
+  call, 2026-09-10; design §13.6). **M6.1** — `m6.1-fastmcp4`, cut after #241 lands on
+  `main` (a 3.x fix that ships alone), carrying #243 (the FastMCP 4 bump), #242 stacked
+  on it and #244 (the gate), released together (owner's call, 2026-09-11; design §7.1).
 - **Commit or push only when the user asks.** Don't take a green test run as
   permission.
+- **`main` has a ruleset** (Settings → Rules, "main", since 2026-10-02). It blocks
+  force pushes and deletion, and it requires the CI checks **Backend**, **Frontend**
+  and **Integration** before a merge. Branches need not be up to date. The repository
+  admin role bypasses it ("Always allow"), which is what lets the small docs commits
+  above go straight to `main`, and every agent here pushes as that admin. So the
+  rules hold only if merges never use the bypass: **never pass `--admin` to `gh pr
+  merge`**. "Merge it once it's green" means `gh pr merge --squash --auto
+  --match-head-commit <reviewed sha>`, which waits for the three checks. Before the
+  ruleset existed, `--auto` merged #311 at once, mid-CI.
 - Anything outward-facing — pushing a tag, cutting a release, changing repo
   settings or visibility — needs explicit confirmation each time. Approval for one
   doesn't carry to the next.
@@ -75,8 +97,9 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 ## Layout
 
 ```
-docker-compose.yml      # the full stack: web (nginx) + api + migrate + db.
-                        #   `up -d --build --wait` installs without publishing Postgres
+docker-compose.yml      # the pull-only stack: web (nginx) + api + migrate + db.
+                        #   release bundles pin tested digests; Postgres remains unpublished
+docker-compose.build.yml # explicit local source build; CI/review use this, never release images
 docker-compose.dev.yml  # explicit dev overlay: publishes Postgres on loopback only
 .env                    # the only config file (gitignored); .env.example is the template
                         #   compose + API both read it; app/config.py assembles the DSN
@@ -84,7 +107,7 @@ docker-compose.dev.yml  # explicit dev overlay: publishes Postgres on loopback o
 backend/
   Dockerfile            # multi-stage uv build; also the migrate service's image
   app/
-    models/             # SQLAlchemy 2.0 async models — 10 tables
+    models/             # SQLAlchemy 2.0 async models — 11 tables
     schemas/            # Pydantic v2 request/response models
     services/           # ALL business logic lives here (see rules below)
       portability/      # CSV import/export — spec.py registry drives all of it
@@ -95,30 +118,158 @@ backend/
   tests/                # pytest against real Postgres, in-memory MCP client tests
 frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-hook-form
   Dockerfile            # node build -> nginx:alpine
-  nginx.conf            # THE ingress. Read the comments before touching the /mcp or
-                        #   resolver lines — both encode bugs found by testing (§8)
+  nginx/                # THE ingress: default.conf.template (rendered by envsubst at
+                        #   container start — default-deny 421 server, the /api/ alias
+                        #   rejections, security headers) plus the .envsh that assembles
+                        #   server_name from PUBLIC_BASE_URL, WEB_BIND and ALLOWED_HOSTS.
+                        #   Read the comments before touching the /mcp or resolver
+                        #   lines — both encode bugs found by testing (§8)
   src/
     api/                # hand-typed API client + types mirroring backend schemas
     i18n/               # language manifest + en-AU catalogue (§6.1) — manifest.json's
                         #   enabled tags must equal SUPPORTED_INTERFACE_LANGUAGES
                         #   (backend/tests/test_settings.py holds the pair together);
                         #   extraction keeps en-AU strings byte-identical (e2e proves it)
-    components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
-    pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage,
-                        #   RetailersPage, and settings/ (SettingsPage + sections,
-                        #   including Data management at /settings/data)
-  e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
+    components/         # Layout (the three shells, §13.7: sidebar, icon rail, phone tab bar),
+                        #   Modal (one dialog, three frames, §13.7: the desktop's panel, the
+                        #   phone's full-screen sheet with the actions in a bar at its foot,
+                        #   and with `sheet` the bottom sheet — a form *describes* its two
+                        #   actions and its Delete, the frame draws them where the shell
+                        #   wants them — and the one focus trap, which hand-drives Tab across
+                        #   what Safari skips, #267; run the dialog specs under WebKit),
+                        #   FilterSheet (the phone's one filter-and-sort control, §13.7),
+                        #   ui primitives (PageHeader is the page head in every shell — on a
+                        #   phone a bar that wraps before it widens the page, with `back`,
+                        #   a screen's way up, a slot the page fills (#260);
+                        #   CardList/CardRow are a list page's rows on a phone — a row's
+                        #   controls are in rem with a px floor, a finger's, and the
+                        #   identifying column has a share to give way from, §13.7),
+                        #   CatalogItemPicker (§3.9 select-or-create),
+                        #   KitFormModal + OrderFormModal — the one edit dialog per record,
+                        #   shared by the list pages and Home (#233)
+    lib/shell.ts        # which shell this viewport gets — `useShell()` where a shell renders
+                        #   different things; the `max-md:` / `touch:` utilities (index.css)
+                        #   where it is the same thing at another size. One pair of lines:
+                        #   shell.test.ts holds the hook and the stylesheet together
+    lib/focusKey.ts     # focus by record — the rule is "every change of representation
+                        #   accounts for the focused control": one drawn differently per
+                        #   shell (or folded away, or swapped for cards by a fold) carries
+                        #   `data-focus-key="kit:<id>"`, one some shape does not draw at all
+                        #   names what stands in for it (`data-focus-stand-in`), and `Modal`
+                        #   (at close — and at open, when the commit that mounted it
+                        #   took its opener, #275), `useFocusAcrossShells` (a shell change; a control
+                        #   that stopped being drawn; one disabled or removed under the keyboard,
+                        #   #268 — a control *waiting* on its request is `Button`'s `pending`,
+                        #   `aria-disabled`, and keeps it) and `FoldToFit` (a pass that hid the
+                        #   focused control — it answers itself, #330) give the keyboard to
+                        #   whatever carries the key now. A new control of either kind owes itself one, and
+                        #   lists.spec.ts's sweep — every control, every way the page
+                        #   changes — is where a missing one shows (§13.7). A change that
+                        #   draws different *rows* (the phone's every row against the
+                        #   rail's ten, #321) owes the focused record its row: `usePaging`
+                        #   lands on its page, read through `focusedRecordKeys`
+    lib/listFilters.ts  # what a list page's filters and search keep — one pure function
+                        #   each, read by the page for its rows and by the filter sheet
+                        #   for the count on its button, so the two cannot disagree
+    pages/              # HomePage (§13.2: bench, strips, mail), KitsPage, OrdersPage,
+                        #   InventoryPage, RetailersPage — card rows below 768 px, a table
+                        #   from there that folds to fit its own box — `FoldToFit`
+                        #   (`components/FoldToFit.tsx`, #329) tries each stage from the
+                        #   whole table up before paint and draws the first that fits,
+                        #   the desktop's included; cells read the stage as
+                        #   `group-data-fold-<n>/fold:` variants, never a container query
+                        #   in rem (a fixed line bounds only the rows it was measured with,
+                        #   §13.7). What a fold cannot hold
+                        #   gives way by its *value*: a date in words wraps, one in digits
+                        #   never does (`dateInDigits`); a reference, a name or any free
+                        #   text a cell says breaks once its widest word is past a measured
+                        #   budget — measured by the browser in `components/Measured.tsx`,
+                        #   never counted in characters — and an ordinary one is a plain
+                        #   word. A new free-text cell owes it `Measured` (#323), a new
+                        #   filter `<select>` a width cap, and a part of a table that
+                        #   changes its width without the table rendering owes it
+                        #   `useRefit()` (`Measured` calls it) — budgets bound a value, not
+                        #   a row (#328), so the fold has to see the whole row (#329).
+                        #   A fold keeps a hidden copy
+                        #   of what it moves, so a test reading a row's text filters for
+                        #   the visible one — MorePage (the phone's fifth tab),
+                        #   and settings/ (SettingsPage + sections, including Data
+                        #   management at /settings/data). Settings is one `<nav>` in two
+                        #   shapes (#260): a pane beside the section from 768 px, and on a
+                        #   phone the section list is `/settings` itself, a section opens
+                        #   from it and the bar's chevron is the way back — `SettingsIndex`
+                        #   redirects to General only from 768 px. Data management below
+                        #   768 px imports too (#304): Merge and Add only, never
+                        #   Replace everything; Apply in a bar held above the tab bar;
+                        #   the starter sheet without the template pack.
+                        #   **In the phone shell everything is in rem but the screen**: a
+                        #   row wraps, a word breaks (`main` is `break-words`; a Button's
+                        #   and a Chip's label `max-md:wrap-anywhere`), and a layout that
+                        #   a measurement decides measures a copy the decision cannot
+                        #   change (the stock stepper's ruler) — pages.spec.ts and the
+                        #   font-size tests hold 32 and 40 px on a 320 px phone
+  e2e/                  # Playwright (runs against the dev stack, self-cleaning): the `app`
+                        #   project at the desktop size, `phone` (390 × 844) and `tablet`
+                        #   (820 × 1180) with a touch screen — shell.spec.ts, lists.spec.ts,
+                        #   dialogs.spec.ts and pages.spec.ts (#260: Settings, Home, the
+                        #   sign-in screens) run in all three, phone.spec.ts — the happy
+                        #   path by thumb — in `phone` alone; lists.settings.spec.ts asks the lists' fit
+                        #   questions again under every date style, in the `settings` project
+                        #   (it flips the singleton, so it runs after everything else);
+                        #   lists.ts is what the two measure with; shellEvents.ts holds a turn's
+                        #   media-query events so a test can act between the viewport changing
+                        #   and the page hearing of it (#275). lists.spec.ts seeds its
+                        #   own rows — the ordinary widest and the wide — since an empty
+                        #   list has no table to measure
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
-docs/operations.md      # backup / restore / upgrade for the container stack
 docs/translating.md     # contributor how-to for proposing/reviewing a language (#22)
+                        # operator docs — install, deploy, auth, backups, updating, the
+                        #   audit log — live on the docs site (DeusMaximus/plamotrack-docs
+                        #   → https://docs.gunp.la), not in this repo; the README links there
 HANDOFF.md              # session hand-off log — the five most recent entries only
 .agents/                # process material for agents, NOT user docs (README inside)
   handoff/YYYY-MM.md    #   archived HANDOFF.md entries, verbatim; grep it, don't read it
   lessons.md            #   case histories behind the rules — append-only, stable headings
   testing-and-review.md #   procedure: suites, harness, CI, release gate, reviewer routing
   review-brief.md       #   fill-in template for briefing a reviewer; the PR-body shape it assumes
+  releases.md           #   the maintainer's release runbook and update policy
+  next-release.md       #   what the next release owes: release notes, README and docs-site
+                        #   changes held back from `main` — each user-visible PR adds its entry
 ```
+
+## Release artifacts (#278)
+
+`release-candidate.yml` builds both architectures once, then runs CI against their
+recorded digests on native amd64 and arm64 runners. `release-promote.yml` accepts
+only a successful candidate and an existing tag at that exact commit; it copies
+image manifests, attaches the tested bundle to a draft release, then downloads the
+draft and verifies what a user would get. No rebuild, `latest` tag, or automatic
+publication. The maintainer runbook and update policy are in `.agents/releases.md`.
+Registry writes, tags and release publication still require the owner's explicit
+instruction. Release asset names must survive GitHub's upload, which renames a
+leading or trailing period — the template ships as `env.example` for that reason.
+v0.5.1-alpha was tagged and promoted but never published (its `.env.example` reached
+the draft as `default.env.example`); v0.5.2-alpha is the first release meant to
+carry these assets, and until it is published none does. A source checkout always
+uses the build override below: `.env.example` selects it through `COMPOSE_FILE`, and
+an `.env` from v0.5.0-alpha or earlier needs those two lines added before its next
+`up`, or Compose pulls the never-published `:unreleased` image and stops with
+`denied`.
+
+**User-facing docs describe the published release, never `main`** (owner's rule,
+2026-09-25). The docs site (`DeusMaximus/plamotrack-docs` → https://docs.gunp.la) and
+the README's user-facing parts — what plamotrack is and does, installing, the MCP tool
+table — say what the currently published images do, because a reader installs the
+release and reads those first. A PR that changes user-visible behaviour leaves both
+alone and adds its entry to **`.agents/next-release.md`** — the release note and what
+the README and the docs site will owe — in the same PR; the release that ships the
+change works through that file, then removes the entries it shipped once published
+(`.agents/releases.md`, step 7).
+Contributor material follows `main`: the README's
+*Developing on it*, `docs/design.md`, `AGENTS.md`, `.agents/`, docstrings and tool
+descriptions — an MCP tool's description ships with its code, so it describes that
+code.
 
 ## Dev environment & commands
 
@@ -130,16 +281,30 @@ stack has no hot reload, and both want port 5432:
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
 ```
 
-To exercise the packaged stack instead (before touching Dockerfiles, `nginx.conf`,
+**Claude Code on the web** does not run Docker: the image ships it with the daemon
+stopped (one started by hand came up, but its first Docker Hub pull was refused with
+429 on 2026-09-24). `.claude/hooks/session-start.sh` (registered in
+`.claude/settings.json`, a no-op outside the cloud) starts the image's own Postgres 16
+instead, with the credentials `Settings()` defaults to, exports CI's
+`TEST_DATABASE_URL`, migrates the dev database only when `Settings()` resolves to that
+local one, and installs both sides as CI does — `uv sync --frozen`, and `npm ci` when
+`package.json` or `package-lock.json` changed or `npm ls` finds `node_modules`
+incomplete (never `npm install`: Node 22's npm strips the lockfile's `libc` fields).
+It pins neither Postgres nor Node: with the current image (Postgres 16, Node 22) the
+Backend and Frontend CI checks reproduce there, and a Postgres that is missing or
+will not start is reported in the hook's summary, not fatal. The packaged stack,
+`ingress_matrix.py` and Playwright e2e are not set up.
+
+To exercise the packaged stack instead (before touching Dockerfiles, `frontend/nginx/`,
 or anything about startup ordering):
 
 ```bash
-docker compose up -d --build --wait   # http://127.0.0.1:8080 — see below re --build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait   # http://127.0.0.1:8080 — see below re --build
 docker compose logs migrate   # migrations; Exited (0) is success
 docker compose down           # add -v ONLY to destroy the database
 ```
 
-**`--build` is not optional, including on a first run.** `api` and `migrate` share
+**Source builds require `docker-compose.build.yml` and `--build`, including on a first run.** `api` and `migrate` share
 an `image:` tag so they build once and run identical bits, which also means a plain
 `up` reuses a **stale** local image after you change the code — that is how a
 container once ran migrations it predated. Separately, a fresh LXC on the official
@@ -158,7 +323,7 @@ uv run pytest                # tests: auto-creates plamotrack_test DB, runs alem
                              # downgrade+upgrade, truncates tables between tests
 uv run ruff check --fix . && uv run ruff format .   # lint+format — run before committing
 uv run alembic upgrade head  # apply migrations to the dev DB
-uv run uvicorn app.main:app  # REST on :8000, MCP endpoint at /mcp/
+uv run uvicorn app.main:app --no-proxy-headers  # REST on :8000, MCP at /mcp/ (the flag: rule 12)
 ```
 
 Frontend is npm-managed — run from `frontend/` (needs the backend on :8000; the
@@ -168,7 +333,8 @@ dev server proxies `/api/*` there, stripping the prefix):
 npm install
 npm run dev                  # Vite on :5173
 npm run build                # tsc type-check + production build — run before committing
-npm run lint                 # oxlint
+npm run lint                 # oxlint, then scripts/check-palette.mjs: no stock Tailwind
+                             # palette utility under src/ — tokens only (design §13.1)
 npm run test:e2e             # Playwright happy-path (needs chromium: npx playwright install chromium);
                              # reuses running dev servers, creates + cleans its own data
 ```
@@ -198,6 +364,14 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    order. Receiving also advances
    pipeline kits (pre_ordered/ordered/in_transit → backlog). One transaction per
    order — any bad line rolls back all of it.
+   - **`item_type=other` lines dispatch nothing (#349):** something on the order the
+     collection does not track. A `description` (required there, refused on every
+     other type), a quantity and a price; no kits, no catalog row, no stock, in any
+     order state. So **"catalog line" is never spelled "not a kit line"**: a stock
+     rule asks whether the type names a catalog table (`item_type in CATALOG_MODELS`
+     in the services, `_moves_stock` in `invariants.py`), or it guards stock an
+     `other` line never had. The type is immutable like any other, so there is no
+     conversion to a tracked line.
    - Order **edit** re-runs the dispatch diff (kit details propagate to spawned
      kits; quantity/target changes spawn/remove kits and adjust applied stock).
    - Order **delete = undo the entry**: kits removed, applied stock reversed.
@@ -232,14 +406,32 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    null-or-present together, enforced by a CHECK constraint. The instance default
    lives in `settings.reference_currency` and is stamped in by the service layer at
    write time; `converted_price_aud_minor` survives only as a CSV import alias.
+   - **An order's adjustments (#350)** — discounts, vouchers, gift cards — are rows
+     of their own in the order's currency, never a lowered line price, and what was
+     paid is derived (`services/order_totals.py`, the `totals` on every order read),
+     never stored. Together they may not exceed the order's lines in its currency
+     plus its shipping. That is a rule about the **order as it will be stored**, not
+     about adjustments: `order_totals.adjustment_overrun` is the one predicate, asked
+     by `create_order`, `update_order` and `invariants.py`, so anything new that can
+     change a line's quantity, price or currency, an order's shipping or its
+     currency owes the same question (rule 1).
 5. **Enums are text + CHECK constraint,** not native Postgres enums — the
    generic-vs-Gunpla taxonomy question (§9.1) is still open, keep it a data migration.
 6. **Errors:** services raise `app.exceptions` domain errors (`NotFoundError`,
    `ConflictError`, `InvalidInputError`); the REST handler and MCP ToolError
    conversion are already wired — don't raise HTTP exceptions from services.
+   **Text a column can't hold** (a NUL, an unpaired surrogate) is one of these, and
+   `services/text.py` is its one predicate (#346): a request body inherits
+   `schemas/base.py`'s `RequestModel`, a CSV text cell is `parse_text`, and text that
+   reaches a query as an argument owes `refuse_unstorable_text` in its service.
+   `tests/test_unstorable_text.py` names every body, query parameter and flat MCP
+   argument, and fails on a new one until it has an answer.
+   JSON from outside that is read and shown rather than stored (a manifest, a fetched
+   client document) owes `has_utf8_form` where it enters: nothing fails until the
+   response is encoded, long after the value was believed (#353).
 7. **Stock mutations** use row locks (`with_for_update`) — three concurrent writer
    types exist by design (UI, REST, MCP agents).
-7.1. **Every mutating service takes the write gate first** —
+7.1. **Every state-decided mutating service takes the write gate first** —
    `await acquire_write_gate(session)` from `services/write_gate.py`, before it
    *reads the state it will decide from*, not merely before it writes. Row locks
    only serialize writers touching the same row; they cannot protect a
@@ -248,6 +440,10 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    not after). The gate is collection-wide and transaction-scoped: it releases on
    commit or rollback, so there is nothing to release by hand. Reads never take
    it — import preview and every list/detail path stay unlocked and concurrent.
+   Append-only audit recording is the sole exception: it has no read-decide-write
+   span, and a standalone pre-routing refusal must not take the collection gate or
+   a refusal flood could block the owner's real writes. Audit rows emitted by a
+   state change still share that caller's transaction (rule 14).
    A new mutating service that skips it reopens a class this repo paid seven
    review rounds for on #79; the failure modes are 500s and silent data loss, not
    conflicts (`.agents/lessons.md` → "Why the write gate exists").
@@ -285,6 +481,331 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     additional languages ship from the repository through reviewed PRs. Keep language
     separate from regional formatting, keep canonical API/MCP/database/CSV identifiers
     untranslated, and never let a settings change reinterpret historical money.
+12. **Ingress identity (M6-1, §5.5–§5.6):** the instance's own names and origin come
+    from `PUBLIC_BASE_URL`, `ALLOWED_HOSTS`, `ALLOWED_ORIGINS` and `WEB_BIND` — never
+    from `Host`, `Origin` or `X-Forwarded-*`. `app/ingress.py` derives one
+    `IngressPolicy` that the REST guard and FastMCP's guard (strict mode, same lists)
+    both read: a Host outside the list is 421, an unsafe request whose Origin fails
+    the three-way rule (listed, loopback-to-loopback, or equal to the request's own
+    origin) is 403, each with the envelope naming the setting. `scope["client"]` is
+    the raw socket peer and stays that way — uvicorn runs with `--no-proxy-headers`,
+    and the forwarded address (believed from `TRUSTED_PROXIES` only) goes to
+    `request.state.client_address` instead — because the raw peer is what `/readyz`'s
+    `internal` check reads. No router-generated redirects (`redirect_slashes=False`
+    on both routers): a non-canonical spelling is 404, never 3xx. nginx duplicates
+    the cheap denies and owns **one spelling per family**: every root namespace of
+    the API process whose canonical spelling is not under `/api/` (`/mcp`,
+    `/.well-known`, `/openapi.json`, `/readyz`) is 404 under `/api/` before the
+    generic location, and `backend/ingress_matrix.py` proves it against the
+    packaged stack (CI Integration). That list is **generated** from the route
+    policy registry (`app/auth/registry.py`, `API_ALIAS_REJECTIONS`) into the
+    template by `scripts/render_ingress.py` (M6-2): a new root namespace owes a
+    declaration there or fails `tests/test_ingress_generation.py`. The app is
+    authoritative and nginx never grants: development runs without it. In the bundled
+    stack a **loopback entry in `TRUSTED_PROXIES` also trusts the Compose network's
+    gateway** (`frontend/nginx/15-plamotrack-server-names.envsh`, #194): a proxy on the
+    host — Caddy, the reference deployment — reaches nginx from that address, never
+    from `127.0.0.1`, and without the rule every visitor would key the rate limits and
+    the audit address on the gateway. Both spellings of `/mcp` carry the family's
+    settings (buffering off, the 1 h timeouts, the cleared hop-by-hop header), held
+    equal by the same test file.
+13. **Authorization is one dependency over a declared registry (M6-2, §5.5):** every
+    request resolves to one `Principal` (`anon`, `owner`, `pat`, `mcp`, `internal`;
+    scopes `collection:read`/`collection:write`/`instance:admin`, `write` implying
+    `read`, `admin` held by the owner alone), and a single app-level default-deny
+    dependency (`app/auth/dependency.py`) allows or denies from the **route policy
+    registry** (`app/auth/registry.py`) — the rule-9 shape applied to routes: declared
+    once, read by the dependency, the ingress rejection list and the T1/T2 matrix, and
+    matched on the **resolved endpoint**, never the URL string. The enumeration test
+    (`tests/test_route_policy.py`) fails on any effective route or MCP tool the registry
+    does not declare, which is what makes a new router or an M8 `/public/*` handler a
+    deliberate act. Auth configuration is **env-only** — there is no `AUTH_MODE=disabled`
+    in the shipped image and no settings row that turns authentication off (the Settings
+    page cannot grow a "disable auth" toggle); the pytest principal-injection seam
+    (`app/auth/resolver.py`) is a test-only `app.state` attribute the shipped app never
+    sets. Only an **absent** credential is `anon`; a credential that is *presented and
+    fails* — expired, revoked, malformed, wrong audience — is **401**, never a silent
+    downgrade. Auth tables are **never** portable (rule 9): they are absent from
+    `services/portability/spec.py`, so an export cannot become a credential dump. An
+    import's required privilege is read off its **plan's mutations** (`plan_requires_admin`)
+    — an `instance_settings` UPDATE or a `replace_all` needs `instance:admin` in any mode;
+    an unchanged or skipped settings sheet, or a collection-only plan, stays
+    `collection:write`. **Activation landed with M6-3 (#188):** the shipped `app` is
+    `create_app(authorization=True)` — default-deny — now that the browser session
+    exists to claim the owner and sign in; `create_app()` (the default off) is what the
+    ingress and packaged-stack harnesses build, and the test suite drives the shipped
+    app with an injected owner (`tests/conftest.py`). The staged sequencing ("foundation
+    M6-2, activate once a credential works", owner's call 2026-09-03) is complete for the
+    browser, and **the bearer landed with M6-4 (#189):** a personal access token
+    (`ptk_<id>_<secret>`, digest stored, `compare_digest` against a dummy for an unknown
+    id) in `Authorization` only — never a query parameter — resolved by **one** helper,
+    `services/tokens.resolve_bearer`, from both the REST resolver and the FastMCP
+    `TokenVerifier` on the `/mcp` mount, so a token is valid on both surfaces or on
+    neither; a presented-and-failed bearer is 401 `auth.bearer_invalid` on every route
+    the dependency covers, the anonymous families included — on the `/mcp` mount, which
+    is FastMCP's, it is the RFC 6750 challenge instead (`WWW-Authenticate: Bearer
+    error="invalid_token"`, `no-store`; a bare `Bearer` for an absent credential in local
+    mode, with `resource_metadata` in OIDC mode), in both protocol eras (#243) — and a
+    bearer on a family-3 action is 403. Per-tool
+    scope is one FastMCP middleware on `tools/call` (`app/auth/mcp_auth.py`) reading
+    `MCP_TOOL_SCOPES`, refusing before arguments are parsed; the in-memory test client
+    carries no header, so it reads an injected principal off the server object only
+    when no HTTP request is in flight (`tests/conftest.py` sets it). Token management
+    is family 6 (`/auth/tokens`): the owner's session alone, so a token cannot mint a
+    token. The matrix
+    **Browser OIDC landed with M6-6 (#191):** `AUTH_MODE=oidc` replaces the password
+    with a sign-in at one configured OpenID Connect provider; the owner is bound to the
+    provider's `(issuer, subject)` at the first login that presents the setup token,
+    every other identity is refused with an audit row, and `recovery rebind-oidc` is
+    the host-side way back — it also purges every MCP OAuth grant and asks the
+    provider, best effort, to revoke what they held (#214). The modes are mutually
+    exclusive and env-only; each
+    family-3 action declares its mode in the registry and answers 404 in the other.
+    The id_token is verified with joserfc for its signature and by **one explicit
+    claim validator** for its contract (`validate_id_token_claims`: each claim's type
+    before its value, `aud` exactly this client, `azp` when present, `iat` required,
+    `nonce` a string) — a generic JWT registry read a list as containing the expected
+    value and opened a session for a token naming another client (Codex #209 round
+    1). The login transaction is a database row consumed before any network call
+    (`services/oidc.py`). **A browser session is authority only in the mode that
+    minted it:** `session.auth_mode` is stamped at mint, the resolver refuses it under
+    the other mode, and the API's start in a new mode revokes the old mode's sessions
+    with an `auth.mode_changed` audit row, so a switch signs everyone out durably and
+    switching back resurrects nothing (same round). The matrix
+    (`tests/test_authorization.py`) drives the real route graph through the dependency
+    with injected principals; `tests/test_auth_local.py` drives the shipped app through
+    the real session cookie; `tests/test_auth_tokens.py` drives it through real bearers
+    and the MCP transport by hand.
+    The registry's **response profile is enforced, not defaulted, adjacent to the
+    router that selects the route**: for the app's own routes the response
+    middleware — added *first*, so it is the innermost user middleware, with only
+    the framework's own pass-through layers between it and FastAPI's router —
+    reads the endpoint the router recorded in the very dict it holds and stamps the
+    final response, replacing whatever `Cache-Control` a handler or library set
+    (`no-transform` alone survives beside `no-store`); every route under the `/mcp`
+    mount, whose child may stack middleware of its own, carries a `RouteBinding`
+    that stamps on the route's own send and **enforces the declared verbs** in front
+    of the implementation — the transport's metadata declares none, so the
+    registry's set is its dispatch boundary. A scope-copying middleware, which the
+    ASGI contract permits, can lose neither. And `build_route_index` refuses a
+    route graph a declaration cannot describe — two routes on one dispatch entry,
+    one endpoint on two routes, an undeclared route under a mount, a route type the
+    walk does not know.
+    **Family 13 is closed by the pre-routing gate (M6-3b, #204):** one middleware
+    directly above the response-profile layer (`app/auth/prerouting.py`) resolves the
+    principal **once** per request the REST app owns, before Starlette routes and
+    FastAPI parses, stashes it for the dependency to reuse, and refuses `anon` wherever
+    the router would have answered 404, 405 or the dependency's 401 — an unrouted path,
+    a wrong verb (no `Allow`), a malformed body — reading what the request would reach
+    from the registry's dispatch walk, never the URL. It never grants; the dependency
+    stays the authority on every matched route. The anonymous families keep their own
+    405/422, the `/mcp` mount is the child's, family 8's `/.well-known/` namespace
+    (`PROTOCOL_NAMESPACES`, one declaration with the ingress rejection) is the
+    router's 404 for everyone, and a new mutating middleware or a change
+    to the resolver owes the once-per-request test (`tests/test_auth_unrouted.py`).
+    **MCP OAuth landed with M6-7 (#192):** in OIDC mode the `/mcp` mount is built with
+    `PlamotrackOAuthProxy` (`app/auth/mcp_oauth.py`) — FastMCP's `OAuthProxy` in front
+    of the **same provider and client** as the browser login, every plamotrack rule on a
+    documented extension point: **the upstream authorization request is the proxy's,
+    not the client's** — configuration, the proxy's transaction and PKCE, `openid` and
+    the Google pair, and nothing of the client's request: its RFC 8707 `resource` names
+    this server, and a provider that implements RFC 8707 refuses it (#294); the
+    upstream identity must be the bound owner, checked **at issuance**
+    (`exchange_authorization_code` — a stranger gets `invalid_grant`, an
+    `auth.mcp_identity_refused` row and nothing minted — the id_token through the same
+    `validate_id_token_claims`, with `nonce=None`) and carried as **grant state** — in
+    every token the proxy issues, compared with the owner row on every request, and on
+    the **grant record** itself, whose binding is what every refresh is checked
+    against: the record gate (`GrantRecords`) admits a refresh's upstream set, on the
+    client's exchange or the transparent refresh behind a request, only with an
+    identity that binding names — the id_token already verified, or a new one verified
+    in full naming the **record's** `(iss, sub)`, not merely the owner now (round 3,
+    f10: the two differ for the length of a rebind) — else the grant ends
+    (`ended_by=upstream_refresh`);
+    one validly omitted carries the binding forward; **one transition per grant** —
+    issuance, both refreshes and revocation serialize on a Postgres advisory lock per
+    grant, the write gate's shape, so a second redemption is `invalid_grant` and a
+    revocation and a refresh never interleave; **revocation is the grant's** — either
+    half presented is **located, not authorized** (`RevocationLookup`: the proxy's own
+    signature and the JTI mapping, the provider asked nothing, no owner row read — the
+    SDK's handler otherwise finds a token through the bearer path, and a provider whose
+    keys could not be fetched turned that into a silent 200 over a live grant; round 3,
+    f9), ends the whole grant locally first, then the provider's refresh
+    token best effort (`auth.mcp_grant_revoked`); what bounds a grant is the
+    provider's own token, refreshed transparently while it can be (Codex #212 rounds
+    1–2, f1–f3 and f6–f7); every issued token maps to a **fixed** `collection:read` +
+    `collection:write` by its `kind` (the OAuth scope vocabulary is the provider's,
+    `openid`), never `instance:admin`; the mount requires no OAuth scope, so a personal
+    access token stays valid on `/mcp/` in that mode; the redirect-URI binding is per
+    client kind — a DCR client to its registration (`BoundDCRClient`: exact, loopback
+    port free, *then* the operator allowlist, which FastMCP alone would check instead),
+    the synthesised upstream-id client refused, a CIMD client (Claude web, ChatGPT web)
+    by its document — and the allowlist, when set, applies to every kind. **One
+    downstream client contract** (round 4, f11–f13): every dynamically registered client
+    is **public** (`none` + PKCE) whatever it asked for — except `private_key_jwt`, which
+    MCP SDK 2 refuses outright (400 `invalid_client_metadata`) before `register_client`
+    runs, accepted as the contract with FastMCP 4 (#243) — and the registration response says
+    so (`register_client` makes the SDK's object truthful before it is stored *or*
+    returned — the SDK returns that same object); a CIMD client authenticates as its
+    document says, `none` or `private_key_jwt`, on `/token` **and** `/revoke`
+    (`_revocation_authenticator`, the assertion bound to the revocation URL); the wire
+    forms are the RFCs' (`GrantRevocation` over `RevocationForm`: `client_id` in the
+    form, no secret from a public client, `401 invalid_client` on a failed client
+    authentication on either endpoint); **discovery says the same** — the two
+    authorization-server documents are built here (`discovery_metadata`,
+    `CLIENT_AUTH_METHODS`, `CLIENT_ASSERTION_ALGORITHMS`) and publish exactly those two
+    methods for both endpoints and `RS256`, where the SDK's metadata advertised its
+    shared-secret methods and no algorithm (round 5, f14); every protocol field's value
+    space is the protocol's, unrecognised values included — an unknown
+    `token_type_hint` is ignored, never refused (f15); and **the boundary is owned field
+    by field** (round 6, f16–f19): `ClientAssertionAuthenticator` judges an assertion's
+    claims (`nbf` included, dates never booleans, `jti` a string) *before* the SDK's
+    validator spends its `jti`; `register_client` canonicalises the admitted metadata and
+    stores that same object (a null redirect list refused; `jwks` with `jwks_uri`
+    refused, RFC 7591 §2 — round 7, f26); `ProtocolRequest`, an ASGI
+    guard on `/authorize`, `/token` and `/revoke`, refuses a repeated parameter, drops
+    empty ones, names `unsupported_grant_type`, and reads an omitted
+    `code_challenge_method` as `plain` for the SDK to refuse; `UnregisteredClientGuidance`
+    points at the root discovery document. **Admission, decoding, cardinality and the
+    SDK hand-off are one decision** (round 7, f20–f24): the guard reads the media type
+    as HTTP does (case-insensitive, parameters aside) and refuses any body that is not
+    form-encoded before the SDK parses it — a case-sensitive prefix had let mixed-case
+    and multipart bodies around it; `resource` is the one parameter RFC 8707 lets a
+    client repeat, so it is a **set** — identical values collapse, the proxy's own
+    `accepts_resource` judges every member, a set naming another target is
+    `invalid_target` (at `/authorize` the SDK's redirect, which the proxy's `authorize`
+    renders because the SDK's vocabulary lacks the code; at `/token` directly, where the
+    SDK judges nothing), and the naïve exemption that hands the SDK the last value is
+    the wrong repair; a NumericDate has a range, ±2^53, judged before any float
+    conversion; and `ClientAssertionAuthenticator` refuses a second mechanism beside an
+    assertion (RFC 7521 §4.2.1, `invalid_client`), and an assertion from a client not
+    registered for `private_key_jwt` — the SDK's `none` branch had accepted it unread —
+    with a 401 to a client that used the `Authorization` header carrying the
+    `WWW-Authenticate` challenge RFC 6749 §5.2 requires. **And a request is admitted
+    once** (round 8, f27–f30): a decision at the seam is owned, not prechecked — a
+    refuse-only check in front of a parser, comparison or lookup that decides again can
+    disagree with what executes. So the resource comparison is this server's own, on
+    the whole URI (`resource_identity`: a fragment or a missing scheme is malformed, the
+    path keeps its `;parameters`, a trailing slash and the query are the only
+    equivalences, scheme and authority compare as written) and `authorize` applies it
+    behind the guard's hand-off; each endpoint declares the parameters it recognises
+    (`RECOGNISED_PARAMETERS`) and unknown ones are discarded before their multiplicity
+    is judged (RFC 6749 §3.1, erratum 5708); and `ClientAssertionAuthenticator` owns
+    client authentication end to end — every `Authorization` occurrence inventoried
+    first and any one refused as a failed HTTP attempt, the client resolved **once**
+    with the method, the verifying document and the authenticated client all that
+    snapshot, FastMCP's cryptographic validator behind it. **Parsing is not
+    validation** (round 9, f31–f32): the resource value is judged against RFC 3986's
+    `absolute-URI` grammar before `urlsplit` sees it (a parser strips or admits what
+    the grammar refuses, and a query the comparison ignores was never checked), and the
+    inline key set has a contract in front of FastMCP's extraction (`keys` an array,
+    unusable entries ignored per RFC 7517 §5.1, none usable a refusal) where a
+    malformed set had been a 500. **The selected key keeps its authorization** (round
+    10, f33): FastMCP verified with a PEM of the JWK it selected, so the key's `alg`, `use`
+    and `key_ops` never reached joserfc; `RestrictedKeyAssertionValidator` and
+    `RestrictedKeyVerifier` hand its verifier the selected JWK itself — the record the
+    `kid` named, never the first record with its material (round 11, f34) — on the inline
+    and the fetched path, cache included, and the same decode enforces the restrictions —
+    one cryptographic validator, the SDK's *remote* selection rule on both paths; the
+    inline set is filtered by the remote path's own usability predicate before the
+    single-key fallback counts it (f35); and a named `kid` that matches nothing is a
+    refusal on both paths, the fallback only for a header naming none — the SDK has two
+    rules, and its inline extraction, which round 11 wrote out, fell back to the only key
+    whenever no record matched (round 12, f36); and the rule is stated **once, over usable
+    records** (`select_records`) for both paths — the fallback counts the set's records,
+    not the slots a cache keeps them in, where FastMCP's PEM cache and the fetched path's
+    records held every unnamed record under one `_default` slot, so two unnamed records
+    were one key fetched and an ambiguous set inline (round 13, f37); and the SDK's cache is
+    built from those same records, never the raw array — its own skip loop, which the inline
+    path never runs, choked on an unusable record's unhashable `kid` and refused a set the
+    inline path accepted (round 14, f38). All of it tested from raw
+    requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
+    a helper that pads the form, and with the test's own dates computed when it runs,
+    not at import (f23). The upstream
+    endpoints are **properties over `OidcProvider.cached_metadata`** — no reader in
+    FastMCP can hold a stale copy — and every entry point that reaches the provider
+    fetches first (authorize, consent, the callback, the exchanges), so a provider down
+    at start never fails the start and a restart mid-flow completes on the fresh process
+    (round 1, f5). A protocol route's failure is the `RouteBinding`'s stamped 500, a
+    non-JSON registration body RFC 7591's 400, and nginx's `limit_req` 429 carries the
+    envelope and `no-store` (round 1, f4). State lives in `mcp_oauth_state`, a
+    table Alembic owns (never portable), Fernet-encrypted under a key derived from
+    `MCP_OAUTH_SIGNING_KEY`, which OIDC mode requires — as it now requires an **https or
+    loopback** `PUBLIC_BASE_URL`, the MCP OAuth issuer being `<PUBLIC_BASE_URL>/mcp` (RFC
+    8414, enforced by the SDK). Family 8 is declared in the registry by **path**
+    (`DISCOVERY_ROUTES`, `MCP_OAUTH_ROUTES`, each with a `ProtocolRole`), because the
+    same nine paths exist in both modes — FastMCP's handlers in OIDC mode, a 404 of
+    their own naming the mode in local mode — with the child routes' method metadata
+    cleared so the `RouteBinding` is their verb boundary too; the pre-routing gate passes
+    the whole `/.well-known/` namespace through unresolved, and the index build refuses
+    any non-protocol route under it. A change to any of this owes
+    `tests/test_mcp_oauth.py` (the fake provider is `tests/oidc_fake.py`) and, for the
+    ingress half, `ingress_matrix.py --mode oidc` against a packaged stack with a provider.
+14. **Security telemetry and throttling (M6-8, §5.6):** security events append
+    through `services/audit.py`, never ad-hoc logging. A row identifies the
+    principal kind and credential id when one exists, the resolved client address,
+    and a route or MCP tool; detail is short structured metadata only — never a
+    credential, request body, or query string. External OAuth client ids and
+    refused OIDC subjects are fingerprinted with `audit.external_reference`;
+    provider callback errors map to fixed categories, never raw parameter values.
+    Token-exchange diagnostics keep the HTTP status, not a provider's error body.
+    A source-run XFF walk validates/canonicalizes each whole IP spelling before
+    assignment; malformed/empty hops stop at the last verified address, never skip
+    leftward. The bundled private header uses the same IP parser. State-change
+    events share the caller's transaction; a pre-routing Host/Origin refusal owns
+    its transaction.
+    Retention goes through the audited `prune_events` service and host-side
+    `prune-audit` command. The bundled nginx has four independent `limit_req`
+    zones for route families 2, 3, 8 and 9, keyed on `$binary_remote_addr` after
+    its `TRUSTED_PROXIES` walk; their maps use a server-rewrite snapshot of nginx's
+    normalised `$uri`, taken before the `/api/` rewrite. Raw `$request_uri` lets
+    alternative spellings bypass the key, while live `$uri` has already lost the
+    prefix by nginx's limit phase. nginx overwrites the
+    private client-address header on every API/MCP proxy path and only the
+    unpublished compose API enables trust in it; source-run deployments use the
+    ordinary proxy policy. **The in-process budgets** (#221) — a failure ladder
+    per (action, client address) plus one verification bucket for the instance
+    and a reserved one for a browser that has signed in before (`app/auth/budget.py`;
+    a guesser's failures slow the guesser's address, never the owner's, a ladder
+    decays instead of re-arming its ceiling, and a browser still holding a session
+    cookie the database recognises — idled out, or ended by a host-side reset — is
+    admitted under a flood, while one that signed out normally, or holds no
+    recognised cookie for any other reason, is explicitly the operator's ingress to
+    protect — the two buckets are separate and additive, capacity plus refill, never a
+    per-minute total; the setup
+    token and the OIDC start spend no verification token), the
+    refusal budget the audit recorder reads (ten rows per address and sixty per
+    instance a minute, the rest one summary row), and the MCP registration quota
+    — remain correct only while the Dockerfile pins uvicorn to one worker; move
+    them to a shared store before adding workers. **Every anonymous route that
+    takes a body declares `max_body_bytes` in the registry** (#221 item 1): the
+    pre-routing gate and the protocol guards enforce it through one bounded reader
+    (`app/auth/body.py`) before any parser, and nginx's exact locations are
+    generated from it (`scripts/render_ingress.py`, the second region);
+    `tests/test_body_limits.py` fails on an anonymous body route without one.
+    **Client records in `mcp_oauth_state` are dynamically registered clients only
+    (#242) and live a day unless a grant links them** (`ClientRecords`, which every
+    writer goes through — FastMCP's included), are capped, and culled where a
+    record is created — `ClientRecords.put` on a new key — as well as from the
+    anonymous entry points; the adapter reads an expired row as absent and never
+    deletes it, so a new collection with a lifetime owes the cull too. A CIMD
+    client (Claude web, ChatGPT web) is stored nowhere: FastMCP 4 resolves it from
+    its document through the in-process cache on every lookup — bounded here at
+    `CIMD_CACHE_ENTRIES`, the one bound on that side — so the lifetime, the cap
+    and the quota never meet it; a row a 0.3.x/0.4.0 instance persisted for one is
+    the fallback until its document is refreshed, then deleted; and once no row
+    stands behind it, that client's own `/mcp/token` and `/mcp/revoke` are `401
+    invalid_client` while its document cannot be fetched (the SDK's
+    client-authentication step: nothing spent, nothing ended), while a live
+    grant's access token and the transparent refresh behind it, which never look
+    the client up, carry on. A body whose client
+    disconnects before its last message is neither replayed nor answered
+    (`Disconnected`). CI's packaged matrix must exercise all four 429s and
+    scan a full login/PAT/MCP run for the password, PAT and session value, plus
+    OAuth query/Referer probes on normal and throttled requests. Both access loggers
+    omit queries; nginx omits headers and discards its raw-request error diagnostics.
+    Keep the useful status/timing access records — disabling access logging makes
+    that test vacuous.
 
 ## Fixing a defect: sweep the class first
 
@@ -313,6 +834,9 @@ for four instances of one money rule applied unevenly (`.agents/lessons.md` →
   `frontend/src/lib/__fixtures__/money-cases.json` is read by both `format.test.ts`
   and `backend/tests/test_currency.py`. Two hand-maintained lists drift, and a
   drifted pair reads green on both sides with a wrong number in the database.
+  The same holds across repositories: a business rule plamotrack-ios reimplements
+  gets a behaviour scenario in `backend/tests/fixtures/scenarios/` (#307), which
+  both sides run (`.agents/testing-and-review.md` → "Behaviour scenarios").
 
 ## Writing the test: sweep the values, not just the paths
 
@@ -359,26 +883,55 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
 4.5. ~~Import/export: CSV archive + manifest, preview, templates~~ ✅ (§12)
 → **Public alpha ships here.** Everything below is built in the open.
 5. ~~Installability: full local Docker Compose stack, safe loopback defaults,
-   migrations, health checks, backup/upgrade docs~~ ✅ (§8, `docs/operations.md`)
+   migrations, health checks, backup/upgrade docs~~ ✅ (§8; the operator docs have
+   since moved to https://docs.gunp.la)
    — also shipped the configurable reference currency, pulled forward from 5.1
 5.1. Instance settings + internationalisation foundation: singleton settings,
      `en-AU` source catalogue and fallback, reviewed language contributions,
      locale-aware presentation, Settings page (absorbing Data), and structured
      REST/import diagnostics; no non-English translation required
-6. Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
-   OAuth-compatible MCP, tested TLS/VPS deployment path
-6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with
-     conformance and client coverage
-6.5. UI redesign: move off the stock Tailwind look — direction still being
-     explored, deliberately undecided; before M7/M8 so the gallery and showcase
-     are built in the new look once (#122 rides here)
+6. ~~Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
+   OAuth-compatible MCP, tested TLS/VPS deployment path~~ ✅ (§5, v0.3.0-alpha)
+6.1. ~~MCP modernisation: dual-era current + `2026-07-28` compatibility with
+     conformance and client coverage~~ ✅ (§7.1, `m6.1-fastmcp4` = #241–#244, v0.4.1-alpha)
+6.5. ~~UI redesign: move off the stock Tailwind look — Workbench, design §13,
+     built as #231–#234 on the integration branch `m6.5-workbench`; before M7/M8
+     so the gallery and showcase are built in the new look once (#122 rode here)~~ ✅
+     (lands on `main` as v0.4.0-alpha)
+6.6. ~~Phone and tablet UI: three shells by viewport width alone — a bottom tab bar
+     below 768 px, a 64 px icon rail to 1279 px, the desktop untouched from 1280
+     (one exception, the owner's, #258: the Orders table folds to its box there too) —
+     before M7 because the phone is the camera (design §13.7). Four PRs straight to
+     `main`, each shippable alone: #257 the shells, touch sizes and home-screen
+     install, #258 list pages and table folds, #259 sheet dialogs, #260 Home,
+     Settings, sign-in, the full phone e2e, the phone screenshots and the release~~ ✅
+     (v0.5.0-alpha)
+6.7. Easy hosted deployment and public sandbox — **planned**, issues #278–#287
+     ([milestone](https://github.com/DeusMaximus/plamotrack/milestone/18), design
+     §11.1): public versioned images and release assets; one recommended platform
+     template and one portable VPS path; Pocket ID compatibility investigation;
+     guided claiming, assistant connection, updates, backups and recovery. A
+     separate editable public sandbox uses invented data and resets daily, with
+     no MCP, credentials or administrative mutations. Start with #278–#280;
+     the hosting platform remains a decision to verify. Pocket ID is decided
+     (#280, 2026-09-25): an optional supported provider, documented from the
+     release that ships #294; whether a template bundles it is #281's call. Pulls
+     release packaging and the supported deployment guides forward from M9.
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
-9. Open-source operations: contribution guide, release automation, support matrix,
-   deployment-doc polish
+9. Open-source operations: contribution guide and the broader compatibility/support
+   matrix (release packaging, distribution automation and supported deployment
+   guides moved to M6.7)
 
 The repo goes public at 4.5 as an alpha (§10, revised) rather than waiting for
 milestones 1–6. Consequence for anything written from here on: **the audience is
 strangers.** No internal references, no assumed context, and disclose what isn't
-built rather than describing planned endpoints as if they exist. Nothing is
-authenticated yet (M6) — an alpha instance belongs on a trusted network.
+built rather than describing planned endpoints as if they exist. Collection and
+administrative access is authenticated — the owner login for the browser, personal
+access tokens for REST scripts and MCP clients (M6-3/M6-4); only liveness and the
+auth bootstrap answer anonymously — and since M6-9 (#194) there is a tested TLS path:
+Caddy with Cloudflare DNS-01 on the same host as the stack (the reference), a
+Cloudflare Tunnel variant, and the private-network case, the four documented ways to
+run it on the docs site (https://docs.gunp.la/deployment/overview, the
+`plamotrack-docs` repository). Describe those and no others; every one of them was
+run through `backend/deployment_gate.py` before the docs said so (§5.8 T12/T13).

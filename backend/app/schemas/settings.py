@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import DateStyle, HourCycle
+from app.schemas.base import RequestModel
 
 
 class InstanceSettingsRead(BaseModel):
@@ -17,7 +18,7 @@ class InstanceSettingsRead(BaseModel):
     updated_at: datetime
 
 
-class InstanceSettingsUpdate(BaseModel):
+class InstanceSettingsUpdate(RequestModel):
     """PATCH payload — only supplied fields change (§6.1).
 
     Every field is optional-to-omit but none is nullable on the row: the service

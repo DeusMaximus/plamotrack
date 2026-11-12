@@ -666,3 +666,249 @@ async def test_pending_display_line_defers_its_increment(client, retailer):
     # Delete undoes the entry, stock included — the display table is not exempt.
     assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
     assert (await client.get("/display-items")).json()[0]["quantity_on_hand"] == 1
+
+
+# --- sort and limit (§13.4, #232) ------------------------------------------------
+
+
+async def _seed_three_clocks(client, retailer) -> None:
+    """One order per clock the `recent` sort reads: received (placed earliest,
+    received latest), shipped-not-received, and pending (placed after the
+    shipment). `placed` and `recent` disagree on every position."""
+
+    async def make(number: str, order_date: str, **extra) -> dict:
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [kit_line()],
+                **extra,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    await make("R", "2026-01-10", received=True, received_at="2026-03-01T10:00:00+00:00")
+    await make("S", "2026-02-01", shipped_at="2026-02-20T10:00:00+00:00")
+    await make("P", "2026-02-25")
+
+
+def _numbers(resp) -> list[str]:
+    assert resp.status_code == 200, resp.text
+    return [order["order_number"] for order in resp.json()]
+
+
+async def test_list_orders_sort_recent_is_the_last_status_change(client, retailer):
+    await _seed_three_clocks(client, retailer)
+    assert _numbers(await client.get("/orders")) == ["P", "S", "R"]
+    assert _numbers(await client.get("/orders", params={"sort": "placed"})) == ["P", "S", "R"]
+    # Received on 1 March beats placed on 25 February beats shipped on 20 February.
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == ["R", "P", "S"]
+
+
+async def test_list_orders_limit_and_pending_only_compose_with_the_sort(client, retailer):
+    await _seed_three_clocks(client, retailer)
+    assert _numbers(await client.get("/orders", params={"sort": "recent", "limit": 1})) == ["R"]
+    assert _numbers(await client.get("/orders", params={"pending_only": "true"})) == ["P", "S"]
+    # The limit counts pending rows, not rows before the filter.
+    assert _numbers(
+        await client.get("/orders", params={"pending_only": "true", "sort": "recent", "limit": 1})
+    ) == ["P"]
+
+
+async def _seed_near_midnight_pair(client, retailer) -> None:
+    """A placed on 2 August with no shipment; B placed earlier and shipped at
+    15:00Z on 1 August. Which is the later change depends on whose midnight
+    "2 August" means: Brisbane's (UTC+10, no DST) is 14:00Z on the 1st, an hour
+    *before* B's shipment; Los Angeles's (UTC−7 in August) is 07:00Z on the 2nd,
+    after it; the database session's UTC midnight puts A first too."""
+    for number, order_date, extra in (
+        ("A", "2026-08-02", {}),
+        ("B", "2026-07-31", {"shipped_at": "2026-08-01T15:00:00+00:00"}),
+    ):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [kit_line()],
+                **extra,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+
+async def test_list_orders_sort_recent_reads_the_placement_date_in_the_instance_zone(
+    client, retailer
+):
+    """A date against two instants: the day an order was placed is its midnight in
+    the *instance's* time zone (§13.4, rule 11), not the SQL session's — the cast
+    alone read the session zone, so the same rows ranked one way under a Brisbane
+    session and the other under UTC (Codex #236 P2-1). Two zones either side of
+    UTC, so a clock that ignores the setting fails one of them."""
+    await _seed_near_midnight_pair(client, retailer)
+    resp = await client.patch("/settings", json={"time_zone": "Australia/Brisbane"})
+    assert resp.status_code == 200, resp.text
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == ["B", "A"]
+    resp = await client.patch("/settings", json={"time_zone": "America/Los_Angeles"})
+    assert resp.status_code == 200, resp.text
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == ["A", "B"]
+    # `placed` is the date alone — no zone can move it.
+    assert _numbers(await client.get("/orders", params={"sort": "placed"})) == ["A", "B"]
+
+
+async def _make_order(client, retailer, number: str, order_date: str, **extra) -> None:
+    resp = await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": order_date,
+            "order_number": number,
+            "currency_code": "JPY",
+            "items": [kit_line()],
+            **extra,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def test_list_orders_sort_recent_reads_a_zone_alias_the_database_lacks(client, retailer):
+    """The zone is the application's (rule 11), never the database's: Postgres's
+    zone files lack 97 of the names `validate_time_zone` accepts — this IANA link
+    among them — and answered the sort with a 500 (Codex #236 round 2, P2-7).
+    Queensland is Brisbane's rules, so the pair reads B, A."""
+    await _seed_near_midnight_pair(client, retailer)
+    resp = await client.patch("/settings", json={"time_zone": "Australia/Queensland"})
+    assert resp.status_code == 200, resp.text
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == ["B", "A"]
+
+
+async def test_list_orders_sort_recent_reads_an_abbreviation_with_its_seasonal_rule(
+    client, retailer
+):
+    """CET, EET, MET and WET are zones with seasonal rules in the application's
+    zone database and fixed offsets in Postgres's (P2-7). On 2 August CET is +02,
+    so A's midnight is 22:00Z on the 1st and B, shipped 22:30Z, is the later
+    change; a fixed +01 would read A's midnight as 23:00Z and rank A first."""
+    await _make_order(client, retailer, "A", "2026-08-02")
+    await _make_order(client, retailer, "B", "2026-08-01", shipped_at="2026-08-01T22:30:00+00:00")
+    resp = await client.patch("/settings", json={"time_zone": "CET"})
+    assert resp.status_code == 200, resp.text
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == ["B", "A"]
+
+
+async def test_list_orders_sort_recent_computes_under_every_zone_the_settings_accept(
+    client, retailer
+):
+    """Whatever `validate_time_zone` admits, the clock can read (P2-7: 97 of these
+    names raised in SQL, four ranked by the wrong rules). Every zone the
+    application knows, through the settings and list services in one session,
+    the pair ranked the way the zone's own midnight says — B first when its
+    shipment at 15:00Z on the 1st is later than A's midnight, else A (a zone at
+    exactly +09 ties them, and the tie is the newer placement)."""
+    from datetime import UTC, date, datetime, time
+    from zoneinfo import ZoneInfo, available_timezones
+
+    from app.schemas.settings import InstanceSettingsUpdate
+    from app.services import instance_settings
+
+    await _seed_near_midnight_pair(client, retailer)
+    shipped_b = datetime(2026, 8, 1, 15, tzinfo=UTC)
+    async with get_sessionmaker()() as session:
+        for zone in sorted(available_timezones()):
+            await instance_settings.update_instance_settings(
+                session, InstanceSettingsUpdate(time_zone=zone)
+            )
+            rows = await orders.list_orders(session, sort="recent")
+            midnight_a = datetime.combine(date(2026, 8, 2), time.min, tzinfo=ZoneInfo(zone))
+            expected = ["B", "A"] if midnight_a < shipped_b else ["A", "B"]
+            assert [row.order_number for row in rows] == expected, zone
+
+
+async def test_list_orders_sort_recent_ties_equal_instants_across_zone_representations(
+    client, retailer
+):
+    """Equal instants must have equal keys whatever zone represents them (Codex
+    #236 round 3, P3-9): a stored shipment is UTC, a placement midnight is
+    zone-local, and Python calls an aware datetime whose offset depends on
+    `fold` — a midnight a transition repeats or skips — *unequal* to any other
+    zone's datetime at the same instant (PEP 495), so a key of raw datetimes
+    never reached the placement date on exactly those ties and the rows fell
+    back to id order. Havana: the repeated midnight of 2025-11-02 is 04:00Z, the
+    skipped one of 2025-03-09 reads as 05:00Z; a shipment at each instant ties
+    its placement, and the tie breaks on the newer placement date."""
+    ids: dict[str, str] = {}
+    for number in ("W", "X", "Y", "Z"):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2025-01-01",
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [kit_line()],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        ids[number] = resp.json()["id"]
+    number_of = {order_id: number for number, order_id in ids.items()}
+    # The tie-break after the clock and the date is the id, ascending. Give the
+    # *lower* id of each pair the older placement — the row a raw-datetime key
+    # wrongly put first — so the defect is red whichever ids the database dealt.
+    (nov_shipped, nov_placed) = sorted([ids["W"], ids["X"]])
+    (mar_shipped, mar_placed) = sorted([ids["Y"], ids["Z"]])
+    for order_id, placed, shipped in (
+        (nov_shipped, "2025-11-01", "2025-11-02T04:00:00+00:00"),
+        (nov_placed, "2025-11-02", None),
+        (mar_shipped, "2025-03-08", "2025-03-09T05:00:00+00:00"),
+        (mar_placed, "2025-03-09", None),
+    ):
+        resp = await client.patch(f"/orders/{order_id}", json={"order_date": placed})
+        assert resp.status_code == 200, resp.text
+        if shipped is not None:
+            # A shipment is recorded through the ship endpoint; an edit only
+            # corrects a date already set.
+            resp = await client.post(f"/orders/{order_id}/ship", json={"shipped_at": shipped})
+            assert resp.status_code == 200, resp.text
+    resp = await client.patch("/settings", json={"time_zone": "America/Havana"})
+    assert resp.status_code == 200, resp.text
+    expected = [number_of[i] for i in (nov_placed, nov_shipped, mar_placed, mar_shipped)]
+    recent = {"sort": "recent"}
+    assert _numbers(await client.get("/orders", params=recent)) == expected
+    assert _numbers(await client.get("/orders", params={**recent, "limit": 1})) == expected[:1]
+
+
+async def test_list_orders_sort_recent_names_its_transition_policy(client, retailer):
+    """Havana ends DST on 2025-11-02 at 01:00 → 00:00, so that midnight happens
+    twice: a repeated midnight is its *first* occurrence, 04:00Z (fold=0), and a
+    shipment at 04:30Z is the later change. It starts DST on 2025-03-09 at
+    00:00 → 01:00, so that midnight never happens: the old offset's reading
+    stands, 05:00Z (01:00 local), and a shipment at 04:30Z is the earlier one.
+    §13.4 names both choices; the database's own reading of the repeated case
+    was the second occurrence (Codex #236 round 2)."""
+    await _make_order(client, retailer, "A1", "2025-11-02")
+    await _make_order(client, retailer, "B1", "2025-11-01", shipped_at="2025-11-02T04:30:00+00:00")
+    await _make_order(client, retailer, "A2", "2025-03-09")
+    await _make_order(client, retailer, "B2", "2025-03-08", shipped_at="2025-03-09T04:30:00+00:00")
+    resp = await client.patch("/settings", json={"time_zone": "America/Havana"})
+    assert resp.status_code == 200, resp.text
+    # B1 04:30Z, A1 04:00Z (November); A2 05:00Z, B2 04:30Z (March).
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == [
+        "B1",
+        "A1",
+        "A2",
+        "B2",
+    ]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"sort": "newest"}, {"sort": ""}, {"limit": "0"}, {"limit": "-1"}, {"limit": "ten"}],
+)
+async def test_list_orders_refuses_a_sort_or_limit_outside_the_vocabulary(client, retailer, params):
+    assert (await client.get("/orders", params=params)).status_code == 422

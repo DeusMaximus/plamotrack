@@ -1,7 +1,9 @@
 import logging
 import uuid
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +18,7 @@ from app.models import (
     Kit,
     KitStatus,
     Order,
+    OrderAdjustment,
     OrderItem,
     Retailer,
     Tool,
@@ -23,6 +26,7 @@ from app.models import (
 )
 from app.schemas.orders import (
     NewCatalogItem,
+    OrderAdjustmentCreate,
     OrderCreate,
     OrderItemCreate,
     OrderKitDetails,
@@ -46,6 +50,8 @@ from app.services.names import (
     find_by_name,
     require_unique_name,
 )
+from app.services.order_totals import order_adjustment_overrun
+from app.services.text import refuse_unstorable_text
 from app.services.write_gate import acquire_write_gate
 
 logger = logging.getLogger(__name__)
@@ -279,9 +285,18 @@ async def list_retailers(session: AsyncSession) -> list[Retailer]:
     return list((await session.scalars(select(Retailer).order_by(Retailer.name))).all())
 
 
+def _parses_as_id(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
 async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     """Case-insensitive match by name; used by the MCP create_order tool so agents
-    don't fragment the retailer list.
+    don't fragment the retailer list. Only for a shop given by *name* — one given by
+    `retailer_id` goes straight to `create_order`, which refuses an unknown id.
 
     Deliberately does NOT commit: it participates in the caller's transaction so
     a failed order creation rolls the new retailer back too — no partial data.
@@ -292,8 +307,24 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     one thing this function exists to prevent. MCP's create_order calls this
     before the gated `create_order`, so without the gate here that read happens
     outside it."""
+    refuse_unstorable_text("retailer", name)
     await acquire_write_gate(session)
     wanted = clean_name(name)
+    # An id is never a name (#289). This is the one place a name *becomes* a row, and
+    # MCP's create_order once offered no other way to name a shop: an agent holding a
+    # retailer's id from list_retailers passed it here and got a new shop named after
+    # the id, the order attached to it — no error, nothing to tell it from a success.
+    # The test is exactly what `retailer_id` accepts, so the two fields' value spaces
+    # are disjoint. Refused even where a stored retailer already carries the string
+    # as its name — a row this defect minted — since reusing it would attach every
+    # later order made the same way to the junk row, not the shop the id belongs to.
+    if _parses_as_id(wanted):
+        raise InvalidInputError(
+            f"retailer '{wanted}' is an id, not a shop's name — pass an existing "
+            "retailer's id as retailer_id, or name the shop",
+            code=error_codes.NAME_IS_ID,
+            params={"name": wanted},
+        )
     # Equality after case-folding, not ILIKE: a pattern match reads `%` and `_` in
     # the *agent's* input as wildcards, so a shop named "%" attached its order to
     # whichever retailer sorted first, and read `\` as its escape, so a shop with a
@@ -479,7 +510,9 @@ async def _lock_catalog_targets(
     targets: dict[uuid.UUID, type[CatalogRow]] = {}
     for referrer in (*items, *lines):
         ref_id = referrer.catalog_ref_id
-        if referrer.item_type is not ItemType.KIT and ref_id is not None:
+        # Catalog lines only: a kit line and an `other` line (#349) point at no
+        # catalog row, so neither has anything here to lock.
+        if referrer.item_type in CATALOG_MODELS and ref_id is not None:
             targets[ref_id] = CATALOG_MODELS[referrer.item_type]
     for ref_id in sorted(targets):
         await lock_catalog_row(session, targets[ref_id], ref_id)
@@ -718,7 +751,8 @@ async def _add_line(
     reference: str,
 ) -> OrderItem:
     """The §3.9 dispatch: kit lines FAN OUT into kits rows immediately; catalog
-    lines INCREMENT stock — but only once the order is received.
+    lines INCREMENT stock — but only once the order is received; `other` lines
+    (#349) do neither, and are stored with their description and nothing else.
 
     `received_at` is the receipt instant kits landing in backlog are stamped with
     (#93) — the order's stored receipt for an edit, the entry-supplied or fresh
@@ -734,6 +768,8 @@ async def _add_line(
         currency_code=line.currency_code,
         converted_price_minor=converted_minor,
         converted_currency_code=converted_code,
+        # Null on every line but an `other` one: the schema refuses it elsewhere.
+        description=line.description,
     )
     session.add(item)
     await session.flush()
@@ -742,7 +778,7 @@ async def _add_line(
         await _spawn_from_details(
             session, item, line.kit, line.quantity, received, received_at, shipped_at
         )
-    else:
+    elif line.item_type in CATALOG_MODELS:
         if line.new_item is not None:
             row = await _build_catalog_row(
                 session, line.item_type, line.new_item, line.currency_code
@@ -779,7 +815,9 @@ async def _undo_line_dispatch(
     """
     if item.item_type is ItemType.KIT:
         await _delete_line_kits(session, item, count=None)
-    elif received and item.catalog_ref_id is not None:
+    elif received and item.item_type in CATALOG_MODELS and item.catalog_ref_id is not None:
+        # Catalog lines only: an `other` line (#349) dispatched nothing at entry,
+        # so it has nothing to undo.
         await _adjust_ref(
             session, item.item_type, item.catalog_ref_id, -item.quantity, missing_ok=missing_ok
         )
@@ -896,6 +934,10 @@ async def _update_line(
             )
         elif delta < 0:
             await _delete_line_kits(session, item, count=-delta)
+    elif item.item_type is ItemType.OTHER:
+        # Nothing was dispatched and nothing is now (#349): the description is the
+        # line, restated in full like every other field of it.
+        item.description = line.description
     else:
         old_ref = item.catalog_ref_id
         if line.new_item is not None:
@@ -958,7 +1000,9 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
             params={"retailer_id": data.retailer_id},
         )
 
-    order = Order(**data.model_dump(exclude={"items", "received", "received_at", "shipped_at"}))
+    order = Order(
+        **data.model_dump(exclude={"items", "adjustments", "received", "received_at", "shipped_at"})
+    )
     received_at: datetime | None = None
     if data.received:
         # The schema guarantees received_at only arrives alongside received=true.
@@ -987,10 +1031,75 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
             shipped_at=data.shipped_at,
             reference=reference,
         )
+    await _set_adjustments(session, order, data.adjustments, stored=[])
 
+    await session.flush()
     result = await get_order(session, order.id)
+    _refuse_adjustment_overrun(result)
     await session.commit()
     return result
+
+
+async def _set_adjustments(
+    session: AsyncSession,
+    order: Order,
+    adjustments: list[OrderAdjustmentCreate],
+    *,
+    stored: list[OrderAdjustment],
+) -> None:
+    """Make `adjustments` the order's whole set, in the order given (#350).
+
+    A replacement, not a diff: an adjustment has no kits and no stock behind it,
+    so there is nothing to carry from an old row to a new one. A set that restates
+    what is stored writes nothing, which keeps the rows' ids — and so the next
+    export — unchanged by a save that changed nothing.
+
+    `stored` is passed in rather than read off `order.adjustments`: on a new
+    order that collection was never loaded, and touching it under asyncio is a
+    lazy load. Rows are written by `order_id` for the same reason, and the caller
+    re-reads the order (`get_order`) before it answers.
+    """
+    if [(row.label, row.amount_minor) for row in stored] == [
+        (entry.label, entry.amount_minor) for entry in adjustments
+    ]:
+        return
+    for row in stored:
+        await session.delete(row)
+    session.add_all(
+        OrderAdjustment(
+            order_id=order.id,
+            label=entry.label,
+            amount_minor=entry.amount_minor,
+            position=position,
+        )
+        for position, entry in enumerate(adjustments)
+    )
+
+
+def _refuse_adjustment_overrun(order: Order) -> None:
+    """The order as it is about to be stored, against the one rule its adjustments
+    answer to together (`order_totals.adjustment_overrun`).
+
+    Asked of the finished order on every write, never of the adjustments alone:
+    a cheaper line, a removed line, a dropped shipping cost and a changed order
+    currency each break it without the adjustments being mentioned.
+    """
+    overrun = order_adjustment_overrun(order)
+    if overrun is None:
+        return
+    raise InvalidInputError(
+        f"the adjustments come to {overrun.adjustments_minor} {overrun.currency_code} "
+        f"in minor units, more than the {overrun.ceiling_minor} this order's "
+        f"{overrun.currency_code} lines and shipping come to — an adjustment is in the "
+        "order's own currency and cannot take off more than was charged in it. Lower "
+        "the adjustments, or correct the lines, the shipping or the order's currency",
+        code=error_codes.ORDER_ADJUSTMENTS_EXCEED_TOTAL,
+        params={
+            "currency_code": overrun.currency_code,
+            "adjustments_minor": overrun.adjustments_minor,
+            "ceiling_minor": overrun.ceiling_minor,
+        },
+    )
 
 
 async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Order:
@@ -1039,7 +1148,7 @@ async def update_order(
     received = order.received_at is not None
     await _lock_catalog_targets(session, items=order.items, lines=data.items or ())
 
-    header = data.model_dump(exclude_unset=True, exclude={"items"})
+    header = data.model_dump(exclude_unset=True, exclude={"items", "adjustments"})
     if "retailer_id" in header:
         if header["retailer_id"] is None:
             raise InvalidInputError(
@@ -1167,8 +1276,12 @@ async def update_order(
             if item_id not in seen:
                 await _remove_line(session, item, received)
 
+    if data.adjustments is not None:
+        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))
+
     await session.flush()
     result = await get_order(session, order.id)
+    _refuse_adjustment_overrun(result)
     await session.commit()
     return result
 
@@ -1185,8 +1298,8 @@ async def _restamp_receipt_kits(
 
     Receiving stamps the kits it advances with the same instant it writes to the
     order, so equality against the old value identifies exactly the kits whose
-    last transition was that receipt — a kit dragged onward (or back) since then
-    carries the drag's own time and is left alone. Status is deliberately not part
+    last transition was that receipt — a kit moved onward (or back) since then
+    carries the move's own time and is left alone. Status is deliberately not part
     of the RECEIPT match: the timestamp is the receipt's signature, and a status
     check would either restate the same fact or wrongly exclude a kit the entry
     itself stamped.
@@ -1285,7 +1398,8 @@ async def receive_order(
                     # through the one derivation (#94) so an advance that one day
                     # lands elsewhere cannot silently skip the build stamps.
                     stamp_build_date(kit, KitStatus.BACKLOG, now)
-        elif item.catalog_ref_id is not None:
+        elif item.item_type in CATALOG_MODELS and item.catalog_ref_id is not None:
+            # Catalog lines only: an `other` line (#349) has no stock to apply.
             await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)
 
     await session.flush()
@@ -1331,10 +1445,76 @@ async def get_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
     return order
 
 
-async def list_orders(session: AsyncSession) -> list[Order]:
-    stmt = (
-        select(Order)
-        .order_by(Order.order_date.desc(), Order.id)
-        .options(selectinload(Order.items).selectinload(OrderItem.kits))
-    )
+#: How an order list is ordered (§13.4, #232). `placed` is the order the list
+#: always had (newest order date first); `recent` is the order's last status
+#: change — received, else shipped, else placed — newest first, the clock Home's
+#: "in the mail" columns read. Same vocabulary on REST and MCP as for kits.
+OrderSort = Literal["placed", "recent"]
+ORDER_SORTS: tuple[OrderSort, ...] = ("placed", "recent")
+
+
+def last_status_change(order: Order, zone: ZoneInfo) -> datetime:
+    """The clock `sort=recent` reads: received, else shipped, else placed — the
+    placement date as its midnight in the *instance's* time zone (rule 11), so
+    an order shipped late on the 1st outranks one placed on the 2nd wherever the
+    database runs. Computed here, in the application's zone database, never in
+    SQL: a cast read the SQL session's zone (Codex #236 round 1), and handing the
+    name to Postgres read its zone files instead — which lack 97 of the names
+    the settings accept (`Australia/Queensland`, an IANA link) and take CET, EET,
+    MET and WET as fixed offsets where IANA gives them seasonal rules (round 2).
+    Two named choices on a transition day (§13.4): a midnight that happens twice
+    is its first occurrence (`fold=0`), and one a transition skipped is read with
+    the offset that held before it — the hour after, in local time."""
+    if order.received_at is not None:
+        return order.received_at
+    if order.shipped_at is not None:
+        return order.shipped_at
+    return datetime.combine(order.order_date, time.min, tzinfo=zone)
+
+
+#: The instant every clock is measured from, so two clocks compare as instants.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _recent_key(order: Order, zone: ZoneInfo) -> tuple[timedelta, date]:
+    """The `recent` sort key: the clock as an exact instant, then the placement
+    date. The invariant (Codex #236 round 3): **equal instants have equal keys
+    whatever zone represents them**, so the secondary key and the slice see the
+    tie. A stored instant is UTC and a placement midnight is zone-local, and
+    Python compares an aware datetime whose offset depends on `fold` — a
+    midnight a transition repeats or skips — as *unequal* to any other zone's
+    datetime even at the same instant (PEP 495), so a tuple of datetimes never
+    reached `order_date` for exactly those ties. `clock - epoch` is an exact
+    timedelta (no float, no microsecond loss at the date bounds) and never
+    overflows the way `.astimezone(UTC)` does for `0001-01-01` east of UTC."""
+    return (last_status_change(order, zone) - _EPOCH, order.order_date)
+
+
+async def list_orders(
+    session: AsyncSession,
+    *,
+    pending_only: bool = False,
+    sort: OrderSort = "placed",
+    limit: int | None = None,
+) -> list[Order]:
+    from app.services.kits import check_list_options
+
+    check_list_options(sort, ORDER_SORTS, limit)
+    stmt = select(Order).options(selectinload(Order.items).selectinload(OrderItem.kits))
+    if pending_only:
+        # Not yet received — the same predicate the MCP tool applied by hand
+        # before #232, in the query now so `limit` counts pending rows.
+        stmt = stmt.where(Order.received_at.is_(None))
+    if sort == "recent":
+        # The clock is the application's (`last_status_change`, in the zone the
+        # settings row names — rule 11), so the sort is too: the rows by id, a
+        # stable sort on the clock, then the slice. A personal collection is a
+        # few hundred orders, and the page loads them all regardless (§13.4).
+        zone = ZoneInfo((await settings_service.get_instance_settings(session)).time_zone)
+        rows = list((await session.scalars(stmt.order_by(Order.id))).all())
+        rows.sort(key=lambda order: _recent_key(order, zone), reverse=True)
+        return rows[:limit] if limit is not None else rows
+    stmt = stmt.order_by(Order.order_date.desc(), Order.id)
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return list((await session.scalars(stmt)).all())

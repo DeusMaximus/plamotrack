@@ -1,6 +1,14 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      release_bundle:
+        type: boolean
+        default: false
+      runners:
+        type: string
+        default: '["ubuntu-latest"]'
   pull_request:
   push:
     branches: [main]
@@ -18,7 +26,13 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The suite was 13m46s at the M6 head and the #221 round-1 head was cancelled
+    # at 15; the flood tests were shrunk (a handful of Argon2 checks, not dozens).
+    # On 2026-09-17 it was 13m36s on main and a frontend-only PR (#263) was
+    # cancelled at 19m49s, 87% through, on a slower shared runner — the cap was
+    # measuring the runner, not the suite. 30 is headroom against that variance,
+    # not a licence.
+    timeout-minutes: 30
     env:
       TEST_DATABASE_URL: postgresql+asyncpg://plamotrack:plamotrack@127.0.0.1:5432/plamotrack_test
     services:
@@ -31,7 +45,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U plamotrack -d plamotrack"
+          --health-cmd "pg_isready -h 127.0.0.1 -U plamotrack -d plamotrack"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -100,9 +114,20 @@ jobs:
         run: npm run build
 
   integration:
-    name: Integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    name: ${{ inputs.release_bundle && format('Integration ({0})', matrix.runner) || 'Integration' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(inputs.runners || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.build.yml
+      PLAMOTRACK_SOURCE_REVISION: ${{ github.sha }}
+      PLAMOTRACK_SOURCE_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}
+    # 25 until #268: the job took 16 min on 06/10/2026, after #330's fold
+    # sweeps, and #335's passing rerun 24 min 12 s, its first attempt cancelled
+    # at the cap. The cap is for a hung run, not a slow one.
+    timeout-minutes: 40
 
     steps:
       - name: Check out the repository
@@ -145,6 +170,9 @@ jobs:
           sed -i 's/^POSTGRES_USER=.*/POSTGRES_USER=plamotrack_ci/' .env
           sed -i 's/^POSTGRES_DB=.*/POSTGRES_DB=plamotrack_ci/' .env
           sed -i 's/^POSTGRES_PORT=.*/POSTGRES_PORT=55432/' .env
+          # A listed name for the ingress matrix's T3 rows (a name only
+          # ALLOWED_HOSTS can supply answers; everything else is 421).
+          echo 'ALLOWED_HOSTS=ci.plamotrack.test' >> .env
 
       - name: Validate packaged and development Compose configurations
         run: |
@@ -168,6 +196,13 @@ jobs:
           assert base["services"]["api"]["environment"]["POSTGRES_HOST"] == "db"
           assert base["services"]["api"]["environment"]["POSTGRES_PORT"] == "5432"
           assert base["services"]["migrate"]["environment"]["POSTGRES_PORT"] == "5432"
+          # The ingress builds its Host allowlist and trusted-proxy/rate-limit
+          # key from exactly these; it has no business with the password.
+          web_env = base["services"]["web"]["environment"]
+          assert set(web_env) == {
+              "PUBLIC_BASE_URL", "ALLOWED_HOSTS", "TRUSTED_PROXIES", "WEB_BIND"
+          }, web_env
+          assert web_env["ALLOWED_HOSTS"] == "ci.plamotrack.test", web_env
 
           [port] = development["services"]["db"]["ports"]
           assert port["host_ip"] == "127.0.0.1", port
@@ -194,7 +229,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.runner }}
           path: |
             frontend/playwright-report/
             frontend/test-results/
@@ -206,8 +241,62 @@ jobs:
           docker compose exec -T db sh -c 'exec pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > /tmp/plamotrack-ci.dump
           docker compose exec -T db sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < /tmp/plamotrack-ci.dump
 
-      - name: Build and start the packaged stack
+      # The packaged stack comes up the way a fresh install does: an empty
+      # volume, the migrate service from nothing, an unclaimed owner printing
+      # its setup token. The e2e suite above claimed the owner in this same
+      # Compose project's database (same `db` service, same volume), which
+      # would otherwise make the stack a claimed instance with no token to read.
+      - name: Discard the e2e database
+        run: docker compose down -v
+
+      - name: Download the candidate release bundle
+        if: inputs.release_bundle
+        uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: release-bundle
+          path: .dev/release-bundle
+
+      - name: Select the pull-only candidate stack
+        if: inputs.release_bundle
+        run: |
+          python backend/release_artifacts.py verify .dev/release-bundle
+          python - <<'PYCODE'
+          import json
+          import os
+          from pathlib import Path
+          bundle = Path('.dev/release-bundle').resolve()
+          manifest = json.loads((bundle / 'release.json').read_text())
+          assert manifest['revision'] == os.environ['GITHUB_SHA']
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f"COMPOSE_FILE={bundle / 'docker-compose.yml'}\n")
+              env.write(f"RELEASE_VERSION={manifest['version']}\n")
+          PYCODE
+          # These are the downloaded files an operator gets. No source build
+          # contexts or registry login are available to this Compose project.
+          cp .dev/release-bundle/env.example .dev/release-bundle/.env
+          sed -i 's/^POSTGRES_USER=.*/POSTGRES_USER=plamotrack_ci/' .dev/release-bundle/.env
+          sed -i 's/^POSTGRES_DB=.*/POSTGRES_DB=plamotrack_ci/' .dev/release-bundle/.env
+          echo 'ALLOWED_HOSTS=ci.plamotrack.test' >> .dev/release-bundle/.env
+
+      - name: Build and start the PR source stack
+        if: ${{ !inputs.release_bundle }}
         run: docker compose up -d --build --wait
+
+      - name: Pull and start the candidate artifacts without registry credentials
+        if: inputs.release_bundle
+        run: |
+          mkdir "$RUNNER_TEMP/anonymous-docker"
+          # Keep the Docker CLI plugins, but none of the runner's credentials.
+          printf '{"cliPluginsExtraDirs":["/usr/libexec/docker/cli-plugins","/usr/lib/docker/cli-plugins"]}\n' > "$RUNNER_TEMP/anonymous-docker/config.json"
+          DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker" docker compose up -d --no-build --pull always --wait
+
+      - name: Verify the running source and migration image identity
+        run: |
+          if [ -n "${RELEASE_VERSION:-}" ]; then
+            python backend/release_artifacts.py running "$GITHUB_SHA" --version "$RELEASE_VERSION"
+          else
+            python backend/release_artifacts.py running "$GITHUB_SHA"
+          fi
 
       - name: Smoke-test the ingress
         run: |
@@ -246,25 +335,234 @@ jobs:
           ], published_web
           PY
           curl --fail --silent --show-error http://127.0.0.1:8080/ > /dev/null
-          curl --fail --silent --show-error http://127.0.0.1:8080/api/readyz > /dev/null
-          curl --fail --silent --show-error http://127.0.0.1:8080/openapi.json > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:8080/api/healthz > /dev/null
+          # The schema is behind collection:read since M6-3; the SPA's bootstrap
+          # is the anonymous probe, and a fresh stack must report itself unclaimed.
+          curl --fail --silent --show-error http://127.0.0.1:8080/api/auth/session | grep -q '"state":"unclaimed"'
 
-      - name: Smoke-test MCP through nginx
+      # A fresh install's one way in (https://docs.gunp.la/first-run): the API
+      # printed a setup token to its log at start. Read it the way an operator
+      # would, so the matrix claims the stack through the packaged ingress and
+      # the first-run path is exercised end to end, not just unit-tested.
+      - name: Read the setup token from the API log
+        run: |
+          TOKEN="$(docker compose logs --no-color api \
+            | sed -nE 's/^[^|]*\|[[:space:]]+([A-Za-z0-9_-]{40,})[[:space:]]*$/\1/p' | tail -n 1)"
+          test -n "$TOKEN" || { echo "no setup token in the api log"; docker compose logs --no-color api; exit 1; }
+          echo "::add-mask::$TOKEN"
+          echo "SETUP_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # T2 (design notes §5.8): the ingress matrix against the packaged nginx —
+      # the four rejected /api/ namespaces in their normalised spellings, the
+      # canonical positives beside them (signed in as the owner the claim above
+      # creates; anonymous, they are the dependency's 401), no Location anywhere
+      # but nginx's own relative 301, the security headers, and T3's hostile
+      # Host / Origin and listed-name rows at this layer. The variable-valued
+      # options are spelled attached (--flag="$VAR"): the setup token is
+      # token_urlsafe, so about one run in 64 it starts with "-", which
+      # argparse reads as an option when it is a separate word (#215).
+      - name: Run the ingress matrix
+        working-directory: backend
+        run: >
+          uv run python ingress_matrix.py http://127.0.0.1:8080
+          --allowed-host ci.plamotrack.test
+          --setup-token="$SETUP_TOKEN" --password ingress-matrix-ci-password
+          --token-out="$RUNNER_TEMP/plamotrack-pat"
+          --log-secrets-out="$RUNNER_TEMP/plamotrack-log-secrets"
+
+      # #210 / #221 item 3 at the packaged layer: the matrix fired thirty
+      # hostile-Origin writes at a collection route (all refused) beside its
+      # other hostile-Origin rows; the refusal budget lets at most ten of one
+      # address's refusals per minute reach the audit table, so the run's rows
+      # for that event sit at the bound, not at the request count.
+      - name: Check the refusal budget bounded the audit rows
+        run: |
+          ROWS="$(docker compose exec -T db sh -c 'exec psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT count(*) FROM audit_event WHERE event_type = 'ingress.origin_rejected';
+          SQL
+          )"
+          echo "ingress.origin_rejected rows after the run: $ROWS"
+          test "$ROWS" -ge 1 && test "$ROWS" -le 10 \
+            || { echo "expected between 1 and 10 rows — the per-address refusal budget"; exit 1; }
+
+      # The transport is bearer-only (§5.5 family 7; #189): a real MCP client
+      # with the token the matrix minted lists the tools through nginx, and the
+      # same client without one is refused before it lists anything — SDK 2's
+      # client probes the modern era and falls back to the handshake, and each
+      # of those two requests, as a 4.0.3 client sends it, is 401 on the wire
+      # (#243; the legacy-pinned and frozen-3.x siblings are #244's).
+      - name: Smoke-test MCP through nginx with a personal access token
         working-directory: backend
         run: |
-          uv run python - <<'PY'
+          PAT="$(cat "$RUNNER_TEMP/plamotrack-pat")"
+          test -n "$PAT" || { echo "the matrix wrote no token"; exit 1; }
+          echo "::add-mask::$PAT"
+          PLAMOTRACK_PAT="$PAT" uv run python - <<'PY'
           import asyncio
+          import os
 
+          import httpx
           from fastmcp import Client
+          from mcp.shared.exceptions import MCPError
+          from app import __version__
+
+          URL = "http://127.0.0.1:8080/mcp/"
+          ACCEPT = {"Accept": "application/json, text/event-stream"}
+          # The two requests an anonymous SDK 2 client sends before it gives up,
+          # as a 4.0.3 client sends them (the M6.1 spike's capture; Codex #246
+          # round 1): the modern probe, id 1, then the handshake it falls back
+          # to, id 2 at 2025-11-25. Both are 401 on the wire with the bare RFC
+          # 6750 challenge (local mode's; OIDC mode's adds resource_metadata);
+          # the client folds that into a status-less stand-in (INTERNAL_ERROR,
+          # "Server returned an error response"), so the status is read off
+          # the wire beside it (#243).
+          DISCOVER = (
+              {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "method": "server/discover",
+                  "params": {
+                      "_meta": {
+                          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                          "io.modelcontextprotocol/clientInfo": {"name": "ci", "version": "0"},
+                          "io.modelcontextprotocol/clientCapabilities": {},
+                      }
+                  },
+              },
+              {**ACCEPT, "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "server/discover"},
+          )
+          INITIALIZE = (
+              {
+                  "jsonrpc": "2.0",
+                  "id": 2,
+                  "method": "initialize",
+                  "params": {
+                      "protocolVersion": "2025-11-25",
+                      "capabilities": {},
+                      "clientInfo": {"name": "ci", "version": "0"},
+                  },
+              },
+              ACCEPT,
+          )
 
 
           async def check() -> None:
-              async with Client("http://127.0.0.1:8080/mcp/") as client:
+              meta = httpx.get("http://127.0.0.1:8080/api/meta", headers={
+                  "Authorization": "Bearer " + os.environ["PLAMOTRACK_PAT"]
+              })
+              meta.raise_for_status()
+              assert meta.json()["version"] == __version__, meta.text
+              # Auto negotiates the modern era, mode="legacy" the handshake era;
+              # the same 4.0.3 client lists the tools through nginx either way,
+              # so the server serves both eras from the one endpoint (#244).
+              async with Client(URL, auth=os.environ["PLAMOTRACK_PAT"]) as client:
                   tools = await client.list_tools()
                   assert any(tool.name == "list_kits" for tool in tools)
+                  assert client.protocol_version == "2026-07-28", client.protocol_version
+                  assert client.server_info.version == __version__, client.server_info
+              async with Client(
+                  URL, auth=os.environ["PLAMOTRACK_PAT"], mode="legacy"
+              ) as legacy:
+                  assert legacy.server_info.version == __version__, legacy.server_info
+                  legacy_tools = await legacy.list_tools()
+                  assert any(tool.name == "list_kits" for tool in legacy_tools)
+                  assert legacy.protocol_version in {
+                      "2024-11-05",
+                      "2025-03-26",
+                      "2025-06-18",
+                      "2025-11-25",
+                  }, legacy.protocol_version
+              try:
+                  async with Client(URL) as client:
+                      await client.list_tools()
+              except MCPError as exc:  # refused before anything was listed
+                  assert exc.code == -32603, exc  # the SDK's INTERNAL_ERROR stand-in
+              else:
+                  raise AssertionError("the MCP endpoint answered without a token")
+              for body, headers in (DISCOVER, INITIALIZE):
+                  refused = httpx.post(URL, json=body, headers=headers)
+                  assert refused.status_code == 401, (body["method"], refused.status_code)
+                  assert refused.headers.get("www-authenticate") == "Bearer", refused.headers
+                  assert "mcp-session-id" not in refused.headers
 
 
           asyncio.run(check())
+          PY
+
+      # #244: the upgraded server still serves an *unmodified* legacy client. A
+      # frozen FastMCP 3.4.5 / MCP SDK 1.29.0 in its own venv lists the tools
+      # through nginx with the live token — its client negotiates the
+      # handshake-era (2025-11-25), the generation shipping before the bump.
+      - name: Smoke-test a frozen FastMCP 3.4.5 client through nginx
+        run: |
+          PAT="$(cat "$RUNNER_TEMP/plamotrack-pat")"
+          test -n "$PAT" || { echo "the matrix wrote no token"; exit 1; }
+          echo "::add-mask::$PAT"
+          FROZEN="$RUNNER_TEMP/frozen-mcp"
+          uv venv "$FROZEN" > /dev/null
+          # Pin the SDK too: `fastmcp==3.4.5` alone floats mcp to 1.30.0, not the
+          # 1.29.0 that shipped in the 0.4.0 lock (the generation before the bump;
+          # #248 round 1, f1). This row is that exact pre-bump client.
+          uv pip install --python "$FROZEN/bin/python" 'fastmcp==3.4.5' 'mcp==1.29.0' > /dev/null
+          PLAMOTRACK_PAT="$PAT" "$FROZEN/bin/python" - <<'PY'
+          import asyncio
+          import os
+          from importlib.metadata import version
+
+          import httpx
+          from fastmcp import Client
+
+          assert version("fastmcp") == "3.4.5", version("fastmcp")
+          assert version("mcp").startswith("1.29."), version("mcp")
+          URL = "http://127.0.0.1:8080/mcp/"
+
+
+          async def check() -> None:
+              async with Client(URL, auth=os.environ["PLAMOTRACK_PAT"]) as client:
+                  tools = await client.list_tools()
+                  assert any(tool.name == "list_kits" for tool in tools)
+              # Anonymous, the frozen client is refused with a 401 before it lists
+              # anything — the specific auth refusal, not any exception (an
+              # unrelated transport or programming error must fail CI; Codex #250 F5).
+              try:
+                  async with Client(URL) as client:
+                      await client.list_tools()
+              except httpx.HTTPStatusError as exc:
+                  assert exc.response.status_code == 401, exc
+              else:
+                  raise AssertionError("the endpoint answered a frozen client without a token")
+
+
+          asyncio.run(check())
+          PY
+
+      # T10 at the packaged layer: neither uvicorn's nor nginx's log may hold
+      # the password, PAT, session id or OAuth query/Referer probes from the run. The
+      # scan is not allowed
+      # to be vacuous (round 2, f5): the captured output must first show an
+      # access record from EACH service for the liveness probe above — the API
+      # sees `GET /healthz`, nginx `GET /api/healthz` — so a future redirection
+      # of either access log to a file fails here instead of deleting the proof.
+      - name: Scan the Compose access logs for the token
+        run: |
+          docker compose logs --no-color api web > "$RUNNER_TEMP/compose-access.log"
+          grep -F '"GET /healthz HTTP/1.1" 200' "$RUNNER_TEMP/compose-access.log" | grep -q 'api' \
+            || { echo "no uvicorn access record from the api service"; exit 1; }
+          grep -F '"GET /api/healthz HTTP/1.1" 200' "$RUNNER_TEMP/compose-access.log" | grep -q 'web' \
+            || { echo "no nginx access record from the web service"; exit 1; }
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          secrets = json.loads((temp / "plamotrack-log-secrets").read_text())
+          logs = (temp / "compose-access.log").read_text()
+          for kind, secret in secrets.items():
+              if secret in logs:
+                  raise SystemExit(f"the {kind} appears in a container log")
+          print("access records from api and web seen; no run credential or query/referrer probe in them")
           PY
 
       - name: Show Compose logs on failure

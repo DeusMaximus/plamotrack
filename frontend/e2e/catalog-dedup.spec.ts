@@ -1,4 +1,4 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * #49 — the two browser paths that could create a duplicate.
@@ -18,7 +18,7 @@ import { expect, request, test } from "@playwright/test";
  *    time; on the fixed code the picker re-asks the server regardless.
  */
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 const suffix = Date.now().toString(36);
 const SHOP = `E2E Dedup Shop ${suffix}`;
 const SEARCH_SHOP = `E2E Dedup Search Shop ${suffix}`;
@@ -30,8 +30,8 @@ test("double-clicking Add on the inline retailer control creates one retailer", 
   page,
 }) => {
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
-  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "New order" }).click();
+  await page.getByRole("button", { name: "New retailer" }).click();
   await page.getByPlaceholder("New retailer name").fill(SHOP);
 
   // Hold every POST /retailers so the second click cannot be saved by a fast API.
@@ -51,10 +51,10 @@ test("double-clicking Add on the inline retailer control creates one retailer", 
 
   // The control collapses back to the select with the new shop chosen.
   await expect(page.getByPlaceholder("New retailer name")).toHaveCount(0);
-  await expect(page.locator("select").first()).toHaveValue(/.+/);
+  await expect(page.getByRole("dialog").locator('select[name="retailer_id"]')).toHaveValue(/.+/);
 
   expect(requestsMade, "clicks that reached the network").toBe(1);
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { name: string }[];
   expect(retailers.filter((r) => r.name === SHOP)).toHaveLength(1);
   await api.dispose();
@@ -63,7 +63,7 @@ test("double-clicking Add on the inline retailer control creates one retailer", 
 test("the catalog picker offers an item created seconds ago instead of a second create", async ({
   page,
 }) => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const shop = (await (await api.post("/retailers", { data: { name: SEARCH_SHOP } })).json()) as {
     id: string;
   };
@@ -75,12 +75,14 @@ test("the catalog picker offers an item created seconds ago instead of a second 
   // Timers keep running, so the picker's 250 ms debounce still fires.
   await page.clock.setFixedTime(new Date());
 
-  await page.goto("/orders");
+  // Narrowed to this test's shop: its orders are dated today, and today's
+  // orders from other files can outnumber a page (#317).
+  await page.goto(`/orders?q=${encodeURIComponent(SEARCH_SHOP)}`);
 
   // Order A: a brand-new consumable via the typeahead — this populates the cache
   // for the search term with "no results".
-  await page.getByRole("button", { name: "+ New order" }).click();
-  await page.locator("select").first().selectOption({ label: SEARCH_SHOP });
+  await page.getByRole("button", { name: "New order" }).click();
+  await page.getByRole("dialog").locator('select[name="retailer_id"]').selectOption({ label: SEARCH_SHOP });
   await page.locator('select:has(option[value="consumable"])').first().selectOption("consumable");
   await page.getByLabel("Unit price").first().fill("2");
   await page.getByPlaceholder("Search consumables…").fill(MARKER);
@@ -91,7 +93,7 @@ test("the catalog picker offers an item created seconds ago instead of a second 
 
   // Order B, immediately: the same search must now show the item, not only offer
   // to create it again.
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
   await page.locator('select:has(option[value="consumable"])').first().selectOption("consumable");
   await page.getByPlaceholder("Search consumables…").fill(MARKER);
   await expect(
@@ -106,7 +108,7 @@ test("the catalog picker offers an item created seconds ago instead of a second 
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const mine = retailers.filter((r) => r.name === SHOP || r.name === SEARCH_SHOP);
   const orders = (await (await api.get("/orders")).json()) as { id: string; retailer_id: string }[];

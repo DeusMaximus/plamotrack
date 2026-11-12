@@ -1,7 +1,16 @@
 import uuid
 from datetime import date, datetime
+from typing import Annotated
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    model_validator,
+)
 
 from app.models.enums import (
     ItemType,
@@ -10,12 +19,16 @@ from app.models.enums import (
     ShippingSpeed,
     WouldOrderAgain,
 )
+from app.schemas.base import RequestModel
 from app.schemas.kits import KitRead
 from app.schemas.numeric import NonNegativeInt4, PositiveInt4, Rating
 from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
+from app.services.order_stage import OrderStage, order_stage
+from app.services.order_totals import order_totals
+from app.services.text import stripped_or_none
 
 
-class RetailerCreate(BaseModel):
+class RetailerCreate(RequestModel):
     name: str = Field(min_length=1)
     url: str | None = None
     rating: Rating | None = None
@@ -25,7 +38,7 @@ class RetailerCreate(BaseModel):
     notes: str | None = None
 
 
-class RetailerUpdate(BaseModel):
+class RetailerUpdate(RequestModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1)
@@ -50,7 +63,7 @@ class RetailerRead(BaseModel):
     notes: str | None
 
 
-class OrderKitDetails(BaseModel):
+class OrderKitDetails(RequestModel):
     """Details for the kit rows a kit-type order line spawns."""
 
     name: str = Field(min_length=1)
@@ -60,7 +73,7 @@ class OrderKitDetails(BaseModel):
     status: KitStatus = KitStatus.ORDERED  # use pre_ordered for pre-orders
 
 
-class NewCatalogItem(BaseModel):
+class NewCatalogItem(RequestModel):
     """Inline creation for the select-or-create flow (§3.9). Which fields are
     required depends on the line's item_type; validated in the service."""
 
@@ -79,7 +92,58 @@ class NewCatalogItem(BaseModel):
     notes: str | None = None
 
 
-class OrderItemCreate(BaseModel):
+def _stripped_text(value: str | None) -> str | None:
+    return None if value is None else stripped_or_none(value)
+
+
+#: Free text as the importer's `parse_text` reads the same cell: no surrounding
+#: whitespace, and blank is null. So text written here comes back from its own
+#: export as no change at all (rule 10).
+StrippedText = Annotated[str | None, AfterValidator(_stripped_text)]
+
+
+def _validate_line_dispatch(line: "OrderItemCreate", *, kit_required: bool) -> None:
+    """Which of a line's dispatch fields its `item_type` takes (§3.9): a kit line
+    its `kit` details, a catalog line exactly one of `catalog_ref_id` and
+    `new_item`, an `other` line (#349) a `description` and none of the rest.
+
+    `kit_required` is the one difference between entry and an edit (#67): a new
+    kit line spawns from its details and needs them, an id-bearing one may stay
+    silent about kits it is not changing.
+    """
+    if line.item_type is ItemType.OTHER:
+        if line.description is None:
+            raise ValueError(
+                "other lines require a 'description' — it is all that says what the line bought"
+            )
+        if line.kit is not None or line.catalog_ref_id is not None or line.new_item is not None:
+            raise ValueError(
+                "other lines are not tracked in the collection — they must not set "
+                "'kit' details, catalog_ref_id or new_item"
+            )
+        return
+    if line.description is not None:
+        raise ValueError(
+            f"{line.item_type} lines must not set 'description' — a kit line is named "
+            "by its kit and a catalog line by its catalog item; only other lines "
+            "carry one"
+        )
+    if line.item_type is ItemType.KIT:
+        if line.kit is None and kit_required:
+            raise ValueError("kit lines require 'kit' details (name, grade, ...)")
+        if line.catalog_ref_id is not None or line.new_item is not None:
+            raise ValueError("kit lines must not set catalog_ref_id or new_item")
+    else:
+        if line.kit is not None:
+            raise ValueError(f"{line.item_type} lines must not set 'kit' details")
+        if (line.catalog_ref_id is None) == (line.new_item is None):
+            raise ValueError(
+                f"{line.item_type} lines require exactly one of catalog_ref_id "
+                "(existing item) or new_item (create new)"
+            )
+
+
+class OrderItemCreate(RequestModel):
     item_type: ItemType
     quantity: PositiveInt4
     unit_price_minor: NonNegativeInt4
@@ -109,6 +173,15 @@ class OrderItemCreate(BaseModel):
     kit: OrderKitDetails | None = None
     catalog_ref_id: uuid.UUID | None = None
     new_item: NewCatalogItem | None = None
+    description: StrippedText = Field(
+        default=None,
+        description=(
+            "`other` lines only, and required there: what the line bought, in your "
+            "own words. An `other` line is something on the order that the "
+            "collection does not track — it creates no kit, points at no catalog "
+            "item and never moves stock; it only counts toward the order's total."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_converted_snapshot(self) -> "OrderItemCreate":
@@ -122,23 +195,45 @@ class OrderItemCreate(BaseModel):
 
     @model_validator(mode="after")
     def _validate_dispatch_payload(self) -> "OrderItemCreate":
-        if self.item_type is ItemType.KIT:
-            if self.kit is None:
-                raise ValueError("kit lines require 'kit' details (name, grade, ...)")
-            if self.catalog_ref_id is not None or self.new_item is not None:
-                raise ValueError("kit lines must not set catalog_ref_id or new_item")
-        else:
-            if self.kit is not None:
-                raise ValueError(f"{self.item_type} lines must not set 'kit' details")
-            if (self.catalog_ref_id is None) == (self.new_item is None):
-                raise ValueError(
-                    f"{self.item_type} lines require exactly one of catalog_ref_id "
-                    "(existing item) or new_item (create new)"
-                )
+        _validate_line_dispatch(self, kit_required=True)
         return self
 
 
-class OrderCreate(BaseModel):
+OrderNotes = StrippedText
+
+
+def _adjustment_label(value: str) -> str:
+    stripped = stripped_or_none(value)
+    if stripped is None:
+        raise ValueError("label must not be blank — say what the adjustment was")
+    return stripped
+
+
+class OrderAdjustmentCreate(RequestModel):
+    """Something that came off what the order cost (#350): a discount, a promo
+    code, a voucher, a gift card."""
+
+    label: Annotated[str, AfterValidator(_adjustment_label)] = Field(
+        description='What it was, in your own words: "Gift card", "SPRING10".'
+    )
+    amount_minor: PositiveInt4 = Field(
+        description=(
+            "How much came off, as a positive number of minor units in the order's "
+            "own currency_code. Being an adjustment is what makes it a deduction."
+        )
+    )
+
+
+_ADJUSTMENTS_HELP = (
+    "What came off the price at the checkout — discounts, promo codes, vouchers, "
+    "gift cards — one entry each, in the order's own currency. Line prices stay "
+    "what the shop charged for each thing; never lower one to record a discount. "
+    "Together they may not come to more than the order's lines in that currency "
+    "plus its shipping."
+)
+
+
+class OrderCreate(RequestModel):
     retailer_id: uuid.UUID
     order_date: date
     order_number: str | None = None  # retailer's reference — informational only
@@ -147,6 +242,7 @@ class OrderCreate(BaseModel):
     tracking_url: str | None = None
     shipping_cost_minor: NonNegativeInt4 | None = None
     currency_code: str = Field(pattern=_CURRENCY_PATTERN)
+    notes: OrderNotes = None
     # True = already in hand (store purchase / arrived before entry): stock is
     # applied and spawned kits start at backlog instead of ordered.
     received: bool = False
@@ -163,6 +259,9 @@ class OrderCreate(BaseModel):
     # only (the kits are already past that stage).
     shipped_at: AwareDatetime | None = None
     items: list[OrderItemCreate] = Field(min_length=1)
+    adjustments: list[OrderAdjustmentCreate] = Field(
+        default_factory=list, description=_ADJUSTMENTS_HELP
+    )
 
     @model_validator(mode="after")
     def _received_at_implies_received(self) -> "OrderCreate":
@@ -178,9 +277,10 @@ class OrderItemUpsert(OrderItemCreate):
     """A line in an order edit: with id = update that line, without = new line.
     Existing lines omitted from the edit payload are removed (dispatch undone).
 
-    A supplied line replaces the stored one field for field, with two deliberate
-    exceptions. The `converted_*` snapshot pair: omit those and the stored
-    snapshot survives the edit; send an explicit null to clear it (issue #3).
+    A supplied line replaces the stored one field for field (an `other` line's
+    `description` included: restate it), with two deliberate exceptions. The
+    `converted_*` snapshot pair: omit those and the stored snapshot survives the
+    edit; send an explicit null to clear it (issue #3).
     They are a recorded fact rather than a restatable value — an editor that
     never had the entry-time rate shouldn't destroy one by changing a quantity.
     And `kit` (#67): an id-bearing kit line may omit it entirely, meaning "this
@@ -197,23 +297,11 @@ class OrderItemUpsert(OrderItemCreate):
         # Replaces the create-shape check by name (pydantic collects validators
         # per name, so the subclass definition wins): a *new* line still spawns
         # from its details and requires them; an update may stay silent (#67).
-        if self.item_type is ItemType.KIT:
-            if self.kit is None and self.id is None:
-                raise ValueError("kit lines require 'kit' details (name, grade, ...)")
-            if self.catalog_ref_id is not None or self.new_item is not None:
-                raise ValueError("kit lines must not set catalog_ref_id or new_item")
-        else:
-            if self.kit is not None:
-                raise ValueError(f"{self.item_type} lines must not set 'kit' details")
-            if (self.catalog_ref_id is None) == (self.new_item is None):
-                raise ValueError(
-                    f"{self.item_type} lines require exactly one of catalog_ref_id "
-                    "(existing item) or new_item (create new)"
-                )
+        _validate_line_dispatch(self, kit_required=self.id is None)
         return self
 
 
-class OrderUpdate(BaseModel):
+class OrderUpdate(RequestModel):
     model_config = ConfigDict(extra="forbid")
 
     retailer_id: uuid.UUID | None = None
@@ -224,6 +312,8 @@ class OrderUpdate(BaseModel):
     tracking_url: str | None = None
     shipping_cost_minor: NonNegativeInt4 | None = None
     currency_code: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
+    # Omitted leaves it, null or blank clears it (#348).
+    notes: OrderNotes = None
     # Correction only (#93): adjusts a receipt date that is already set. On an
     # order not yet received it 409s — the pending → received transition stays in
     # receive_order, where the stock dispatch lives, and never here. Explicit null
@@ -235,9 +325,18 @@ class OrderUpdate(BaseModel):
     shipped_at: AwareDatetime | None = None
     # None = leave line items untouched; a list is the full replacement set.
     items: list[OrderItemUpsert] | None = Field(default=None, min_length=1)
+    # Omitted or null = leave them as stored; a list is the full replacement
+    # set, and an empty one removes them all (#350).
+    adjustments: list[OrderAdjustmentCreate] | None = Field(
+        default=None,
+        description=(
+            _ADJUSTMENTS_HELP + " On an update this is the full replacement set: "
+            "omit it to leave the stored adjustments alone, send [] to remove them."
+        ),
+    )
 
 
-class OrderReceive(BaseModel):
+class OrderReceive(RequestModel):
     """Optional body for POST /orders/{id}/receive (#93). No body, an empty
     object and an explicit null all mean the same thing: the order arrived now."""
 
@@ -246,7 +345,7 @@ class OrderReceive(BaseModel):
     received_at: AwareDatetime | None = None
 
 
-class OrderShip(BaseModel):
+class OrderShip(RequestModel):
     """Optional body for POST /orders/{id}/ship (#95), OrderReceive's mirror:
     no body, an empty object and an explicit null all mean "it shipped now"."""
 
@@ -261,6 +360,9 @@ class OrderItemRead(BaseModel):
     id: uuid.UUID
     item_type: ItemType
     catalog_ref_id: uuid.UUID | None
+    # Set on `other` lines and on no others (#349): the line has no kit and no
+    # catalog item to be named by.
+    description: str | None
     quantity: int
     unit_price_minor: int
     currency_code: str
@@ -273,6 +375,30 @@ class OrderItemRead(BaseModel):
     # joining the ids against a separately cached kit list. That second cache going
     # stale is how a warm page reverted a kit somebody had just changed.
     kits: list[KitRead] = []
+
+
+class OrderAdjustmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    label: str
+    amount_minor: int
+
+
+class OrderTotalRead(BaseModel):
+    """One currency's share of what an order cost (#350). An order whose lines
+    are all in one currency has one of these."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    currency_code: str
+    # The lines in this currency at what the shop charged: quantity × unit price.
+    items_minor: int
+    # Zero in every currency but the order's own, where the next two live.
+    shipping_minor: int
+    adjustments_minor: int
+    # items + shipping − adjustments: what was actually paid in this currency.
+    paid_minor: int
 
 
 class OrderRead(BaseModel):
@@ -289,4 +415,23 @@ class OrderRead(BaseModel):
     currency_code: str
     shipped_at: datetime | None
     received_at: datetime | None
+    notes: str | None
     items: list[OrderItemRead]
+    # What came off at the checkout, in the order's currency, in entry order (#350).
+    adjustments: list[OrderAdjustmentRead]
+
+    # Derived on the way out, never stored (#233, §13.2): where the order sits —
+    # received, in_transit, pre_ordered (every spawned kit still a pre-order) or
+    # ordered — from the same predicate the summary counts with, so Home's
+    # columns, the Orders page filter and an agent's reading of a row agree.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def stage(self) -> OrderStage:
+        return order_stage(self)
+
+    # Derived on the way out, never stored (#350): what the order cost and what
+    # was paid, per currency, from the one rule the writers hold adjustments to.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def totals(self) -> list[OrderTotalRead]:
+        return [OrderTotalRead.model_validate(total) for total in order_totals(self)]

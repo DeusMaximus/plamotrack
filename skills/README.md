@@ -20,14 +20,13 @@ Like everything else in this repository, the skills are MIT licensed.
 
 ## Installing in Claude Desktop
 
-1. Zip the skill folder so `SKILL.md` sits at the top level inside it:
+1. Choose the [release](https://github.com/DeusMaximus/plamotrack/releases) matching
+   your instance and download its **plamotrack-gunpla.zip** asset. The archive
+   contains the `plamotrack-gunpla` parent folder and is versioned by that release;
+   its checksum is recorded in `release.json` and `SHA256SUMS`.
 
-   ```bash
-   cd skills && zip -r plamotrack-gunpla.zip plamotrack-gunpla
-   ```
-
-   (Or download the folder from GitHub and zip it — the zip must contain the
-   `plamotrack-gunpla` folder, not the loose files.)
+   For a release without the asset (every release before v0.5.2-alpha), build it
+   from the matching checkout: `cd skills && zip -r plamotrack-gunpla.zip plamotrack-gunpla`.
 
 2. In Claude Desktop, open **Settings → Capabilities**, make sure **Skills** is
    enabled, then choose **Upload skill** and select the zip.

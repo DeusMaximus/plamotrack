@@ -9,9 +9,9 @@
  * suite: the API already stores all of this correctly, and did throughout. Each
  * case below is one the browser used to destroy on the way past.
  */
-import { expect, request, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 
 const suffix = Date.now().toString(36);
 const SHOP = `E2E Lossless Shop ${suffix}`;
@@ -32,8 +32,12 @@ type StoredOrder = {
   order_number: string | null;
   shipping_cost_minor: number | null;
   tracking_number: string | null;
+  notes: string | null;
   items: Line[];
+  adjustments: { id: string; label: string; amount_minor: number }[];
 };
+
+type Adjustment = { label: string; amount_minor: number };
 
 test.describe.configure({ mode: "serial" });
 
@@ -41,21 +45,21 @@ let reference: string; // this instance's currency
 let foreign: string; // a purchase currency with a *different* exponent
 
 async function findOrder(): Promise<StoredOrder> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders = (await (await api.get("/orders")).json()) as StoredOrder[];
   await api.dispose();
   return orders.find((order) => order.order_number === ORDER)!;
 }
 
 async function kitScale(kitId: string): Promise<string | null> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const kits = (await (await api.get("/kits")).json()) as { id: string; scale: string | null }[];
   await api.dispose();
   return kits.find((kit) => kit.id === kitId)!.scale;
 }
 
 test.beforeAll("seed an order carrying everything the form used to lose", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   reference = ((await (await api.get("/meta")).json()) as { reference_currency: string })
     .reference_currency;
   // A *different exponent* is what makes a mis-scaled amount visible: 1200 whole
@@ -104,7 +108,7 @@ test("editing only the tracking number leaves currency, scale and free shipping 
   expect(before.shipping_cost_minor).toBe(0);
   expect(await kitScale(kitId)).toBe("1/100");
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: ORDER });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -129,6 +133,256 @@ test("editing only the tracking number leaves currency, scale and free shipping 
   expect(await kitScale(edited.spawned_kit_ids[0])).toBe("1/100");
 });
 
+test("a note is written, survives an edit that never mentions it, and clears", async ({ page }) => {
+  const NOTE = "Part-paid with a gift card.\nThe rest on the Visa.";
+  const open = async () => {
+    await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
+    await page.getByRole("row").filter({ hasText: ORDER }).getByRole("button", { name: "Edit" }).click();
+  };
+  const save = async () => {
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
+  };
+
+  await open();
+  // Surrounding whitespace is not part of a note: the server says what is.
+  await page.getByLabel("Notes").fill(`${NOTE}\n`);
+  await save();
+  expect((await findOrder()).notes).toBe(NOTE);
+
+  await open();
+  await expect(page.getByLabel("Notes")).toHaveValue(NOTE);
+  await page.getByLabel("Tracking number").fill(`NOTE-${suffix}`);
+  await save();
+  const edited = await findOrder();
+  expect(edited.tracking_number).toBe(`NOTE-${suffix}`);
+  expect(edited.notes).toBe(NOTE);
+
+  await open();
+  await page.getByLabel("Notes").fill("");
+  await save();
+  expect((await findOrder()).notes).toBeNull();
+});
+
+// The dialog holds a copy from when it opened, and an agent can write the order
+// in the meantime. A save restates only what its own hand changed, so the agent's
+// note stands: first where there was none, then over one the dialog is showing.
+for (const [before, written] of [
+  [null, "Gift card AUD 50, written while the dialog was open."],
+  ["The note the dialog opened with.", "The note an agent replaced it with."],
+] as const) {
+  test(`a save that never touched the note leaves what an agent wrote meanwhile, over ${before === null ? "no note" : "a note"}`, async ({ page }) => {
+    const writeNote = async (notes: string | null) => {
+      const api = await apiContext();
+      const response = await api.patch(`/orders/${(await findOrder()).id}`, { data: { notes } });
+      expect(response.status(), await response.text()).toBe(200);
+      await api.dispose();
+    };
+    await writeNote(before);
+
+    await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
+    await page.getByRole("row").filter({ hasText: ORDER }).getByRole("button", { name: "Edit" }).click();
+    // The dialog has its copy before the agent writes: that is the whole order of events.
+    await expect(page.getByLabel("Notes")).toHaveValue(before ?? "");
+    await writeNote(written);
+
+    const tracking = `AGENT-${suffix}-${before === null ? "A" : "B"}`;
+    await page.getByLabel("Tracking number").fill(tracking);
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
+
+    const stored = await findOrder();
+    expect(stored.tracking_number).toBe(tracking);
+    expect(stored.notes).toBe(written);
+  });
+}
+
+// A save is a PATCH and then the ship or receive it carries, so it can fail halfway:
+// the note is stored, the dialog stays open, and the person gets another go.
+test.describe("a save that fails after its note was stored", () => {
+  type Transition = "ship" | "receive";
+  const DATE_LABEL = { ship: "Shipped on", receive: "Received on" } as const;
+  const STAMP = { ship: "shipped_at", receive: "received_at" } as const;
+  let seeded = 0;
+
+  /** An order of its own: a transition can't be undone for the next case. */
+  async function openFailingSave(
+    page: Page,
+    transition: Transition,
+    notes: string | null,
+    adjustments: Adjustment[] = [],
+  ) {
+    const number = `RETRY-${suffix}-${++seeded}`;
+    const api = await apiContext();
+    const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
+    const created = await api.post("/orders", {
+      data: {
+        retailer_id: retailers.find((retailer) => retailer.name === SHOP)!.id,
+        order_date: "2020-01-01",
+        order_number: number,
+        currency_code: reference,
+        notes,
+        adjustments,
+        items: [
+          {
+            item_type: "kit",
+            quantity: 1,
+            unit_price_minor: 1000,
+            currency_code: reference,
+            kit: { name: `E2E Retry Kit ${number}`, grade: "HG" },
+          },
+        ],
+      },
+    });
+    expect(created.status(), await created.text()).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    await api.dispose();
+
+    await page.route(`**/orders/${id}/${transition}`, (route) => route.fulfill({ status: 503 }), {
+      times: 1,
+    });
+    await page.goto(`/orders?q=${encodeURIComponent(number)}`);
+    await page.getByRole("row").filter({ hasText: number }).getByRole("button", { name: "Edit" }).click();
+    await expect(page.getByLabel("Notes")).toHaveValue(notes ?? "");
+    await page.getByLabel(DATE_LABEL[transition]).fill("2020-02-01");
+
+    const read = async () => {
+      const reader = await apiContext();
+      const stored = (await (await reader.get(`/orders/${id}`)).json()) as StoredOrder &
+        Record<(typeof STAMP)[Transition], string | null>;
+      await reader.dispose();
+      return stored;
+    };
+    const write = async (data: object) => {
+      const writer = await apiContext();
+      const response = await writer.patch(`/orders/${id}`, { data });
+      expect(response.status(), await response.text()).toBe(200);
+      await writer.dispose();
+    };
+    const save = page.getByRole("button", { name: "Save changes" });
+    /** The PATCH lands, the transition 503s, the dialog stays open and can go again. */
+    const saveAndFail = async () => {
+      const failed = page.waitForResponse(`**/orders/${id}/${transition}`);
+      await save.click();
+      expect((await failed).status()).toBe(503);
+      await expect(save).toBeEnabled();
+    };
+    const saveAndClose = async () => {
+      await save.click();
+      await expect(save).toBeHidden();
+    };
+    return { read, write, saveAndFail, saveAndClose };
+  }
+
+  for (const transition of ["ship", "receive"] as const) {
+    for (const before of [null, "The note it opened with."]) {
+      test(`${transition}: putting the note back to how it opened is kept, from ${before === null ? "no note" : "a note"}`, async ({ page }) => {
+        const { read, saveAndFail, saveAndClose } = await openFailingSave(page, transition, before);
+        await page.getByLabel("Notes").fill("Stored by the half that worked.");
+        await saveAndFail();
+        expect((await read()).notes).toBe("Stored by the half that worked.");
+
+        // Back to the opening value, which is not dirty, and is not what is stored.
+        await page.getByLabel("Notes").fill(before ?? "");
+        await saveAndClose();
+        const stored = await read();
+        expect(stored.notes).toBe(before);
+        expect(stored[STAMP[transition]]).not.toBeNull();
+      });
+    }
+
+    test(`${transition}: a retry that never touched the note still leaves what an agent wrote`, async ({ page }) => {
+      const { read, write, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null);
+      await page.getByLabel("Tracking number").fill(`RETRY-${suffix}`);
+      await saveAndFail();
+      await write({ notes: "Written between the two tries." });
+      await saveAndClose();
+      expect((await read()).notes).toBe("Written between the two tries.");
+    });
+
+    test(`${transition}: a note the person wrote is still theirs on the retry`, async ({ page }) => {
+      const { read, write, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null);
+      await page.getByLabel("Notes").fill("The person's note.");
+      await saveAndFail();
+      await write({ notes: "Written between the two tries." });
+      await saveAndClose();
+      expect((await read()).notes).toBe("The person's note.");
+    });
+
+    // The same three questions of what came off (#350; Codex #362, finding 1): it is
+    // sent only when this edit touched it, so it has the note's retry to answer for.
+    const cameOff = (stored: StoredOrder): Adjustment[] =>
+      stored.adjustments.map(({ label, amount_minor }) => ({ label, amount_minor }));
+    const GIFT: Adjustment = { label: "Gift card", amount_minor: 100 };
+    const BETWEEN: Adjustment = { label: "Written between the two tries", amount_minor: 300 };
+
+    for (const before of [[], [GIFT]]) {
+      test(`${transition}: putting what came off back to how it opened is kept, from ${before.length ? "one adjustment" : "none"}`, async ({ page }) => {
+        const { read, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null, before);
+        if (before.length === 0) {
+          await page.getByRole("button", { name: "Add discount" }).click();
+          await page.getByLabel("What came off").fill(GIFT.label);
+        }
+        const amount = page.getByLabel("Amount off");
+        // As the form wrote it, so that putting it back is not a change of spelling.
+        const opening = await amount.inputValue();
+        await amount.fill("2.00");
+        await saveAndFail();
+        expect(cameOff(await read())).toEqual([{ ...GIFT, amount_minor: 200 }]);
+
+        // Back to how it opened, which is not dirty, and is not what is stored.
+        if (before.length === 0) await page.getByRole("button", { name: "Remove discount" }).click();
+        else await amount.fill(opening);
+        await saveAndClose();
+        const stored = await read();
+        expect(cameOff(stored)).toEqual(before);
+        expect(stored[STAMP[transition]]).not.toBeNull();
+      });
+    }
+
+    test(`${transition}: a retry that never touched what came off still leaves what an agent wrote`, async ({ page }) => {
+      const { read, write, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null, [GIFT]);
+      await page.getByLabel("Tracking number").fill(`RETRY-${suffix}`);
+      await saveAndFail();
+      await write({ adjustments: [BETWEEN] });
+      await saveAndClose();
+      expect(cameOff(await read())).toEqual([BETWEEN]);
+    });
+
+    test(`${transition}: what the person said came off is still theirs on the retry`, async ({ page }) => {
+      const { read, write, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null, [GIFT]);
+      await page.getByLabel("Amount off").fill("2.00");
+      await saveAndFail();
+      await write({ adjustments: [BETWEEN] });
+      await saveAndClose();
+      expect(cameOff(await read())).toEqual([{ ...GIFT, amount_minor: 200 }]);
+    });
+  }
+});
+
+test("a new order is created with its note", async ({ page }) => {
+  const NUMBER = `NOTED-${suffix}`;
+  await page.goto("/orders");
+  await page.getByRole("button", { name: "New order" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator('select[name="retailer_id"]').selectOption({ label: SHOP });
+  await page.getByLabel("Order number").fill(NUMBER);
+  await page.getByLabel("Notes").fill("Bought in store.");
+  await dialog.getByPlaceholder("Kit name *").fill(`E2E Noted Kit ${suffix}`);
+  await dialog.getByPlaceholder("Grade *").fill("HG");
+  await page.getByLabel("Unit price").first().fill("10");
+  await page.getByRole("button", { name: "Record order" }).click();
+  await expect(page.getByRole("button", { name: "Record order" })).toBeHidden();
+
+  const api = await apiContext();
+  const orders = (await (await api.get("/orders")).json()) as { id: string; order_number: string | null; notes: string | null }[];
+  const created = orders.find((order) => order.order_number === NUMBER)!;
+  expect(created.notes).toBe("Bought in store.");
+  const deleted = await api.delete(`/orders/${created.id}`);
+  expect(deleted.status(), await deleted.text()).toBe(204);
+  await api.dispose();
+});
+
 test("a cold edit waits for the data it rebuilds the form from", async ({ page }) => {
   // Mounting the form before its queries resolve captured blanks in defaultValues,
   // which react-hook-form never revisits, and wrote them back.
@@ -147,7 +401,7 @@ test("a cold edit waits for the data it rebuilds the form from", async ({ page }
     await route.continue();
   });
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: ORDER });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -176,7 +430,7 @@ type SpawnedKit = { id: string; scale: string | null; kit_number: string | null;
  *  reads the same on either side of the fix — these tests are about what ends up
  *  stored, and the payload's shape is the backend suite's business. */
 async function kitsOf(orderNumber: string): Promise<SpawnedKit[]> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders = (await (await api.get("/orders")).json()) as StoredOrder[];
   const ids = orders.find((order) => order.order_number === orderNumber)!.items[0].spawned_kit_ids;
   const all = (await (await api.get("/kits")).json()) as SpawnedKit[];
@@ -185,14 +439,14 @@ async function kitsOf(orderNumber: string): Promise<SpawnedKit[]> {
 }
 
 async function patchKit(id: string, data: Record<string, string>): Promise<void> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const resp = await api.patch(`/kits/${id}`, { data });
   expect(resp.status(), await resp.text()).toBe(200);
   await api.dispose();
 }
 
 test.beforeAll("seed a two-kit line whose kits are then made different", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const created = await api.post("/orders", {
     data: {
@@ -225,7 +479,7 @@ test("a tracking-only edit leaves two divergent kits on the same line divergent"
   const [firstBefore, secondBefore] = await kitsOf(MULTI);
   expect(secondBefore.scale).toBe("1/60"); // control: the seed diverged
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: MULTI });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -246,7 +500,7 @@ test("a tracking-only edit leaves two divergent kits on the same line divergent"
 test("a warm page does not revert a kit changed while it was open", async ({ page }) => {
   // The cached kit list satisfied the old hydration gate instantly, so the form
   // snapshotted values already superseded in the database and wrote them back.
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await expect(page.getByRole("row").filter({ hasText: MULTI })).toBeVisible();
 
   // From here the kit list is frozen at what the page already holds. Opening the
@@ -282,7 +536,7 @@ test("a warm page does not revert a kit changed while it was open", async ({ pag
 });
 
 test("the editor hydrates from a fresh read, not the page's cache (#67)", async ({ page }) => {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await expect(page.getByRole("row").filter({ hasText: MULTI })).toBeVisible();
 
   // Lands after the page cached its list. The pre-#67 editor hydrated from that
@@ -303,7 +557,7 @@ test("a price edit does not revert a kit changed while the dialog was open (#67)
   // hydrated. The form provably holds the older values — only the dirty-only
   // kit payload keeps it from echoing them. No stall needed: the ordering is
   // enforced by awaiting hydration (the field renders) before the change.
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: MULTI });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -319,7 +573,7 @@ test("a price edit does not revert a kit changed while the dialog was open (#67)
   const [firstAfter] = await kitsOf(MULTI);
   expect(firstAfter.kit_number).toBe("MID-EDIT-67"); // survived the price edit
   expect(firstAfter.scale).toBe("1/35");
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders = (await (await api.get("/orders")).json()) as StoredOrder[];
   await api.dispose();
   const line = orders.find((order) => order.order_number === MULTI)!.items[0];
@@ -331,7 +585,7 @@ test("an order deleted under a stale row says so instead of loading forever (PR 
 }) => {
   // The fresh read's failure mode: the row is cached, the order is gone, and
   // the 404 must surface as words — not as a Loading state that never ends.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const created = (await (
     await api.post("/orders", {
@@ -353,7 +607,7 @@ test("an order deleted under a stale row says so instead of loading forever (PR 
     })
   ).json()) as { id: string };
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: `GONE-${suffix}` });
   await expect(row).toBeVisible();
 
@@ -370,7 +624,7 @@ test("an order deleted under a stale row says so instead of loading forever (PR 
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const shop = retailers.find((retailer) => retailer.name === SHOP);
   if (shop) {

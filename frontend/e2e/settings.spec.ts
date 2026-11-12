@@ -8,9 +8,9 @@
  * `settings` project in playwright.config.ts. The original value is restored
  * in afterAll whether the tests pass or not.
  */
-import { expect, request, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 
 test.describe.configure({ mode: "serial" });
 
@@ -26,7 +26,7 @@ let version: string;
 let target: string; // a valid code that differs from the stored one
 
 test.beforeAll("read the instance settings and version", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   original = (await (await api.get("/settings")).json()) as typeof original;
   version = ((await (await api.get("/meta")).json()) as { version: string }).version;
   target = original.reference_currency === "NZD" ? "CAD" : "NZD";
@@ -34,7 +34,7 @@ test.beforeAll("read the instance settings and version", async () => {
 });
 
 test.afterAll("restore the instance settings", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   await api.patch("/settings", {
     data: {
       reference_currency: original.reference_currency,
@@ -49,7 +49,7 @@ test.afterAll("restore the instance settings", async () => {
 });
 
 test("Settings replaces Data in the sidebar and the sections navigate", async ({ page }) => {
-  await page.goto("/board");
+  await page.goto("/");
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Data", exact: true })).toHaveCount(0);
 
@@ -107,7 +107,7 @@ test("a malformed currency code is refused client-side with a field error", asyn
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("3-letter ISO code")).toBeVisible();
   // Nothing reached the server.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const row = (await (await api.get("/settings")).json()) as { reference_currency: string };
   await api.dispose();
   expect(row.reference_currency).toBe(original.reference_currency);
@@ -141,14 +141,14 @@ test("saving the currency persists it and refreshes the order form's default", a
   await expect(page.getByRole("status")).toHaveText("Saved");
 
   // Persisted on the instance, not just in this form.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const row = (await (await api.get("/settings")).json()) as { reference_currency: string };
   await api.dispose();
   expect(row.reference_currency).toBe(target);
 
   // Same SPA session, no reload: the new default reaches the order form.
   await page.getByRole("link", { name: "Orders" }).click();
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
   await expect(page.getByLabel("Currency").first()).toHaveValue(target);
 });
 
@@ -173,7 +173,7 @@ test("saving regional settings re-renders visible dates in the same session (#27
 }) => {
   // A kit whose completion instant is unambiguous across the zones involved:
   // 04:00Z is 14/03 in UTC and 15:00 on 14/03 in Sydney.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const kit = (await (
     await api.post("/kits", {
       data: {
@@ -212,7 +212,7 @@ test("a cold page load re-renders once the settings row arrives (#174 review, P3
   page,
 }) => {
   // The prior test saved Sydney/long/h23; restate it so this test stands alone.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   await api.patch("/settings", {
     data: { time_zone: "Australia/Sydney", date_style: "long", hour_cycle: "h23" },
   });
@@ -250,7 +250,103 @@ test("a cold page load re-renders once the settings row arrives (#174 review, P3
 });
 
 
-test("a cold Board load re-renders its counts once the settings row arrives (#177 review, P3-1)", async ({
+test("Home's mail cards keep the retailer readable under full dates at every width (Codex #237 P3-2)", async ({
+  page,
+}) => {
+  // The date style is the one instance-wide setting that lengthens every date
+  // on a card ("Wednesday, 8 September 2026 · Australia Post"); this project
+  // owns the settings flips, so the width matrix with full dates lives here.
+  const api = await apiContext();
+  const suffix = Date.now().toString(36);
+  const shop = `Review 237 Hobby ${suffix}`;
+  const retailer = (await (await api.post("/retailers", { data: { name: shop } })).json()) as {
+    id: string;
+  };
+  // Two completed kits, rated, with a full-date completion (round 2, P3-4):
+  // their names must keep usable space on the completed strip when it goes
+  // two-up beside a full date. The strip is the six latest completions (#247),
+  // so the date is a far-future one to head it on a populated database — a
+  // Wednesday in September, the longest weekday and month, as 17/09/2025 was.
+  const done: string[] = [];
+  for (const kitName of [`e2e-237-done-A-${suffix}`, `e2e-237-done-B-${suffix}`]) {
+    const kit = (await (
+      await api.post("/kits", {
+        data: {
+          name: kitName,
+          grade: "MG",
+          status: "complete",
+          build_started_at: "2098-09-16T00:00:00Z",
+          build_completed_at: "2098-09-17T00:00:00Z",
+        },
+      })
+    ).json()) as { id: string };
+    await api.patch(`/kits/${kit.id}`, { data: { rating: 4 } });
+    done.push(kit.id);
+  }
+  const order = (await (
+    await api.post("/orders", {
+      data: {
+        retailer_id: retailer.id,
+        order_date: "2026-09-01",
+        currency_code: "JPY",
+        shipped_at: "2026-09-08T10:00:00+00:00",
+        delivery_service: "Australia Post",
+        tracking_number: `AP${suffix}`,
+        items: [
+          {
+            item_type: "kit",
+            quantity: 1,
+            unit_price_minor: 2800,
+            currency_code: "JPY",
+            kit: { name: `e2e-237-full-${suffix}`, grade: "HG" },
+          },
+        ],
+      },
+    })
+  ).json()) as { id: string };
+  try {
+    await api.patch("/settings", { data: { date_style: "full" } });
+    // 1072 is where the strips go two-up (48 rem of content beside the sidebar).
+    for (const width of [768, 1024, 1072, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/");
+      const card = page
+        .getByRole("region", { name: "In the mail" })
+        .getByRole("article")
+        .filter({ hasText: shop });
+      await expect(card.getByText(/^Shipped .*Australia Post$/)).toBeVisible();
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, `${width}px: horizontal overflow`).toBe(0);
+      const box = (await card.getByText(shop, { exact: true }).boundingBox())!;
+      expect(box.width, `${width}px: retailer width`).toBeGreaterThan(40);
+      const spill = await card.evaluate((el) => {
+        const outer = el.getBoundingClientRect();
+        return [...el.querySelectorAll("*")].filter((child) => {
+          const r = child.getBoundingClientRect();
+          return r.width > 0 && r.right > outer.right + 1;
+        }).length;
+      });
+      expect(spill, `${width}px: content past the card`).toBe(0);
+      // The completed strip: each name keeps room to be read beside the stars
+      // and the full date (round 2, P3-4 measured 9.7 px at 1072).
+      const completed = page.getByRole("region", { name: "Recently completed" });
+      for (const kitName of [`e2e-237-done-A-${suffix}`, `e2e-237-done-B-${suffix}`]) {
+        const nameBox = (await completed.getByText(kitName, { exact: true }).boundingBox())!;
+        expect(nameBox.width, `${width}px: completed name width`).toBeGreaterThan(120);
+      }
+    }
+  } finally {
+    await api.patch("/settings", { data: { date_style: original.date_style } });
+    for (const id of done) await api.delete(`/kits/${id}`);
+    await api.delete(`/orders/${order.id}`);
+    await api.delete(`/retailers/${retailer.id}`);
+    await api.dispose();
+  }
+});
+
+test("a cold Home load re-renders its counts once the settings row arrives (#177 review, P3-1)", async ({
   page,
 }) => {
   // The locale axis, not the zone axis: `interface_language` stays en-AU, so
@@ -258,11 +354,11 @@ test("a cold Board load re-renders its counts once the settings row arrives (#17
   // pass — only a presentation subscription can. ar-EG because its digits are
   // visibly not the boot locale's, so the assertion reads the rendering rather
   // than a value that happens to agree.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   await api.patch("/settings", { data: { formatting_locale: "ar-EG" } });
   const kit = (await (
     await api.post("/kits", {
-      data: { name: `e2e-177-boardcount-${Date.now()}`, grade: "HG", status: "backlog" },
+      data: { name: `e2e-177-homecount-${Date.now()}`, grade: "HG", status: "backlog" },
     })
   ).json()) as { id: string };
 
@@ -271,11 +367,11 @@ test("a cold Board load re-renders its counts once the settings row arrives (#17
     const gate = new Promise<void>((resolve) => (release = resolve));
     await page.route("**/api/settings", async (route) => {
       if (route.request().method() !== "GET") return route.fallback();
-      await gate; // the kits list resolves first — the window under test
+      await gate; // the summary resolves first — the window under test
       await route.continue();
     });
-    await page.goto("/board");
-    const count = page.getByTestId("column-count-backlog");
+    await page.goto("/");
+    const count = page.getByTestId("home-count-backlog");
     // Boot defaults while the row is held: Western digits, and at least the
     // kit just created, so this is not asserting an empty column.
     await expect(count).toHaveText(/^[0-9]+$/);
@@ -290,6 +386,173 @@ test("a cold Board load re-renders its counts once the settings row arrives (#17
   } finally {
     await api.delete(`/kits/${kit.id}`);
     await api.patch("/settings", { data: { formatting_locale: original.formatting_locale } });
+    await api.dispose();
+  }
+});
+
+/** Hold every GET to `pattern` until `release()` — the late response under test. */
+async function holdGets(page: Page, pattern: string): Promise<() => void> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  await page.route(pattern, async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await gate;
+    await route.continue();
+  });
+  return release;
+}
+
+/** A locale whose digits are not the boot locale's, in the longest style: what the
+ *  Settings sections draw under it cannot pass for what they drew at boot. The
+ *  expected text is the browser's own Intl, asked in the page, so the assertion
+ *  names the rendering rather than a string written down here. */
+const SAVED = { formatting_locale: "ar-EG", date_style: "full" } as const;
+const ARABIC_DIGIT = /[٠-٩]/;
+
+test("Access tokens re-render under the saved settings whichever response arrives first (#331)", async ({
+  page,
+}) => {
+  const api = await apiContext();
+  await api.patch("/settings", { data: SAVED });
+  const zone = ((await (await api.get("/settings")).json()) as { time_zone: string }).time_zone;
+  const name = `e2e-331-token-${Date.now()}`;
+  const minted = await api.post("/auth/tokens", { data: { name, scopes: ["collection:read"] } });
+  expect(minted.ok(), await minted.text()).toBeTruthy();
+  const token = (await minted.json()) as { id: string; created_at: string };
+
+  // The row's Created cell, in the table (the settings project is 1280 px wide),
+  // and the expiry choice beside the list — both formatted per call.
+  const created = page.getByTestId("token-row").filter({ hasText: name }).locator("td").nth(1);
+  const thirtyDays = page.getByLabel("Expires").locator("option").nth(1);
+  const [boot, saved] = await page.evaluate(
+    ({ iso, zone, locale, style }) => [
+      new Date(iso).toLocaleDateString("en-AU", { timeZone: "UTC" }),
+      new Intl.DateTimeFormat(locale, { dateStyle: style, timeZone: zone }).format(new Date(iso)),
+    ],
+    { iso: token.created_at, zone, locale: SAVED.formatting_locale, style: SAVED.date_style },
+  );
+  expect(saved, "the saved style is not the boot one").not.toBe(boot);
+
+  try {
+    // The tokens first: the row is drawn under the boot defaults while the
+    // settings row is held — then the row's arrival alone, with no navigation
+    // and no interaction, re-draws it. The order Codex reproduced the defect in.
+    const releaseSettings = await holdGets(page, "**/api/settings");
+    await page.goto("/settings/tokens");
+    await expect(created).toHaveText(boot);
+    await expect(thirtyDays).toHaveText("In 30 days");
+    releaseSettings();
+    await expect(created).toHaveText(saved);
+    await expect(thirtyDays).toHaveText(ARABIC_DIGIT);
+    await page.unrouteAll();
+
+    // The settings first: the expiry choice already speaks the saved locale while
+    // the tokens are held — which proves the order — and the row then arrives
+    // in it.
+    const releaseTokens = await holdGets(page, "**/api/auth/tokens");
+    await page.goto("/settings/tokens");
+    await expect(thirtyDays).toHaveText(ARABIC_DIGIT);
+    await expect(page.getByTestId("token-row")).toHaveCount(0);
+    releaseTokens();
+    await expect(created).toHaveText(saved);
+    await page.unrouteAll();
+  } finally {
+    await api.delete(`/auth/tokens/${token.id}`);
+    await api.patch("/settings", {
+      data: { formatting_locale: original.formatting_locale, date_style: original.date_style },
+    });
+    await api.dispose();
+  }
+});
+
+test("Data management re-renders a chosen file's size once the settings row arrives (#331's sweep)", async ({
+  page,
+}) => {
+  const api = await apiContext();
+  await api.patch("/settings", { data: SAVED });
+  const [boot, saved] = await page.evaluate((locale) => {
+    const size = (tag: string) =>
+      `${new Intl.NumberFormat(tag, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(1.5)} KB`;
+    return [size("en-AU"), size(locale)];
+  }, SAVED.formatting_locale);
+  expect(saved).toMatch(ARABIC_DIGIT);
+
+  try {
+    const releaseSettings = await holdGets(page, "**/api/settings");
+    await page.goto("/settings/data");
+    // 1536 bytes is 1.5 KB: a decimal, so the separator shows as well as the digits.
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "sizes.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.alloc(1536, "a"),
+    });
+    const size = page.getByRole("main").getByText(boot, { exact: true });
+    await expect(size).toBeVisible();
+    releaseSettings();
+    await expect(page.getByRole("main").getByText(saved, { exact: true })).toBeVisible();
+    await expect(size).toHaveCount(0);
+    await page.unrouteAll();
+  } finally {
+    await api.patch("/settings", { data: { formatting_locale: original.formatting_locale, date_style: original.date_style } });
+    await api.dispose();
+  }
+});
+
+test("a Save keeps the keyboard while it waits, and gives it to the field before it once saved (#268)", async ({
+  page,
+}) => {
+  const api = await apiContext();
+  const before = (await (await api.get("/settings")).json()) as typeof original;
+  const other = before.reference_currency === "NZD" ? "CAD" : "NZD";
+  // By key: the button says "Saving…" while it waits.
+  const save = page.locator('[data-focus-key="settings-general-save"]');
+  const currency = page.getByLabel("Currency code");
+  try {
+    await page.goto("/settings/general");
+    await expect(currency).toHaveValue(before.reference_currency);
+
+    // Refused: Save is back, and so is the keyboard — beside the error (#316).
+    await page.route("**/api/settings", (route) =>
+      route.request().method() === "PATCH" ? route.fulfill({ status: 500 }) : route.fallback(),
+    );
+    await currency.fill(other);
+    await save.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(save).toBeEnabled();
+    await expect(save, "refused: the keyboard is still on Save").toBeFocused();
+    await page.unrouteAll();
+
+    // Held: Save waits with the keyboard on it; saved, it has nothing left to
+    // save, and the keyboard is on the field before it.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/settings", async (route) => {
+      if (route.request().method() !== "PATCH") return route.fallback();
+      await gate;
+      await route.continue();
+    });
+    await page.keyboard.press("Enter");
+    await expect(save).toHaveAttribute("aria-disabled", "true");
+    await expect(save).toBeFocused();
+    release();
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    await expect(save).toBeDisabled();
+    await expect(currency, "saved: the keyboard is on the field before Save").toBeFocused();
+    await page.unrouteAll();
+
+    // Language & formatting, the same rule: the field before its Save is the hour cycle.
+    await page.goto("/settings/language");
+    const style = page.getByLabel("Date style");
+    await style.selectOption(before.date_style === "medium" ? "long" : "medium");
+    await page.locator('[data-focus-key="settings-language-save"]').focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    await expect(page.getByLabel("Hour cycle")).toBeFocused();
+  } finally {
+    await api.patch("/settings", {
+      data: { reference_currency: before.reference_currency, date_style: before.date_style },
+    });
     await api.dispose();
   }
 });

@@ -7,9 +7,9 @@
  * plain quantity edit made in the page.
  */
 import type { Page } from "@playwright/test";
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 
 const suffix = Date.now().toString(36);
 const SHOP = `E2E Snapshot Shop ${suffix}`;
@@ -30,7 +30,7 @@ let foreign: string; // a purchase currency that isn't it
 let otherCode: string; // a snapshot currency that is neither
 
 test.beforeAll("read the instance currency and seed a retailer", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   reference = ((await (await api.get("/meta")).json()) as { reference_currency: string })
     .reference_currency;
   foreign = reference === "JPY" ? "EUR" : "JPY";
@@ -40,7 +40,7 @@ test.beforeAll("read the instance currency and seed a retailer", async () => {
 });
 
 async function findOrder(orderNumber: string): Promise<{ id: string; items: Line[] }> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders = (await (await api.get("/orders")).json()) as {
     id: string;
     order_number: string | null;
@@ -53,7 +53,7 @@ async function findOrder(orderNumber: string): Promise<{ id: string; items: Line
 /** Open the order in the UI, bump its first line's quantity, save. Deliberately an
  *  edit that says nothing about the snapshot — that's the whole scenario. */
 async function bumpQuantityInTheBrowser(page: Page, orderNumber: string, quantity: number) {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: orderNumber });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -63,9 +63,9 @@ async function bumpQuantityInTheBrowser(page: Page, orderNumber: string, quantit
 }
 
 test("a snapshot typed into the form survives a later quantity edit", async ({ page }) => {
-  await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
-  await page.getByLabel("Retailer").selectOption({ label: SHOP });
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
+  await page.getByRole("button", { name: "New order" }).click();
+  await page.getByRole("dialog").getByRole("combobox", { name: /^Retailer/ }).selectOption({ label: SHOP });
   await page.getByLabel("Currency").fill(foreign);
   await page.getByLabel("Order number").fill(TYPED_ORDER);
 
@@ -76,7 +76,7 @@ test("a snapshot typed into the form survives a later quantity edit", async ({ p
   await page.getByPlaceholder("Kit name *").first().fill(`E2E Snapshot Kit ${suffix}`);
   await page.getByPlaceholder("Grade *").first().fill("HG");
 
-  await page.getByRole("button", { name: "+ Add line" }).click();
+  await page.getByRole("button", { name: "Add line" }).click();
   await page.getByLabel("Unit price").nth(1).fill("12");
   await page.getByPlaceholder("Kit name *").nth(1).fill(`E2E Bare Kit ${suffix}`);
   await page.getByPlaceholder("Grade *").nth(1).fill("HG");
@@ -110,7 +110,7 @@ test("a stored snapshot survives even when the purchase is in the instance's own
   // rewrites: a snapshot recorded in some *other* currency (an import, or an agent
   // writing before the operator moved REFERENCE_CURRENCY), and one whose amount
   // simply isn't the unit price. Both are recorded facts, neither is derivable.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const kitLine = (name: string, converted: number, code: string) => ({
     item_type: "kit",
@@ -150,7 +150,7 @@ test("a stored snapshot survives even when the purchase is in the instance's own
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const shop = retailers.find((r) => r.name === SHOP);
   if (shop) {

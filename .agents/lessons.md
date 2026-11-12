@@ -117,6 +117,17 @@ half that isn't shared is the half that drifts. → 2026-08-15 (#76 round 2)
 
 ---
 
+### #265: every width for the shell's choice, one width for everything inside it
+`shell.spec.ts` swept nine widths to pin *which* shell a viewport gets — both sides
+of both lines — and then ran every per-page assertion at one size per shell: 390 for
+the phone. The phone shell is 320–767 px wide. At 600 px and up More's `max-w-md`
+wrapper capped its full-bleed header 264 px short of the screen, on the iPad-mini
+width the owner had explicitly accepted into that shell, and nothing looked. Codex
+found it by measuring the header at five widths. A range is an axis inside each of
+its classes, not only at the class boundaries: the phone project now runs at 390 and
+744, and the header is measured on every route at 390, 600, 744 and 767.
+→ 2026-09-17 (PR #265, finding 2)
+
 ### An invisible codepoint is a value too
 
 KitsPage's elapsed cell spelled "3 d" with U+00A0 before the *d* — the only
@@ -258,10 +269,49 @@ unparseable input. Non-empty field, `required` satisfied, unit price saved as 0,
 silently. Caught by review; `format.ts` had no tests. The shared money fixture is
 also the check on the fix. → 2026-08-10 (#6, PR #16, PR #18)
 
+### "The page survives" asserted the draft and never asked where the keyboard was
+The rotation test opened a dialog, crossed the 768 px line and asserted the typed
+text was still there — true, because `main` keeps its place in the tree. It did not
+close the dialog. `Modal` returns focus to the node that opened it, `PageHeader`
+rendered the opener in a different subtree on each side of the line, so the node was
+gone and focus fell to `<body>`: eight failures (four pages, both directions) behind
+a green test about the same transition (Codex #265, finding 1). A state-preservation
+test owes the *end* of the interaction, not only its middle: close what was opened
+and assert where focus lands. Related: "An assertion about containment cannot see a
+mechanism that moves things within the container".
+→ 2026-09-17 (PR #265, finding 1)
+
 ### A locale-dependent assertion is green only where the runner happens to live
 `toContain("1.234")` against `Intl.NumberFormat(undefined, …)` is `1,234 IQD` in
 de-DE. Green on CI because the runner is en_US. Compare against a formatter handed
 the same digit count, and verify under more than one locale. → 2026-08-10 (PR #18)
+
+### The fake stood in for the very object under test
+The MCP OAuth proxy asked the provider to revoke a grant's refresh token through
+FastMCP's upstream OAuth client, inside a best-effort `except Exception`. The test
+fixture injected an httpx transport, and the injection point was a factory override
+that built *authlib's* client instead of FastMCP's whenever a transport was set — so
+every revocation test exercised a client production never used. FastMCP 4 replaced
+the production client with one that has no `revoke_token`; the call raised
+`AttributeError`, the catch-all logged a warning, the provider was never asked, and
+the suite stayed green. Found by the M6.1 compatibility spike measuring the
+production factory. Two rules: an injection seam sits *below* the object under test
+(a transport under the client, not a client in place of it), and a best-effort catch
+names the failures it forgives — an `httpx.HTTPError` is the provider's problem, an
+`AttributeError` is ours. → 2026-09-11 (#241)
+
+### A poll after a resize is satisfied by the page it was supposed to replace
+`e2e/shell.spec.ts`'s first width matrix resized one live page through nine widths
+and polled for the expected shell at each. Where two neighbours in the list expect
+the same shell — 820 then 1180, both the rail — the poll's first read is the
+*previous* width's DOM, which already matches, so it passes before React has
+re-rendered: the test written to pin the 1280 px line stayed green with the line
+moved to 1024. The unit test and three other e2e tests caught that mutant; this one
+did not. The negative control could not have shown it — the unfixed tree has no
+shells, so every width fails there; mutating the line did. The fix is a fresh
+document per width. A poll proves a *transition*, so it belongs only where every
+step changes the answer (the rotation test, where each resize crosses a line).
+→ 2026-09-17 (#257)
 
 ---
 
@@ -365,6 +415,18 @@ Round 7 said stop; the owner's call was to make the general guard (the write gat
 rule 7.1) a prerequisite PR and rebase onto it, which deleted ~220 lines of
 `importing.py` and ~580 of its tests. → 2026-08-15 (#79, #80)
 
+Again on #244/#250, three rounds walking up the modern-hold gate: round 1 (F2) the
+cleanup was vacuous (0 before/after, never observed a held backend); round 2 (F6)
+the reworked cleanup defaulted its verdict (`gone = bool(during)`, so a lingering
+backend passed); round 3 (F7) the thing all three trusted — a `psql` read — reported
+a SQL error as emptiness (no `ON_ERROR_STOP`, so a statement timeout exited 0 with
+empty stdout and every reader saw "no rows"). Each fix was correct for the angle
+reported and left the next angle open; the convergent fix was the boundary, not the
+caller — `Host.psql` now refuses to return an error as absence, covering every
+reader at once. The reviewer named the pattern in round 2 ("rounds landing in the
+same function are a signal about the invariant"); the round-3 brief was scoped to
+replay the round-2 fix precisely because of it. → 2026-09-11 (#244, #250)
+
 ### The reviews are finding things the tests do not — five for five
 Three rounds on #103, every finding real, two of them changing code rather than
 tests and neither reachable by anything in-tree (a focus trap letting focus reach
@@ -411,6 +473,26 @@ deleted literals instead, which is the stronger control anyway. Write "spec X
 pins string Y" only in the same breath as the grep that proves it.
 → PR #165 reply.
 
+### A runbook paragraph is one promise, and the reviewer replays the promise
+
+PR #222 (the 0.3.0 scan's four mediums) took two review rounds on one paragraph of
+`docs/operations.md` — the 429 recovery text — after the code had stopped changing.
+Round 2 (f4): the paragraph said the reserved login path was for "the browser you
+signed in with"; a normal logout clears that cookie, so an ordinarily signed-out
+browser holds nothing. Round 3 (f5): it said the instance checks "at most thirty
+passwords a minute in total"; the policy is two token buckets, thirty plus ten,
+refilling continuously — forty at once, and no per-minute total anywhere. Each
+sentence had been written from the mechanism it described and was true of that
+mechanism; the paragraph as a whole promised what neither sentence's mechanism
+delivered, and a reviewer reads the paragraph as one end-to-end contract and
+replays it. The fix that held was to rewrite the paragraph in the order the code
+decides (the ladder, the reserved bucket, the general bucket), in the code's own
+terms (capacity and refill, not a ceiling), naming every lifecycle state the
+mechanism distinguishes. When a review round lands on prose, review the whole
+paragraph against the whole mechanism — cookie lifecycle, address precedence,
+capacity, refill — not the sentence the finding quoted; the next finding is in the
+sentence beside it.
+
 ## Architecture
 
 ### Why the write gate exists
@@ -431,6 +513,20 @@ apply, so a snapshot there would make every apply fail with
 `ReadOnlySQLTransactionError` — it is the obvious next place someone would put it.
 The snapshot is fixed by the transaction's *first SQL statement*, not request entry.
 → 2026-08-16 (#48)
+
+### Building on the parent of the class the spike measured
+The #190 spike measured FastMCP's `OIDCProxy`; #192 built on its parent `OAuthProxy`,
+because `OIDCProxy` fetches the provider's discovery document synchronously at
+construction and a provider down at start would have failed the start (§5.6 safe
+failure). The parent verifies the *upstream access token*; the child's two small
+hooks (`_get_verification_token`, `_uses_alternate_verification`) are what make the
+**id_token** the verified token — the whole basis of the owner binding — and the
+first head silently lost both: every token the proxy issued was refused at the first
+MCP request. The full-link test caught it (`401 == 200` on initialize) before any
+review did. When you subclass one level up from the class the evidence was taken on,
+enumerate the overrides the measured class carried and re-provide each one
+deliberately, or the measured behaviour is gone without a line of the diff saying so.
+→ 2026-09-05 (#192)
 
 ### Deterministic lock ordering, not delta aggregation, fixes the deadlock
 #36 proposed aggregating per-target deltas in `update_order`; the fix was
@@ -516,3 +612,1328 @@ acting on a blank `status_updated_at`; the wrong order made the preview lie. Fou
 a review that read both trees; neither branch could test it until one landed. When
 two open branches touch one function, `git merge-tree --write-tree` first, and write
 the resolution down before either merges. → 2026-08-17 (#89 "MERGE NOTE")
+
+## The 401 contract (#202, rounds 1–2)
+
+The PR body for #189 said "`WWW-Authenticate` on every 401". Codex found two 401s
+without one — a wrong password, a wrong setup token — and the author narrowed the
+*claim* ("every 401 at the bearer boundary") rather than the *code*: those routes
+refuse a bearer, so a `Bearer` challenge there would name a credential the route
+cannot take, and the 401 was left challenge-less. Round 2 overruled it: RFC 9110
+§15.5.2 makes every 401 owe an applicable challenge, and "at the boundary" is not
+an exception the status code grants. The fix was the status — a rejected form
+credential is **403** (`CredentialRejectedError`), codes unchanged — after which
+the original claim is simply true. The lesson is the reviewer's own line: when a
+round lands twice in the same contract, the invariant is wrong, not the wording,
+and a claim that needs a qualifier to stay true is a claim the code should be
+made to satisfy instead. Same round, same shape: the T10 "no token in any log"
+proof had one harness still sending a live token in a URI, and a packaged log
+scan that would pass on empty output — a leakage invariant is only as wide as its
+*narrowest* harness, and a scan without a vacuity guard is a scan that can be
+deleted by a logging change nobody reviews.
+
+## Overriding the entry points, not the state machine (#212, round 1)
+
+The M6-7 head applied every plamotrack rule on a documented FastMCP extension
+point — the owner check in `exchange_authorization_code`, the id_token hooks, the
+lazy endpoint resolution in `authorize`, the callback and the refresh — and the
+suite drove each entry point green. Codex then drove the *neighbouring
+transitions* the overrides delegated: a revoked access token was accepted for an
+hour (FastMCP's `revoke_token` never touched the access mapping and posted our
+reference string upstream), two concurrent redemptions of one code or one refresh
+token both minted (FastMCP's get→mint→delete is not atomic), a refresh that validly
+omitted an id_token left a fresh grant refused (the old id_token, still the thing
+verified per request, expired), and a restart between the consent page and its
+approval sent the browser to the placeholder endpoint (FastMCP's consent submission
+reads the attribute the entry-point overrides had not reached). Four findings, one
+shape: an invariant applied where the author looked, delegated where the author
+did not. The fixes were one level up in each case — the binding as *grant state*
+carried in our own tokens, a per-handle lock around the whole redemption, a
+revocation that removes the grant record, endpoint *properties* no reader can miss
+— and the reply's sweep enumerated the state machine (issuance, refresh,
+verification, revocation, resolution) rather than the call sites. When a feature is
+built on a framework's hooks, list the framework's transitions the hooks do **not**
+cover and test each from the outside, as a client would; the hook you override is
+the part you can already see. Two smaller traps from the same round: the SDK's
+`TokenError` is a frozen dataclass, and a generator-based context manager
+re-raising it dies with `FrozenInstanceError` (a 500 where `invalid_grant` was
+meant) — a class-based `__aexit__` re-raises cleanly; and a secret bound as a SQL
+parameter is a secret in the engine's DEBUG log, which the log-grep test caught
+when the lock key was the authorization code itself.
+
+## The record, not the transitions (#212, round 2)
+
+Round 1's fix applied the plamotrack rules to the grant "as one state machine" —
+issuance, refresh, verification, revocation — and the reply's sweep enumerated those
+transitions. Round 2 landed in the same function again ("When rounds keep landing in
+one function", above): revocation deleted the grant record while a refresh that
+already held the provider's answer wrote it back through the store's upsert (the
+client's exchange under its per-token lock, the transparent refresh behind a request
+under FastMCP's in-process one — two locks, neither the revocation's); and the SDK's
+refresh persisted the provider's set *before* calling the hook that verified it, and
+its transparent refresh never called the hook at all, so a stranger's id_token on a
+refresh was refused at the token endpoint and yet the set it came with was the one
+every existing access token then read. Each transition had been made correct; what
+none of them owned was the **record** — the one row every transition reads and
+writes. The fix is a gate on that row's writes (`GrantRecords`: a write only from a
+declared transition, only against the binding the record itself holds, only with an
+identity that binding names) and one lock per grant that every transition takes,
+revocation included. The lesson, one level above round 1's: when a framework's
+transitions share a piece of state, enumerate the **writers of the state**, not the
+transitions, and put the invariant where the writes land — grep for the store's
+`put` and `delete`, and make every hit either pass through your gate or be provably
+under your lock. Two smaller things from the same round: the binding on the record
+also closed a sibling the sweep predicted — a binding renewed by a transparent
+refresh (which mints nothing) drifted from the digest the client's tokens carried,
+and the next exchange re-verified a token that had since expired, round 1's f3 by
+another road; and the SDK answers a failed transparent refresh from the object it
+had already loaded, so a refusal inside the refresh has to reach the request by a
+route other than the exception (`_Transition.outcome`), or the fallback answers 200.
+And one from the mutation pass, filed under "green for the wrong reason": the drift
+test passed on its mutant because the fake provider's *re-issued* id_token was
+byte-identical to the one issued at link time whenever both fell in the same second
+— identical claims, and RS256 is deterministic — so the test that meant to bring a
+*new* id_token brought the old one back and had nothing to drift on; it had gone
+red at the reviewed head only because the clock ticked between the link and the
+refresh. A fake that re-issues a credential must make it distinct on purpose (a
+`jti`), not by luck of the clock; the mutant, not the red run, is what noticed.
+
+## Located, not authorized; the record's identity, not the owner's (#212, round 3)
+
+Round 2 put the invariant on the grant record and gated its writes; round 3 landed
+one step to either side of that gate, and both findings were about *which question*
+a check answers rather than whether it runs. **Finding 9:** the SDK's revocation
+handler locates the presented token through the provider's `load_access_token` —
+the same method the bearer middleware calls — and on this proxy that method is the
+whole per-request authorization: the upstream set read, refreshed when near or past
+expiry, the new id_token verified against the provider's keys, the owner row
+consulted. Each of those is right for a *request*. For a *revocation* every one of
+them is a reason to fail to find a grant that is there: a provider whose key had
+rotated while its JWKS was unreachable made the refresh's verdict `unavailable`, the
+round-2 rule correctly left the verified grant standing, the lookup answered
+`None`, and RFC 7009's "unknown token → 200" covered a live grant. The fix is a
+second object the handler talks to (`RevocationLookup`), whose access-token lookup
+*locates* — the proxy's own signature, the client id and binding from the claims,
+the JTI mapping — and nothing else. A revocation reduces authority; it owes none of
+the verification a request owes, and it has to reach the grant precisely when the
+provider cannot be reached. When a framework reuses one provider method for two
+callers with opposite failure semantics ("refuse if unsure" versus "find it
+regardless"), give the second caller its own method rather than tuning the shared
+one. **Finding 10:** the gate verified a refresh's new id_token with the owner
+check — "does this name the owner?" — and a rebind in the window between a
+transition's owner check and its write made the answer yes for the *new* owner,
+so the record's binding moved from A to B and B was minted a successor on A's
+grant. The check the record needed was continuity: "does this name the identity
+that authorized *this* grant?" (OpenID Connect Core §12.2), which is the record's
+own `(iss, sub)`, not the owner row's. The two questions agree in every state but
+one, and that state lasts as long as a rebind. A check that consults mutable
+global state (the owner row) to validate a transition of a specific record is
+asking the wrong question whenever the two can be updated independently; compare
+with the record. Two smaller things: the tightened race witness — a namespace-wide
+count of advisory waiters is an observation a decoy can satisfy (the stg-5 lesson,
+re-learned on this branch); the test now asserts the `pg_blocking_pids` edge from
+the session holding *this grant's* lock to the one parked on it — and the
+revocation lookup's change made the transparent/access cell of that race a real
+witness for the first time (before, revocation's lookup itself entered the locked
+transparent refresh, so the cell was green for a reason other than the lock).
+
+## The helper that padded the form (#212, round 4)
+
+Three rounds of grant-lifecycle findings had been fixed and were holding; round 4
+landed on the client-authentication boundary, and every one of its three findings was
+a requirement no test had expressed. The clearest: the suite's `revoke()` helper sent
+`client_secret=""` on every call, because the SDK's revocation form model required the
+field — so every revocation test in the lifecycle suite passed against a server that
+answered `400 invalid_request` to the form a public client actually sends. **Fifty-nine
+mutants, all killed, cannot expose a requirement the tests never state**; a helper
+that adapts a request to a defect makes the defect invisible to every test that uses
+it. Two more of the same shape: the registration helper always asked for `none`, so
+the SDK's response advertising `client_secret_post` and a secret over a stored public
+client was never seen; and the CIMD fixture only ever declared `none`, so the
+`private_key_jwt` method a CIMD document may declare was authenticated at `/token`
+(FastMCP installs its authenticator there) and refused at `/revoke` (the plain SDK one
+there) without a test noticing. The rule that came out of it, per the reviewer's
+brief: **define the client contract before editing, then test it from the wire** —
+which client kinds and authentication methods are supported, the exact forms and
+headers for each, on every endpoint that authenticates a client, through the whole
+lifecycle including absent, wrong and correct credentials, with the persisted state
+and the bearer's later fate asserted, and with the requests built by hand rather than
+through the SDK's models or a convenience helper. The contract suite
+(`tests/test_mcp_oauth_clients.py`) is that; its first run against the reviewed head
+went red on 32 of 39 rows, on the three findings' own assertions, and green on the
+seven controls. Choosing the contract also simplified the code: registration is open,
+so a downstream client secret authenticates nothing that PKCE and the rotating
+refresh token do not — every dynamically registered client is public, the registration
+response says so, and the SDK authenticator's Basic branch (which wants the client id
+in the form beside the header) becomes unreachable rather than something to repair.
+The companion rule for the SDK seam: **a documented extension point says where your
+code runs, not what surrounds it** — list, per endpoint, who owns client
+authentication, the request form, the lookup, persistence and error handling, and
+test each boundary you do not own from outside. The SDK's registration handler
+returns the very object it hands to `register_client`; the SDK's token handler and
+revocation handler disagree on the error code for a failed client authentication
+(`invalid_client` versus `unauthorized_client`); its revocation form and its token
+forms disagree on whether `client_secret` is optional. None of that is visible from
+the extension point's signature.
+
+## Verifying the fixes is not examining the contract (#212, round 5)
+
+Five rounds in, the reviewer put it plainly: the briefs were very good at specifying
+how to verify the reported fixes — exact heads, the assertion each red row should fail
+on, the mutants to re-run, the author's assumptions to challenge — and gave almost no
+structure to what remained unexplored across the whole feature. A reviewer given that
+brief validates the author's test plan thoroughly and inherits its blind spots; a
+*fresh* reviewer session given the same brief inherits them just as well, because the
+thread carries the findings and not the tentative concerns or the paths nobody walked.
+Two findings had sat unexamined through four rounds: the discovery documents a client
+reads *before* it registers still advertised the SDK's shared-secret methods and no
+assertion algorithm, disagreeing with the endpoints the contract had just been written
+for; and an optional field inside a supported request — RFC 7009's hint, which the
+protocol says to ignore when unrecognised — was a two-value enum that turned a valid
+revocation into a 400. Neither needed the grant machinery; both were outside every
+brief's frame. Sixty-five mutants, all killed, could not have shown either: killing
+every listed mutant proves those tests detect those defects and says nothing about
+completeness. Three changes followed, in the template and the procedure: the reviewer
+has **two jobs in a fixed order** — write its own list of the feature's surfaces and
+each field's protocol-defined value space and probe the gap against the PR body first,
+verify the fixes second; the PR body carries a **coverage record** — checked, by what,
+at which head; unresolved; explicitly untested — updated every round as the continuity
+findings alone are not; and where practical **one reviewer session stays through a
+PR's corrective rounds**, a fresh one being opened deliberately for an independent
+pass with the record in front of it. The rule for the author is the mirror image: when
+the fix for a finding is a *contract* (round 4's), the sweep is the contract's whole
+surface — the documents that describe it as well as the endpoints that enforce it —
+and every field's value space is the protocol's, including the values nobody defined.
+
+## The seam has an owner per field, not per endpoint (#212, round 6)
+
+Round 5's process change worked as designed: given two jobs in order — the whole
+contract first, the fixes second — the reviewer wrote a ten-surface field inventory
+before reading the coverage record and found four pre-existing gaps in one pass, all
+at the SDK-to-application boundary and none in the grant machinery: the SDK's
+client-assertion validator never checked `nbf` and used the raw `jti` as a dictionary
+key; FastMCP's registration stored a record built from a few of the fields while the
+SDK returned the object it was handed, so three more fields disagreed after round 4
+had fixed one; the SDK's `dict(form)` kept the last of a repeated parameter and minted,
+revoked or opened a consent transaction on it; and a generated recovery URL named the
+child discovery alias this instance prunes. The pattern across the four: **fixing the
+one field a review names leaves its siblings inherited.** Round 4 made
+`token_endpoint_auth_method` truthful and left `response_types`, `grant_types`,
+`scope` and the display fields to FastMCP; round 3 gave revocation its own lookup and
+left its *form parsing* to the SDK; the assertion had an audience and a replay check
+and no claim contract. The rule that came out: when an adapter takes over a field at
+a seam, enumerate every field the same message carries and decide, per field, who
+owns its value space — the SDK, or you — and write the owner down (design §5.9 (k)'s
+audit is per endpoint *and* per field now). The second half of the lesson is about
+where the guard sits: a repeated parameter cannot be seen once a framework has
+parsed the form into a dict, so the request-decoding contract is an ASGI guard on the
+raw query and body in front of the handler (the registration-body guard's shape),
+not a check inside a Pydantic model; and a claim contract that must not spend the
+replay identifier runs before the validator that caches it, on the unverified
+payload — refuse-only, granting nothing, with the SDK's verification still behind it.
+
+## Admission, decoding, cardinality and the hand-off are one decision (#212, round 7)
+
+Round 6 gave every field at the SDK seam an owner and the reviewer's next pass found
+that two of the new owners had been written one axis at a time. The request-decoding
+guard decided *whether to run* by a case-sensitive `startswith` on the media type,
+so `Application/X-Www-Form-Urlencoded` — which the SDK parses, media-type names
+being case-insensitive — and a `multipart/form-data` body walked around the whole
+multiplicity contract; and the multiplicity rule itself was universal where the
+protocol has one exception (`resource`, RFC 8707 §2), so a client that sent the same
+resource twice, as the RFC allows, was refused — and the obvious repair, exempting
+the name and letting the SDK keep the last value, would have discarded the other
+requested target. The assertion admission had the same shape: it judged the claims
+and then let the SDK *select* the assertion beside a `client_secret` or a Basic
+header, or — on a public client — ignore it entirely, so "judged in full whatever its
+method" was true of a private client only. And the NumericDate check that refused a
+boolean converted the value to a float first, which overflowed on a 401-digit integer
+into a 500. The lesson: **a guard is not a filter on one axis.** Deciding what a
+field's value space is (round 6) is half of it; the other half is deciding, in the
+same place, *which requests the guard sees* (every representation of the body, or
+none), *what the field's cardinality is per the protocol that defines it* (one, or a
+set with its own collapse and refusal), *what the refusal's form is at each endpoint*
+(the SDK's redirect at `/authorize`, which the proxy has to render itself when the
+SDK's vocabulary lacks the code; a direct 400 at `/token`, where the SDK reads the
+field and judges nothing), and *what the SDK does with what is handed to it* (selects
+by the client's registered method, so the guard must refuse the method conflict the
+SDK will not). Two smaller lessons rode along. A mutant tuple is a program: moa-76's
+replacement left an unmatched `)` and the harness reported an import ERROR the PR body
+had counted as killed — compile the mutated source before counting, and keep the
+harness's refusal to count setup errors. And a test fixture that computes "now" at
+import is aged by however long the suite takes to reach it: CI's full run failed the
+`nbf`-in-the-future rows on `200 == 401` after 210 seconds while the focused run
+passed — date the fixture when the test runs.
+
+## Admitted once (#212, round 8)
+
+Round 7 gave each decision at the SDK seam an owner and the eighth round found that
+every one of them had been written as a *precheck*: a refuse-only check in front of a
+parser, a comparison or a lookup that then decided again. The resource comparison was
+borrowed from FastMCP's normaliser — which erased the fragment and the path's
+`;parameters` before comparing, so `…/mcp/#other` was this server — and the guard's
+hand-off at `/authorize` was re-judged by that same normaliser, so owning the
+predicate alone fixed `/token` and left `/authorize` opening a transaction. The
+repetition rule counted every name, where RFC 6749's prohibition (erratum 5708)
+covers the parameters it defines and says to ignore the rest. The authenticator read
+one `Authorization` occurrence, then returned to an SDK branch that read none — a
+public client with `Basic` beside its valid code succeeded, and an empty first
+occurrence hid a `Basic` second. And the client was looked up twice, once by the
+precheck and once by the SDK, so a document served with `no-store` could say
+`private_key_jwt` to the first and `none` to the second, which accepted an assertion
+under a key the document never published — neither complete record authorised the
+request; mixing them did. The reviewer named the invariant and it is the lesson: **a
+request is admitted once** — from its recognised fields and every credential
+occurrence, against one client snapshot, with the decision carried through whatever
+the SDK does next. When the fix is "check X before the SDK", ask what the SDK will
+read, compare or fetch *again* afterwards; if the answer is anything, the check is
+not the decision, and the repair is to own the decision — resolve once, dispatch on
+that, hand the SDK only what it cannot re-judge. Two smaller ones rode along: a
+borrowed comparison inherits the borrowed permissiveness (sharing FastMCP's helper
+proved consistency with FastMCP, not correctness against the RFC), and a range chosen
+from a spec's discussion should be described as the local policy it is (the
+NumericDate bound), not as the spec's contract.
+
+## Parsing is not validation (#212, round 9)
+
+The ninth round's two findings were the same shape on two boundaries. The resource
+comparison, owned in round 8, read its value through `urlsplit` and treated "it
+parsed and has a scheme" as "it is an absolute URI": a parser's job is to make sense
+of what it is given, so it admitted a tab in the authority, a carriage return in the
+path and a leading NUL (stripping some of them on the way), and the query the
+comparison ignores was never looked at, so an invalid percent-escape and an unescaped
+space passed too. FastMCP's inline key extraction did the same with the key set: it
+iterated whatever `keys` was and called `.get` on whatever each entry was, so a `keys`
+object, a string or a null entry was a 500. The rule: **a value's grammar is judged on
+the string, before any parser sees it, and a container's shape is judged before
+anything reads it** — RFC 3986's `absolute-URI` as a regular expression on the decoded
+value, RFC 7517's "an array of JWK objects" as an `isinstance` check per entry — and
+only then is the parsed or read result compared or used. A parser that strips what it
+cannot represent has already decided for you; a comparison that ignores a component
+has left that component unchecked. The corollary for borrowed helpers is the same as
+round 8's: a library's tolerance is its own, and the seam that owns the decision owns
+the grammar too.
+
+## The selected key keeps its authorization (#212, round 10)
+
+FastMCP's assertion validator selects the client's JWK by `kid`, converts it to a PEM,
+and verifies with the PEM — on the inline set and on the fetched one, where the PEMs
+are what it caches. A PEM is key material and nothing else: the JWK's `alg`, `use` and
+`key_ops` — the key's declared authorization for an operation (RFC 7517 §4.2–§4.4),
+which RFC 8725 §3.1 says a verifier must honour — are gone before joserfc sees the key,
+so a mathematically valid RS256 signature authenticated under a key published as
+`alg: RS512`, `use: enc` or `key_ops: ["sign"]`. joserfc enforces all three when given
+the JWK object. The lesson extends round 9's: a conversion is a parser in reverse — it
+keeps what its output format can represent and silently discards the rest — and the
+seam that owns a decision has to check what the library's *intermediate
+representation* dropped, not only what its parser admitted. The repair's shape is
+worth keeping: not a second verifier, not a refetch, not a metadata check bolted on
+before the SDK (which would have to reproduce the SDK's selection, cache and fallback
+to be judging the same key) — but the JWK itself handed to FastMCP's verifier in place
+of the PEM it selected, identified by that PEM (identical whatever metadata the JWK
+carries), so the SDK's own decode enforces the restriction on the key it chose, cache
+lifetime included. When the library's selection is right and its representation is
+lossy, replace the representation, not the selection.
+
+## The record the selection named (#212, round 11)
+
+Round 10 carried the selected JWK to the verifier by finding it through the PEM the
+SDK had selected — material as identity — and named the assumption in the brief: a set
+publishing one material twice is judged by its first entry. The eleventh round
+measured it: two `kid`s, one material, one copy `use: sig` and one `use: enc`, the
+assertion naming the `enc` copy — accepted when the `sig` copy came first, refused when
+it came second. The outcome followed array order, which RFC 7517 §5.1 says implies
+nothing, instead of the `kid`, which §4.5 says is how a key is selected. The lesson
+completes round 10's: when you replace a library's lossy representation, carry the
+record by **the identity the selection used**, not by the material the representation
+kept — the material is exactly the part two records can share. And the smaller one
+beside it: a usability predicate copied from a library has to be the library's whole
+predicate — "is an object" was round 9's, "can be imported" is the remote path's, and
+the gap between them denied the single-key fallback to an inline set the fetched set
+would have accepted.
+
+## The library had two rules (#212, round 12)
+
+Round 11 replaced the SDK's inline key extraction with the validator's own, "written
+out by the SDK's rule" — and copied the rule from the function it replaced. The SDK
+has two. Its inline extraction falls back to the only key whenever no record matched
+the assertion's `kid`, named or not; its remote selection falls back only when the
+assertion names no `kid` at all. The docs described the remote one, the code carried
+the inline one, and the twelfth round measured the gap: an assertion signed by the
+only published key but naming a `kid` the set does not hold was accepted inline and
+refused fetched — a refresh reaching the provider and a grant deleted under a header
+that names no published record. The lesson: when a library's function is rewritten in
+place, the rule to write out is the one the *contract* names, not the one the replaced
+function happened to carry; where the library holds the same decision in two places,
+say which one you copied and drive the difference between them. And a control that
+passes *through* the defect is not a control: round 11's own rows linked the client
+with an assertion naming `client-key` against sets that published the key under
+another name or none, and every link succeeded — by the fallback under test. Re-linked
+under a published name, they still pass; the row that showed the defect was the one
+whose `kid` named nothing published, which no earlier row had sent.
+
+## The cache is not the set (#212, round 13)
+
+Rounds 10, 11 and 12 each repaired one representation of the key selection: the PEM
+that lost the metadata, the material that two records could share, the rule copied from
+the wrong of the SDK's two functions. Round 13 found the representation under all three.
+The fetched path kept its records exactly as FastMCP keeps its PEM cache — by `kid`,
+with every unnamed record under one `_default` slot — and the single-key fallback
+counted slots: two usable records without a `kid` were one key fetched, and the fallback
+returned the last of them while the inline set, which counts records, refused the same
+set as ambiguous. Faithfully mirroring the library's cache reproduced the library's
+loss. The lesson is the one the three earlier rounds circled: when a library's
+representation is lossy, the invariant has to be stated over the thing the
+representation is *of* — here the usable records of the set — in one place, before
+either representation is consulted, with the library's own answer behind it able to
+refuse but never to admit. And the procedure's rule 6 applies to the author as much as
+the reviewer: four rounds in one function is the signal to stop repairing
+representations and write the rule they were all approximating.
+
+## The consumer below the rule (#212, round 14)
+
+Round 13 stated the selection rule over the usable records of the set, and the fetched
+path derived those records from the fetch — then handed FastMCP the raw array it had
+just filtered. The SDK's own preprocessing, a skip loop the inline path never runs,
+put each unusable record's `kid` into a set on its way past it, and an unusable record
+whose `kid` was a list was unhashable: the fetched path refused a set the inline path
+accepted, with the valid signer standing beside the malformed record on both. Five
+rounds in one seam, and the last representation was the library's *input*, below the
+rule the fourth round had put above its cache. The lesson completes round 13's: stating
+the invariant over records is necessary and not sufficient — every consumer of the set,
+the library's included, has to be given those records, or the library's own reading of
+the raw data is one more representation the rule does not govern. The check is
+mechanical: for each thing the rule is stated over, list every consumer, and confirm
+each is fed the governed form and not the source it was derived from.
+
+## A field name is not a safe audit representation
+
+PR #208's second security review found two versions of this mistake. The XFF
+resolver called malformed text "untrusted" after already assigning it as the
+resolved address. OAuth audit details called raw client/subject values identifiers,
+and a browser callback called its raw `error` parameter a category. CIMD URLs can
+carry credentials, and a provider's error field can be any string or JSON value.
+The same sweep reproduced a raw provider-error log beside the audit leaks.
+
+Validate before assignment, and stop at malformed forwarding data rather than
+skipping it to trust text farther left. For external audit references, fingerprint
+the entire opaque identifier; stripping URL queries still leaves path/userinfo
+that can contain credentials. Preserve correlation without changing the identifiers
+used by the protocol. Select callback categories from fixed values and retain only
+safe token-exchange diagnostics. A generic substring redactor cannot establish
+these representation contracts. The regressions first reached their data assertions
+at the reviewed head (70 red / 27 controls); single-site mutations then checked each
+changed emitter and the parser boundaries separately.
+
+## A changed fixture can erase the contrasting value
+
+The full mutation replay during #208 found `oidc-19` surviving: a redirect built
+from the request passed the test intended to require `PUBLIC_BASE_URL`. #212 had
+changed the shared OIDC fixture's public URL to `http://localhost`; the older test
+already sent `Host: localhost`. Its two supposedly different inputs had become
+equal, so both implementations returned the same location.
+
+Use an allowed but distinct host and assert that the witness differs from the
+configured value. The neighbouring login-start URI check owed the same distinction;
+success and refusal callback redirects owed both response branches. The corrected
+witnesses detected each request-derived mutation without a production redirect
+change. A shared-fixture edit owes a sweep of tests whose contrast depends on it,
+not just a green suite under its new default.
+
+## The classification you wrote is a promise the same branch keeps (#214, PR #219 round 1)
+
+The #214 branch defined `GRANT_COLLECTIONS` — the four collections of
+`mcp_oauth_state` a rebind purges — and the comment on one of them said why it
+belonged: an unexchanged authorization code "already carries the provider's tokens
+for whoever signed in". The purge then read the grant records for what to revoke at
+the provider and deleted the codes unread. Cursor's round wrote its own contract of
+the feature before reading the author's plan, put "the code's `idp_tokens` on the
+RFC 7009 half" on its list, found it absent from the coverage record, and probed it
+with a one-line extension of the author's own test: the code's refresh token was
+not in `fake.revoked`. P3 by exposure (five minutes, host-side, unusable through the
+proxy); the #214 shape by class.
+
+The sweep in `AGENTS.md` is about paths a *rule* governs. This is the same discipline
+one level down: a classification the branch itself introduces — "these four are a
+grant's because they hold a credential" — names the paths that owe an answer to
+every consequence of that classification, and the PR body's coverage record is where
+the author would have noticed the missing one, if it had been written per member of
+the set rather than per mechanism. Two things to do with a set you define: enumerate
+its members in the coverage record one row each, and mutate membership one member at
+a time (rbp-14/15/16 already did; they proved the *delete*, not the *read*). The
+reviewer also named the remedy's wrong half — `_upstream_credential` on the code
+record's top level, where the tokens live under `idp_tokens` — which is the case for
+reading a library's record shape before writing to it, not from memory of a sibling's.
+
+## Four rounds in one function (#232, PR #236)
+
+The order list's `recent` sort reads one clock — received, else shipped, else the
+day the order was placed — and the placement date is the only member of the three
+that is not an instant. Codex found a defect in how that date became an instant in
+three consecutive rounds, each fix right and each leaving the next seam: round 1,
+`order_date::timestamptz` read the SQL *session's* zone, not the instance's; round
+2, `timezone(instance_zone, …)` handed the setting's name to Postgres, whose zone
+files lack 97 of the names the settings accept (`Australia/Queensland`, an IANA
+link) and take CET, EET, MET and WET as fixed offsets; round 3, with the clock
+computed in Python, a zone-local midnight on a transition day compared *unequal* to
+a UTC shipment at the same instant (PEP 495 makes a `fold`-sensitive datetime
+unequal to any other zone's), so the tuple key never reached its date tie-break.
+Every fix had a test that went red on the reported case and a mutant that died;
+none of them was the invariant.
+
+`testing-and-review.md` says: if rounds keep landing in the same function, stop
+patching it and look for the invariant one level up. Here it was two sentences the
+branch could have written on round 1. *The zone is an instance setting the
+application validates (rule 11), so the value it defines is computed in the
+application's zone database and nowhere else* — the SQL session, Postgres's zone
+files and the settings' `zoneinfo` are three databases, and any seam between two of
+them will find a name or a rule they disagree on. And *a sort key over instants
+compares instants in one representation* — an exact `timedelta` from an epoch, not
+aware datetimes from two zones, whose equality is a library policy rather than a
+fact about time. What the rounds cost was not the fixes; it was that each round's
+mutants proved the fix and said nothing about the seam beside it, because a mutant
+kills what a test asserts, and the author's tests asserted the reported case. The
+reviewer's coverage list — every accepted zone name, executed; a transition day;
+an exactly tied instant — is what found each seam, which is the argument for
+writing that list *before* the first fix, per member of the value space the setting
+admits, and for reading a "second round in the same place" as a request to name the
+rule rather than to patch the case.
+
+## The demo data understated what the table needs (#258)
+
+#258's fold lines arrived in the issue already measured: Orders needs 953 px, Kits
+732, Retailers 706 — on the screenshot spec's demo collection, the same data the
+audit, the mockups and #257's width table were drawn from. The build folded at those
+lines, swept every box width on that data, found nothing over, and looked done.
+
+The spec that was meant to hold it seeded rows of its own, because CI's database is
+empty, and its first run at 1280 px was red: the *unfolded* table needed 1036 px in a
+976 px box. Nothing exotic was in the seed. The demo has no order that was both
+shipped and received — every received order in it was entered as received — so its
+Received column says a date, where an order that went through the pipeline says
+"27/08/2026 · 9 d". That and a seventeen-character order number are 87 px. Every
+figure in the issue was short by about that much, the lines with them, and with the
+demo's lines an iPad mini in landscape (a 1003 px box) would have shipped with the
+edit control clipped — the defect the milestone exists to remove — under a green
+sweep. The same 87 px means `main`'s desktop has been clipping that control from
+1280 to about 1345 px all along; the audit measured 1280 on the demo and called it
+fine.
+
+A demo collection is drawn to look good in a screenshot: short names, tidy numbers,
+no row in an awkward state. That makes it the wrong data to *size* anything by, and
+the wrong data to declare a width "fine" on. What would have found it on day one is
+the question the value-axis rule already asks, put to a layout: for each column, what
+is the widest ordinary thing a row can say here, and which lifecycle state says it?
+A measurement is a test result, and it inherits the blind spots of the rows it was
+taken on; when a number arrives in an issue, the rows it was measured on are part of
+the number.
+
+Two smaller things the same spec taught on the way. Its run tag was base 36 and sat
+inside the retailer's name and the order number — the two cells that set their
+columns' minimums — so the table's width moved 25 px with the letters the clock
+dealt, and a fold line passed or failed by the minute; digits are tabular in a table
+cell and the same width every run. And nine sampled viewports are nine points: the
+second Orders fold overflowed from 866 to 927 px for an afternoon and no sampled
+width was in the band. The spec now gives the box every width
+(`testing-and-review.md` → "Proving a list fits its box").
+
+## A duplicate key is invisible after the parse (#258)
+
+Adding the strings for a folded Orders row, the branch gave `orders` a `shippedOn`
+("Shipped {{date}}") — and `orders` already had a `shippedOn`, the order form's
+"Shipped on" label, four hundred lines up. `JSON.parse` keeps the last of two keys
+and says nothing. So the catalogue was well-formed, every validator passed, the
+compile-time key check passed (the key exists), the unit suite was green, and the
+order dialog's date field was labelled "Shipped {{date}}". The e2e suite would have
+caught it only where a test finds that field by its label; what did catch it was the
+screenshot spec, which happened to — a docs tool, run for another reason.
+
+Every check the catalogue has runs over the parsed object, and the defect does not
+survive parsing: it exists only in the file's text. `duplicateKeys` in
+`src/i18n/validate.ts` reads the text, with its negative control beside it. The
+general shape: when a format's parser silently resolves an ambiguity — duplicate JSON
+keys, duplicate YAML keys, a later `.env` line, two CSS declarations — a validator
+downstream of the parser cannot see what was resolved. Ask of any "the file is
+validated" claim *which representation* is validated, and whether the mistake you are
+worried about is still there by then.
+
+## One capture in ninety-six was not noise (#258)
+
+The "1280 px and wider did not move" comparison came back the way #265's had: a
+handful of captures differing from `main` by a dozen pixels at a channel delta of
+one — what `main` shows against itself. One did not fit: 218 pixels at a delta of 200,
+a 28 × 28 box on the Orders page, in one of that state's four captures. It was the
+focus ring on the last chevron the capture script had clicked: drawn by `main`,
+missing from the branch. One in four reads as timing, and the run could have been
+called clean.
+
+It was a real defect, reached by an accident of the tool. Playwright's full-page
+capture makes the viewport **1 × 1** for an instant to measure the page. On the branch
+that is the phone shell, so the table became card rows and back; the focused chevron
+was destroyed and focus fell to `<body>`. `main` has no cards, so there the same
+flicker re-dresses the page and nothing is lost. The user-facing version is an iPad
+mini turned with a keyboard attached, or a window dragged across 768 px: the control
+under the keyboard is swapped away and the next Tab starts from the top of the page.
+#258 had already handled the case with a dialog open (the review of #265 had named
+it); the same defect with no dialog had no test and no owner.
+
+Two things to keep. **A difference outside the noise floor is a finding until it is
+explained, whatever its odds** — the recipe says so, and "one in four" is the shape of
+a race, not of an artifact. And the explanation took four attempts, three of them
+reasoned and wrong: that a fold engaging blurred the control (plain resizes across
+every line kept focus); that the size container did (it happened without one); that a
+microtask after the `focusout` would find focus already restored (it runs *before*
+the layout effect, inside React's commit). Each was cheap to test and each test took
+a minute. The order of focus events around a DOM removal is not something to derive —
+`Modal`'s comment had it measured one way for one Chromium, and this session measured
+it the other way for the next. Log it, then write the rule.
+
+
+## The rule was one sentence and it was fixed by instance (#258, PR #266 round 1)
+
+#265's review had named a class — a dialog open across a rotation loses the control
+that opened it — and #258 answered the class as it understood it: rows carry a focus
+key, `Modal` reads it at close, and a second reader was added when a screenshot
+showed the same loss with no dialog. Each addition came from an instance somebody
+met. The Status filter got the sheet opener's key because the rotation test opened
+the sheet from it; the Series, Retailer and Sort selects beside it got nothing, and
+nobody focused them. Access tokens swapped its table for cards in CSS, by its box,
+and the comment on it said why that needed no focus treatment: "Revoke confirms
+through the browser's own dialog, so no `Modal` has a node here to hand focus back
+to" — an argument about the reader that existed, not about the rule.
+
+Codex's round found those five (findings 3 and 4) and said what they were: *every
+representation change must account for the focused control, including selectors and
+CSS-only swaps — extend that inventory rather than adjust the timing again.* The
+inventory, taken literally — focus every control on the page, change the page under
+it each way it can change, ask whether the keyboard is on `<body>` — found **211**
+losses at the reviewed head. Five were the review's. The rest were the pager's pages,
+a retailer's link, Export CSV, the Orders tracking link (hidden by a fold with no
+shell change at all), and the entire navigation: #257 draws it as three sets of nodes,
+it had been merged after a GO, and neither the author nor the reviewer of either PR
+had focused a nav link and turned the tablet.
+
+What to keep. **When a finding names a class, the first act is an enumeration nobody
+chose the members of.** A list written from memory is the instances already thought
+of, which is the list the defect is not on. Here the DOM could be asked; elsewhere it
+is the route registry, the spec registry, a grep — whatever produces members without
+an author. The first version of the probe reported 27 losses, because it tagged the
+controls once and a shell change replaces the nodes, so everything remounted was
+skipped: **count what the enumeration tried, not only what it found**, and a probe
+that finds *less* than the review did is broken, not reassuring. And a comment that
+explains why a rule does not apply here is a claim like any other — the tokens
+comment was checkable in thirty seconds and nobody checked it, including the agent
+that wrote it.
+
+## The widest ordinary row under the default settings (#258, PR #266 round 1)
+
+"The demo data understated what the table needs" is two entries up: the fix was to
+seed ordinary rows and sweep every box width, and the fold lines were set from that.
+The rows were ordinary; the *settings* were the defaults. `date_style` and
+`formatting_locale` are on the Settings page (rule 11), `full` writes the Received
+cell "Thursday, 27 August 2026 · 9 d", and the cell was `nowrap` — so the owner who
+picks the long style gets the Orders table 121 px past its box at 1280 px, the
+defect the milestone exists to remove, at every width. A USPS tracking number (22
+digits against Japan Post's 13) did the same at 1366 px with the defaults.
+
+It was on the PR's own "where I'd push" list — *"the fold lines are one seed under
+one formatting locale… I did not vary any of them"* — which is the uncomfortable
+part. Naming an untested axis in the brief is honest and it is not a test: the
+reviewer spent the round measuring what the author had already identified as
+unmeasured. And Home had paid for exactly this in #237 (P3-2, the mail cards under
+full dates; `settings.spec.ts` still carries the test): the question existed in the
+repo, attached to a different page.
+
+What to keep. **A value space has a settings axis** wherever the rendered width,
+order or text of a field depends on an instance setting — dates, numbers, money,
+language. **If the brief says "I did not vary X", vary X before sending it**, or say
+why it cannot be done; the list is for what is genuinely beyond the author's reach (a
+real device, a screen reader). And the remedy that fits a table is per value, not
+per column: `nowrap` everywhere or `overflow-wrap: anywhere` everywhere both change
+the rows that were fine, because a table squeezes every column that has give. The
+spec written for the fix found a sibling on its first run — a revoked token's date,
+the one `nowrap` date on the Access tokens table — which is the usual sign that the
+axis, not the instance, was what had been missing.
+
+## The count stood in for the width (#258, PR #266 round 2)
+
+Round 1's answer to "the Orders table overflows under long references" was a rule by
+character count: an order or tracking number whose longest unbreakable run was longer
+than the one the fold lines were measured with (eight characters between hyphens,
+thirteen for a tracking number) could break anywhere. Round 2 typed thirteen `W`s.
+They are 183 px where thirteen digits are 115, the rule called them ordinary, and the
+table was 33 px past its box at 1366 px — with the edit control off the edge, the
+milestone's own defect. The count had been chosen because it was easy to read off a
+string; the constraint is in pixels, and the lines had been *measured* in pixels.
+
+Measuring in pixels took four attempts, each a lesson of its own. A hidden copy of
+the text laid out at `min-content` inside the cell counts as scrollable overflow,
+and put the page 80 px past the screen. Moved inside the fold's hidden copy, it has
+no width to measure; a `ResizeObserver` re-measures it when the fold shows it, but
+the every-width sweep sets 667 widths in one synchronous loop and never gives the
+observer a frame. As DOM text, the copy is what `getByText` returns — it prefers the
+deepest match — so every "on screen exactly once" assertion went to 0. And a canvas's
+`measureText` cannot be told the table's `font-variant-numeric: tabular-nums`, so it
+measures digits 10 px narrower than the cell draws them. What holds: a ruler the
+table renders once — out of flow, no size, clipped, at the table's font and figures —
+that each reference reaches through a portal, holding its text as a pseudo-element's
+`content: attr(…)`, which is neither text nor overflow nor inside a fold.
+
+On the way, a fact about Chromium worth keeping: `overflow-wrap: anywhere` changes the
+*shaping* of the text, not only where it may break. Kerning stops at a break
+opportunity and `anywhere` puts one after every character, so "EJ482113905JP" is
+105 px as a plain word and 110 px under the property — and, given a 108 px cell,
+wrapped its last letter with nothing squeezed at all. "Apply the wrap class to every
+reference and let the floor hold the minimum" fails on that alone.
+
+What to keep. **Measure in the unit the constraint is in, and in the place the
+constraint applies** — a table cell's width is decided by the browser, at that cell's
+font, and no proxy (a count, a canvas, a copy elsewhere) agreed with it to the pixel.
+**A hidden copy of text has four ways to leak** — into overflow, into a test's text
+query, into a screen reader, into a fold that hides it — and the way to have none of
+them is to not put text in the DOM. And **a review's second round finds the proxy the
+first round's fix leaned on**; the brief's "where I'd push" said "`Reference` counts
+characters, and the lines were measured in pixels" before the reviewer did, which is
+the pattern the round-1 lesson above already names: an axis the author can name is
+one the author can vary.
+
+## The browser's font size is an axis (#258, PR #266 round 2)
+
+Finding 6: a phone's order card reserved 8rem for the retailer's name so that a total
+in three currencies could not squeeze it out (round 1's fix). The reservation is in
+rem; the card's width is the phone's. With Chromium's default font size at 32 px —
+a preference in every browser's settings, and the accessibility case the milestone's
+"the lines are in rem, so they move with it" had waved at — 8rem is 256 px in a 94 px
+column, and `justify-end` put the start of the name 57 px off the left of the screen.
+The document was still exactly 320 px wide, so every bounds check passed.
+
+`min(8rem, 100%)` fixes it, and the test launches a Chromium of its own with
+`--blink-settings=defaultFontSize=32` (a launch flag, not a page setting) and asserts
+the root font size before anything else. Run across the other cards it found the
+stock stepper — three 44 px targets in rem, 272 px at that size — past a 320 px card
+whatever its row does; it wraps to its own line now, which is enough from 390 px, and
+the 320 px case is declined and recorded. Run across the pages it found the shell:
+the page head's action and the tab bar are past 320 px at that font size, which is
+#257's layout and is filed on its own.
+
+What to keep: **"it is in rem" is not evidence of fit.** Rem scales with a preference
+the layout does not control; every reservation, floor and touch size in rem has a
+font size at which it is wider than the box it sits in, and the phone's 320 px is
+where that happens first. Test one such size, and test it with the identifying text's
+own edges, not the document's.
+
+## The count was not a target (#258, PR #266 round 3)
+
+Round 2 declined the stock stepper at 320 px under a 32 px browser font: "three 44 px
+targets in rem, 272 px, in a row of 204 whatever the row does." Codex reproduced it and
+refused the arithmetic: there are two targets, the middle is a count, and a browser-only
+control with the squares held at 44 px put Add inside the card — and clicking it changed
+the stock. The decline was a miscount, and it was written in the code's own comment, in
+the test's exemption and in the coverage record: three places saying the same wrong
+number with the same confidence, each quoting the last.
+
+The fix was the class, not the instance: a target's preferred size in rem, its floor in
+px (a finger does not scale with the type), and no `shrink-0` on a control that stands
+in a card's row; and the identifying column given a share (`flex-[1_1_8rem]`) to give way
+*from*, so each item yields in proportion and the controls reach their floors first.
+Added to the test as a second point on the axis, 40 px found the pencil and the toggle
+doing to the retailer's name what the stepper had done to its card — instances a fix
+for the stepper alone would have left, and that round 2's containment check had passed
+because containment is not room.
+
+What to keep: **before declining a layout as impossible, count what is rigid and what is
+not, and try the arithmetic in the browser.** A positive control with the floors applied
+by hand takes a minute and is the difference between "cannot fit" and "did not try". And
+a decline is re-derived from the code, not repeated from a comment.
+
+## Equivalent for the seeded values (#258, PR #266 round 3)
+
+Four of round 2's fifteen mutants survived and the PR called them equivalent — the sizer
+as DOM text, the ruler without `tabular-nums`, the ruler unclipped, no re-measure on
+font arrival — each with an argument for why no value could reach the difference. The
+reviewer reached three of them in one round: twenty `1`s (114 px proportional, 182 px
+tabular — under the budget one way, over it the other, and 1091 of 1060 px at 1366);
+two hundred `W`s (a sizer wider than any box, and 3100 px of document from an unclipped
+ruler); and a held font (thirteen `8`s, 112.7 px in the fallback and 118.0 in Inter,
+with the budget between them). The fourth, W6, it could not reach either, and said so.
+
+What to keep: **"equivalent" is a claim about the mutant; "equivalent for the seeded
+values" is a claim about the seed, and the seed is the author's.** A survivor's argument
+usually names the value that would kill it ("a reference would have to be wider than the
+box") — that value is the next seed. The three are in the suite now, and the tuples
+kill.
+
+## Safari does not focus a button on click (#259)
+
+`CatalogItemPicker` closes its result list when focus leaves the picker — #104's
+rule, read off `focusout`'s `relatedTarget`, written to stop a blur timer unmounting
+a result under a keyboard user mid-Tab. It assumed what Chromium does: a click on a
+button moves focus to the button, so `relatedTarget` names it and the list stays.
+Safari and Playwright's WebKit do not focus a button on click. The mousedown on a
+result took focus from the search field to nowhere, the rule read "left the picker",
+React unmounted the list, and the click landed on whatever was under the pointer by
+then. No catalog item could be picked by tap or mouse in the engine every iPhone runs
+— since #104, and nothing had run the pointer path under WebKit; the keyboard path
+had a test, and passed.
+
+Found by running the new phone spec under a throwaway WebKit config: at 320 px the
+*Change* chip never appeared, and the recorded-order test's *Record order* left the
+dialog open on a validation error. The remedy is the standard one — `preventDefault`
+on the list's mousedown keeps the input's focus through the press — and Enter and
+Space fire no mousedown.
+
+What to keep: **a rule written on focus events is a rule about one engine until the
+other has run it.** Where a control's behaviour is decided from where focus went, run
+the pointer path *and* the keyboard path under WebKit before calling it done; the
+procedure has the config.
+
+## The engine drops focus later than the mutation (#259)
+
+`Modal`'s `MutationObserver` re-focuses the dialog when the focused submit button is
+disabled mid-request — "disabling the focused element drops focus to `<body>`,
+measured in Chromium." It is measured in Chromium: there the drop is synchronous with
+the attribute, so the observer's microtask finds `activeElement === body` and acts.
+WebKit drops it *later*. The observer looked, found focus still on the button, did
+nothing; the engine then moved focus to `<body>` with no one watching, and the
+keyboard spec's submit test — never run under WebKit — went red the first time it was.
+
+The fix acts on what the mutation *means* rather than on what the engine has done
+about it yet — a focused control that is disabled or hidden now — and adds a
+`focusout`-to-nowhere check a microtask later for any cause. The first version of that
+check took the keyboard to the dialog outright, and Chromium's rotation test went red
+within the same run: on a turn across the 768 px line the phone's Delete twin is
+hidden, its `focusout` fires, and the fallback had the keyboard before
+`useFocusAcrossShells` could hand it to the desktop's twin. It asks the control's focus
+key first now and takes the keyboard only when nothing carries one.
+
+What to keep: **"measured in Chromium" is a measurement of Chromium**, and a comment
+that says so is naming its own limit. Where the rule is about an engine's timing,
+measure the other engine. And a new fallback that moves focus is a second reader of
+the focus rule (§13.7): it yields to the key, or it fights the machinery that exists.
+
+## "Inside" was the wrong question, and "untested" was the finding (#259, PR #272 round 1)
+
+Two P3s from one review, both already written down by the author as something else.
+The brief's own "where I'd push" said of the date exemption: Safari skips *Add line*
+and lands on the first line's type select — "inside because an order always has a
+line". That sentence describes a defect and files it as a proof: a keyboard user was
+passed over a control, and every assertion in the keyboard spec asked only whether
+focus was in the dialog. The checklist has had the rule since #51 — assert the named
+control, not containment — and the author applied it to the twin, the opener and the
+picker, and not to the stop after a date. And the PR's coverage record listed "the
+withdrawal question's buttons at 320 px under a large font" as explicitly untested;
+the row above those buttons was 16 px past a 390 px sheet at 32 px.
+
+What to keep: **when a sentence of yours explains why a skipped control is acceptable,
+that sentence is the test to write** — name the stop and see whether you still believe
+it. And an "explicitly untested" row is a list of the next things to seed, cheapest
+first: an applied upgrade is one API call in a `beforeAll`.
+
+## The fix for the last finding was the next finding, twice (#259, PR #272 round 2)
+
+Round 2's two real findings were both made by round 1's commit. The landing check
+after a date input cleaned itself up with `setTimeout(…, 0)` and a comment saying "for
+the length of this task" — a claim about the event loop that nothing tested; under a
+burst of undelayed Tabs several checks were pending at once, each with its own next
+stop, and they bounced focus between two fields until the page stalled. And
+*Withdraw…*'s word-breaking had been removed as "untested — no tested point needs it
+in English": the point existed (40 px, 320 px), and the test had missed it because the
+page *behind* the sheet, wider than a phone at that font, widened the layout viewport
+the sheet was measured against.
+
+What to keep: **a lifetime is part of the fix — state it as an invariant ("consumed by
+its own departure") and test the input that would violate it, not the one that
+motivated it.** Removing code because no test reaches it is only honest after asking
+whether the *test* can reach the case: assert the screen's width before measuring
+against it, and take what is not under test out of the layout. And when a second round
+lands in one function, write down that a third means restructuring.
+
+## The answer changed what was measured (#260)
+
+The stepper's second arrangement (#271) asks one question — do the count and two
+fingers fit the row? — and the first version answered it from the count *as drawn*,
+with a comment saying the question "cannot oscillate" because the row's width does not
+depend on the answer. The other side of the comparison did: stacked, the count may
+wrap, a wrapped ten-digit count is narrower than the line needed, so it fitted the
+line, was drawn on it at its full width, and did not fit again — every frame, through
+the `ResizeObserver` that was there to keep the answer current. 1,234 never showed it;
+the ten-digit count the font-size test seeded beside it did, as a count "cut" at one
+instant and fine the next.
+
+What to keep: **when a measurement decides a layout, neither side of the comparison
+may be something that layout changes** — measure a copy the decision cannot reach (a
+ruler: hidden, never wrapped, clipped to nothing so it cannot widen the page, and
+*beside* the thing it copies, not inside it, or the count's text reads twice). A claim
+of "cannot oscillate" is a claim about both operands. And the value axis again: the
+most the column can store is a value, and it was the one that found this.
+
+## The state that was not on the page (#260)
+
+`pages.spec.ts` asks every page of the phone shell for its width under a 32 and a
+40 px browser font, and Kits passed for an hour and then failed: the spec's own seed
+had taken the list past one page, and a pager's pages are a finger each *in rem* —
+550 px of a 320 px screen at 40 px. No font-size test had ever had a pager on the
+page, because whether a list has one is a state of the data, not of the code, and the
+from-empty database every suite starts from has none.
+
+What to keep: **a page's controls are decided by its data — a pager, an empty state, a
+banner, a second currency — and a fit test owes the states that add controls, put
+there on purpose.** The pager's own test seeds eighty-one kits; the font axis went
+there, not into the test that happened to trip over it.
+
+## The effect ran before the thing it answers for (#260, PR #274 round 1)
+
+`useFocusAcrossShells` gives the keyboard back after a shell change from a layout
+effect in `Layout`, on the premise — written in its comment, measured on the list
+pages — that "by the time it runs the pages below have committed their side of the
+swap". Settings → Data management removes its import form below 768 px; with the
+stand-in in place the hand-over worked, and failed one turn in three. Every
+`useShell()` caller subscribes *its own* `matchMedia` lists; the browser reports each
+list's change in turn, with a microtask checkpoint between them; React commits each
+subscriber's re-render at that checkpoint. So `Layout` can commit first, run its effect
+over a control that is still there, and the section removes it a commit later with
+nobody listening. On the list pages the order happens to favour the premise.
+
+What to keep: **"one event" in the browser is not "one commit" in React when the
+subscribers hold separate subscriptions** — a rule that depends on a parent's effect
+seeing its children's DOM is a rule about commit order, and needs the order forced or
+the dependence removed (here: the effect looks again on the next frame, by when every
+subscriber has committed). The first remedy answered the removal from the removed
+control's `focusout` and was green in Chromium twenty-four turns running — **and lost
+one WebKit run in four, because WebKit does not reliably fire that event for a node
+taken out of the page**; the engine-independent remedy was also the smaller one. And
+**a race has no single red, and its rate moves with the machine**: with the fix taken
+out the test was green twice and then red six times running. Repeat the turn (sixteen
+here), run the other engine, and say the measured rate in the test.
+
+## The spill landed in the padding (#260, PR #274 round 1)
+
+With the sheet's `break-words` taken out, the order form's checkbox row was 260 px in a
+240 px form under a 40 px font — and every check passed: no control was off the screen,
+no scroller moved (the 20 px landed inside the sheet's own 40 px of padding), the
+document was 320 px wide. The mutant survived until the fit check asked each block
+whether it holds what it says. It is the third time in this milestone the same sentence
+was the finding — *inside the screen is not inside its card* (#272), *its box* (#274's
+first pass), *its form* (here).
+
+What to keep: a fit check has three questions, and the third is the one that gets left
+out — is it on the screen, is it inside the box it belongs to, **does each box hold its
+own content** (`scrollWidth` against `clientWidth` on every block that does not clip;
+name the deliberate exceptions, like a target's negative margin). And "fits" is not
+"reads": a label can fit by breaking at every letter, a name by being squeezed to
+nothing — ask for the ink inside the control, the lines against the words, and the room.
+
+## It was only a race from where the test stood (#260, PR #274 round 2)
+
+Round 1 called the lost hand-over on Settings → Data management a race — one turn in
+three — and answered its flakiness with repetition: sixteen fresh turns. The reviewer
+measured what that was worth: with the fix out, red in six runs of six in Chromium and
+two of six in WebKit. The cause was already written down (each `useShell()` caller
+commits on its own, in the order the browser reports their media queries), and the
+order is not random: it is the order the callers *subscribed* in. Arriving by URL, the
+shell and the section mount in one commit and the order is the engine's to choose.
+Arriving by the app's own link — how a person gets there — the section subscribes
+after `Layout`, the adverse order is certain, and the unfixed code lost the keyboard
+eight times in eight in both engines.
+
+What to keep: **before repeating a flaky reproduction, ask what decides the order and
+whether the test can set it.** Here it was mount order, and the way in that fixes it
+was the ordinary one; the test had been using the unusual one because `goto` is what
+tests do. "One in three" described the test's entrance, not the defect — and would
+have been the number in the release notes.
+
+## A detector is code (#260, PR #274 round 2)
+
+`said past its own box` was written to kill one surviving mutant, and its exemptions
+were shaped by what it tripped over that afternoon: anything that clips, anything
+inline, any block holding a button named Close. The reviewer built three
+counterexamples in a minute — text silently cut by `overflow: hidden`, a block excused
+for holding *a* Close, a line above its own box — and the helper passed all three
+while the PR's record said "every block holds what it says".
+
+What to keep: **a check added to a suite is a claim with a scope, and both need
+writing down and testing** — inject the defect it exists for and watch it go red, then
+inject what it must allow (an ellipsis is a truncation the reader can see; the head's
+Close overhangs by its margin and no more) and watch it stay green. Tie an exemption
+to the one element and the measured amount, never to a selector that happens to match
+it today. And when tightening it produced twenty false reds (a popup taller than its
+wrapper by design), the answer was to narrow the question and say so, not to widen the
+exemption again.
+
+## "Does not close #260" closed #260 (#274)
+
+PR #274 was the first of two PRs for #260 and its body opened by saying so: "…so this
+does not close #260." When it merged, GitHub closed #260. A closing keyword is matched
+as a pattern — `close`, `closes`, `closed`, `fix…`, `resolve…` followed by an issue
+reference — anywhere in a PR body or a commit message on the default branch, and the
+words around it are not parsed: "does not close #260", "will later close #260" and
+"closes #260" are the same instruction.
+
+What to keep: **never put a closing verb next to an issue you mean to keep open** —
+write "Part of #260", "#260 stays open", "the second PR finishes #260". And check the
+issues' states after every merge, the ones meant to stay open as well as the ones meant
+to close: this was found in the minute after the merge only because the check listed
+#260 beside the four it expected closed.
+
+## Two in ten was ten in ten, seen through the test tool's clock (#275)
+
+Filed from a review as: under WebKit, after the viewport has crossed the 768 px line
+*a few times*, a dialog opened *immediately* and closed with Escape leaves the keyboard
+on `<body>` — 2 runs in 10 on one head, 6 in 10 on the next, never in isolation. Every
+word of that was a true measurement and three of them pointed the wrong way. The turns
+before did nothing: one turn lost it as often as three. The head did nothing: the rate
+moved with the machine. And it was not WebKit's defect: Playwright's WebKit resolves
+`setViewportSize` *before the page has heard of the resize*, so "immediately" pressed
+Enter after the viewport had changed and before `change` was delivered — a gap a
+browser has in every frame and Chromium's driver, in this suite's `isMobile` contexts, did
+not land in (the reviewer's Chromium context without `isMobile` did, 6 and 9 runs in 12 —
+the rate is the harness's, not an engine's guarantee). In that gap
+`useSyncExternalStore` hands the new shell to whatever renders (it re-reads its
+snapshot on every render) and nothing to whoever is waiting for the event: the page
+and the dialog rendered in the new shell in one commit, the opener's row was swapped
+away in it, `Modal` asked `document.activeElement` who had opened it and was told
+`<body>`, and `Layout` — which answers for swapped rows — heard of the turn after the
+dialog had the keyboard. Waiting for the table before pressing Enter: 8 of 8 kept.
+Holding the `change` events (`e2e/shellEvents.ts`): 8 of 8 lost, **in both engines**.
+
+What to keep: **a rate is a description of the harness until the mechanism says
+otherwise** — before repeating a sequence to see it again, log the order of the events
+in one losing run and ask which step the test believes has happened and has not. A
+"sequence-sensitive" loss whose rate does not change with the sequence is not
+sequence-sensitive. When the mechanism is an ordering, build the ordering (hold the
+event, release it) rather than hoping for it; the test is then red every run before
+the fix, in the engine CI has. And a second trap on the way out: the dev server runs
+React's StrictMode, whose mount–unmount–mount of every effect gave the fixed `Modal` a
+*different path* from production's (the rehearsal unmount handed the keyboard to the
+new row, so the real mount found an ordinary opener). Green there proved one of the
+two; the fix and its mutant were run against `vite build` + `vite preview` as well.
+**Where a fix lives in an effect's mount or cleanup, the dev server is not the
+production path — run it once against the built bundle.**
+
+## The wait was for a button, and the offer to create is a button (#275's PR)
+
+`dialog-keyboard.spec.ts`'s *a keyboard user can select a catalog search result* went
+red once in Chromium and once in WebKit, on different lines, in full runs only — and
+never in forty runs of the file alone. It waited for "the first button in the result
+list" before pressing Tab, with the comment "debounced — wait for real rows". The
+picker's offer to create is a button in that list too, and it is drawn while the search
+is still out: on a slow answer Tab landed on the offer, the rows then arrived above it
+(red: the first row is not focused), or Enter opened the new-item form (red: no chosen
+chip). A 1.5 s delay on the search route makes the old wait fail every run and the new
+one — `toHaveText(/on hand/)`, a *found* row — pass. Four waits of that shape in two
+specs; all four changed.
+
+What to keep: **a wait is an assertion about state, so write the state** — "a result
+row", not "something in the box where rows go". And an intermittent red that isolation
+cannot reproduce is asking what is slower in the long run, not whether it is real:
+slow the suspected dependency on purpose and the race stops being one.
+
+## "Nothing can make it differ" was a claim about my imagination (#275, PR #276 round 1)
+
+`unansweredKeys()` first had a check — give the remembered keys only if the control is
+really gone — and I took it out before the PR: I could not make the branch differ, and
+an untested branch is a rule here, so out it went, with the reasoning written down as a
+deliberate call ("someone who leaves a control that is still there is forgotten a
+microtask later"). The reviewer made it differ three ways in an afternoon: hide the
+focused control and show it again, `display: none` and back, take the node out and put
+it back. None of them is *leaving*, so the forgetting rule kept the place; none fires
+anything on the way back. A dialog then opened by pointer in Safari returned the
+keyboard to a control that had not opened it.
+
+What to keep: **"untestable, so remove it" is only honest after trying to break the
+version without it.** The rule against untested code cuts both ways — the absence of a
+check is a claim too ("this state cannot occur"), and it got a paragraph of argument
+where it needed ten minutes of adversarial states: every way a node can stop and start
+being there without anyone choosing to leave it. And when the check went back, the
+mutants said its first form was half redundant (`isConnected &&` in front of a test a
+disconnected node already fails) and that *drawn* versus *connected* needed a test of
+its own, which the product could not supply (no page has both a folding twin and a
+dialog) — so the test brings its own twin and says so.
+
+
+## The asset GitHub renamed (#278, v0.5.1-alpha)
+
+The first release through the pipeline passed everything it had: bundle verification
+at build, both native Integration jobs pulling anonymously, the full deployment gate
+on the release files. It was tagged and promoted. Then the draft's own assets were
+downloaded, the way the README tells a user to, and `sha256sum -c SHA256SUMS` failed:
+`.env.example: FAILED open or read`. GitHub renames an uploaded asset whose name
+starts or ends with a period; `.env.example` had become `default.env.example`. Every
+check before that one had read the workflow artifact, which keeps the name — a copy
+of the release that took a different route to the checker than to the user. The tag
+and the version image tags already existed, and neither moves, so the fix shipped as
+v0.5.2-alpha and v0.5.1-alpha was never published.
+
+What to keep: **gate what the user receives, by the route they receive it.** Where
+the last hop is someone else's upload — a release page, a registry — read the result
+back after it and run the check the user will run; the promotion now downloads its
+own draft and verifies it. And the hop has rules of its own: the names that cross it
+now have one, stated in a test rather than read back from the code that makes them.
+
+
+## The kill was real, and the database was the dev one (#302, PR #302 round 1)
+
+dsn-5 mutated `if not self.database_url:` to `if True:`, to prove a test that checks
+an explicit `DATABASE_URL` is left alone. The kill was genuine, and the harness
+reported it. What it did not report: that mutant made every `Settings` ignore the
+`DATABASE_URL` conftest exports, so the whole mutant session ran against the
+`POSTGRES_*` database. That is the session's `alembic downgrade base`, its tests
+and its truncating teardown. In the cloud session that was a throwaway database,
+and nothing showed. On the owner's dev Mac it was the dev collection. A migration
+guard happened to fire, and alembic rolled the downgrade back. The reviewer found
+it by running the harness where the harness normally runs.
+
+What to keep: **a mutant runs inside the harness, so it can change the harness.**
+The anchor is judged for what it does to the code under test, but a mutant in
+configuration also changes where the session's own reads and writes go. Ask what
+the mutant does to the test session itself, not only to the test. And ask where a
+green or red result would look different: a kill measured on a scratch machine says
+nothing about the machine the procedure is written for.
+
+## The mutant took two classes, and the allowance fitted the other one (#304, PR #314 round 2)
+
+The badge column's fix was two classes on one cell, `max-md:w-px max-md:pe-0`. The
+author's mutant removed both, measured 17 px against a 12.5 px allowance, and the PR
+said "killed". The allowance had been chosen as "the label cell's own padding", which
+was really the width of the *other* class's effect. So the true single-site mutant,
+`w-px` alone, left a gap of 8 px at 390 px and 109 px at 744. That fitted inside the
+allowance, and it survived when the reviewer ran it. Before that, the check had lived
+on a long label, where the mutant survived outright, because long names take the
+spare width themselves.
+
+What to keep: **a mutant is one site, and the anchor says which**. Two classes in one
+string are two sites. And **an allowance is a claim about what else the
+measurement contains**: name what it is for, then ask whether a mutant of the fix
+could hide inside it. A tolerance should be rounding unless something measured says
+otherwise. Measure where the defect has room to show (a short label; the widest end
+of the shell), not where the fixture happens to be.
+
+## `<body>` contains every alert (#304, PR #314 round 4)
+
+"The keyboard goes from the pending import to its outcome" asserted
+`document.activeElement.querySelector('[role="alert"]')`. When the keyboard is lost,
+`activeElement` is `<body>`, and `<body>` contains every alert on the page. So the
+assertion passed in exactly the state it existed to catch. Its mutant was killed only
+by a sibling assertion in another test, so the mutation pass looked clean. It was
+found when the next round's test, asking the same question for a refused preview,
+passed on the unfixed head, where the reviewer had already measured `<body>`.
+
+What to keep: **a containment check has a degenerate container: the root**. Exclude
+it explicitly, as `keyboardOnRefusal` does. Better, assert the named element, which
+#259's "Inside was the wrong question" already says for focus *within* a dialog.
+And **a mutant killed elsewhere says nothing about this assertion**: when you add
+an assertion for a defect, kill its mutant *through that assertion*, in that test.
+
+## The sweep never had more than a page (#319 → #321)
+
+#319 made the phone draw every row while the rail still draws ten. A turn from phone
+to rail with the keyboard on row 12 then left it on `<body>`, which design §13.7's
+rule forbids. `lists.spec.ts`'s sweep, *no change of representation leaves the
+keyboard on `<body>`*, focuses every control and turns the page under it. It passed,
+because every list it seeds is shorter than ten rows, and the two shells differ only
+when a list is longer. #319's own review rounds didn't see it either. It surfaced
+while diagnosing a different flake (#317), whose unnarrowed upgrades list happened
+to hold more than a page.
+
+What to keep: **a sweep is exhaustive only over the states its seed puts the page
+in**. When a change makes two shapes differ by *how many* rows they draw (paging, a
+cap, a fold that hides rows), the row count is an axis. Seed past the boundary and
+put the keyboard beyond it: the CLAUDE.md value-axis rule, applied to a list's
+length.
+
+## The router's location is not the address (#321)
+
+The first #321 fix let a turn out of the phone stand down when the URL "already said"
+the page. It failed 1 run in 8, then 2 in 10 after a partial repair, always on a
+tablet turned back within a moment. The phone drops `?page=` with a navigation. React
+Router writes the browser's address at once and delivers the new location to React
+later, in a transition. So the turn rendered with a location the address had already
+left (a stale `?page=2`), trusted it, and the late drop then took the page away. The
+first repair (ignore the URL at the turn) still compared against the router's
+location to decide when to stop, and failed the same way.
+
+What to keep: **when a decision depends on the URL during a navigation, ask the
+address (`window.location`) and wait for the router to agree**. Neither alone is
+the state. And a race that shows 1 in 8 needs repeats to prove fixed: here 15 clean,
+then 10 under full CPU load, then each race mutant run ten times. One mutant (stand
+down without waiting for the router) survived 30 runs. It is kept as a guard and
+recorded as unobserved, not as equivalent.
+
+## Contention was a detector, and it was pointing at the product too (#317)
+
+#317 was filed as a focus test that failed about 1 in 3 on `tablet`. It was never a
+focus race. The Upgrades list the test opens can't be narrowed, and on 2 October the
+database held other upgrades that sorted ahead, so the row sat on page 2. A sweep
+found 38 lookups of the same shape across 13 files. The local multi-worker default
+failed 17 tests a run on `main`, and the memory note "it fails ~6 specs from
+contention" had been carrying that for weeks as a reason to pass `--workers=1`.
+
+Measuring the fix with the multi-worker default is what paid off. The class went (17
+failures down to 8–10), and what remained sorted into three other things. Two were
+other test classes: #324, Home and import counts; and #321, a real focus regression.
+The third was a product bug: #323, every list table overflowing on an unbroken name.
+`lists.spec`'s fit test checks exactly that, but only against rows its own file
+seeds. Another file's deliberately unbroken upgrade, sharing the page only because
+the workers overlapped, showed the defect.
+
+What to keep: **"fails under contention" is a finding, not an environment**. Read
+each failure before reaching for the flag that hides them. And **a check that
+measures only the values its own file seeds measures your imagination**: seed the
+widest value the product can hold (CLAUDE.md, "Enumerate what the field can
+hold").
+
+
+## Under its budget is still a width (#323, PR #328 rounds 1–3)
+
+#323's fix gave every free-text cell a per-value rule: a word wider than its budget
+breaks, anything narrower stays whole. The tests seeded an unbroken word in every
+field and the widest real ordinary words, and every one of 15 mutants died. Codex's
+first round still found the bug with one ordinary Display row: five words, none near
+a budget, 675 px in a 638 px box. **A rule that judges each value alone says nothing
+about their sum**, and a table's minimum width is the sum of its columns' widest
+words. The seeds had covered both ends of each field and never the middle of all of
+them at once.
+
+The answer was to fold Inventory at lines measured with a word just under its budget
+in every column. Round 2 beat those lines with values that were still allowed:
+words nearer the budget, a wider currency, a fully dated kit. It beat Kits' #258 line
+the same way. **A fixed line bounds the rows it was measured with**, and each raise
+only invites the next combination. The third round would have found one too. What
+ended it was naming the mechanism as the limit, scoping the structural fix out (#329,
+fold to fit), and correcting the comment that had said "above the line any mix of
+values fits", which was false. Codex's round 3 checked the scoped PR against `main`
+in 1,540 paired measurements: no regressions.
+
+Two harness traps from the same PR:
+- **A worktree whose `node_modules` is a symlink to another checkout** has Vite
+  answering 403 for the web font, outside its `fs.allow`. Four unrelated tests went
+  red in the negative control and were nearly counted. Run `npm ci` in the worktree.
+- **The near-budget rows hid both floors.** Other rows' words held every column wider
+  than a floor, so a mutant that removed one survived. A floor is observable only
+  where nothing else holds the column: measure the row alone.
+
+## The test's observer is the page's to the browser (#329)
+
+Folding to fit moved the fold from a container query into a `ResizeObserver`. The
+first full run of the box sweep flooded the log with "ResizeObserver loop completed
+with undelivered notifications" and stalled. That is the exact error Codex had
+warned a fold-to-fit observer would raise. The count gave the cause away: 666 in a
+667-width sweep, on Consumables too, which has no fold at all. The sweep waited for
+each width with an observer of its own and set the next width in that observer's
+microtask, still inside the browser's observer step. **A size changed inside the
+step is undeliverable whoever changed it**, and the browser reports it against the
+page. Resolving the wait in a task of its own (`setTimeout`) took it to zero, and the
+sweep now asserts no observer error at all, which a mutant observing the table
+instead of the sentinel then tripped.
+
+Two more from the same branch:
+- **A killed run leaves its rows.** Stopping a Playwright run skips `afterAll`, and the
+  next run's tests found two run tags on one Inventory page and failed on them. After
+  any interrupted run, recreate the throwaway database before trusting the next one.
+- **Mutants of a mechanism with several triggers survive one at a time.** The font
+  listener and `Measured`'s refit each covered for the other on the tagged Kits list,
+  where a near-budget word crossed its budget when Inter arrived. Only a page with
+  ordinary words isolated the font listener — and that test then failed under WebKit,
+  which fires no `loadingdone` for a stylesheet's faces: the listener had only ever
+  worked in Chromium. Each face's `loaded` promise replaced it. `Measured`'s refit
+  survived alone until Codex staged the ordering it guards: hold the measuring copies'
+  `ResizeObserver` deliveries while the font arrives and its pass runs, then release
+  them, so the value starts breaking after the table chose. The author had called
+  that ordering impossible to stage; it took a wrapped `ResizeObserver` in an init
+  script.
+- **A transient state is a state.** Turning across the sidebar's line folds Orders for
+  one frame, at the old shell's box, and unfolds it the next. Every focus test passed
+  locally, and CI lost the keyboard one run in five. A probe that logged each frame
+  showed the bounce at once; reasoning about the final states never would have. The
+  focus hook's deferred watch (its own lesson in `focusKey.ts`) missed a control
+  hidden before the watch began, so now the fold hands on focus it hides itself
+  (`FoldToFit`), and a test samples every frame of ten such turns.
+
+## Equivalent until someone finds the ordering (#315, PR #332 rounds 1–3)
+
+Three review rounds, each a GO with P3s, and two of the author's claims withdrawn on
+the way. Each one said a defect couldn't happen or couldn't be seen, and each fell to
+an ordering or an entry path the author hadn't walked:
+
+- **"Equivalent in practice" was claimed for two mutants, and both died.** M3 (the
+  section not reading the outcome at mount) survived every test that came back by the
+  browser's Back, which renders synchronously. The app's own link renders in a
+  transition, and there the first frame lacked the outcome. Round 2's M17 (forget on
+  any session read) was claimed equivalent because "a change to `owner` only happens at
+  load or sign-in". Codex held a real sign-in response in the page until a visibility
+  re-read had drawn the app and an import was sent. The sign-in's own continuation
+  then cleared the cache: `owner` → nothing → `owner`, with a live import.
+- **"The e2e can't see it" was wrong again** (as with `Measured`'s refit on #329). An
+  answer between a mount's render and its listener looked impossible to time. Codex
+  held `fetch` as a promise in the page and released it from a `MutationObserver` as
+  the section's heading was inserted.
+- **Being told is not being shown, and one outcome kept as three copies parts.** The
+  store treated a hooked listener as proof the outcome was seen (the GitHub bot's P1).
+  The fix kept the outcome until the section acknowledged it, but `result`,
+  `importError` and the acknowledged copy were separate states. The phone's fall-back
+  cleared one and not another, so the module forgot an outcome never drawn. One
+  `outcome` state, drawn and acknowledged as the same thing, closed it. Then the sweep
+  of every place that clears it missed the send itself (round 3's regression).
+- **A state is not an identity.** `AuthGate` forgot the import when the session read
+  `anonymous`. Another tab signing out and in again gives this tab `owner` → `owner`:
+  no change to the state, a different session. The CSRF token, one per session, is the
+  identity.
+
+**Before calling a mutant equivalent or a case untestable, list the entry paths and
+orderings the code can meet:** each way in (Back, link, URL, reload); each async
+continuation still in flight (a held request, a sign-in's `onAuthed`); and each other
+tab. Try to stage the worst one, with a held promise in the page released by an
+observer. Only if that fails, say "equivalent", and name what was tried.
+
+## A phrase the next refusal quotes (#353)
+
+The expansion-budget tests asserted `"unpacks to more than" in detail`, and they were
+right for as long as only one refusal could say it. #353 widened the member read to
+catch every `Exception`, and a new mutant let the budget's own refusal fall into that
+catch. It survived: the damage refusal interpolates the exception it caught, so it
+quoted the budget's sentence, and the assertion passed on the wrong refusal.
+
+**A message built from a caught exception can say anything that exception says. Assert
+the code.** This is "Green for the wrong reason" again, and it was the mutation pass
+that found it, not the test's own red run.
+
+The same PR has a second, smaller lesson about briefs. Codex's second round asked
+"find the next one of that shape", and it did, three times, each real and each P3, under
+a NO-GO. A brief that asks for the next instance will always get one, so its verdict
+stops being evidence about readiness. When the question has become "should this merge",
+ask that, with severity by exposure, and name in the record that the brief was framed so.
+
+## A dialog's opening value stops being what's stored (#348, PR #357 rounds 1–2)
+
+The order editor's note field was written, reviewed and red-run, and two rounds still
+found defects in one line of `OrderFormModal`.
+
+Round 1: an edit restated the note it had copied when the dialog opened, so a save that
+never touched the field erased what an agent had written meanwhile. The e2e test "survives
+an edit that never mentions it" passed, because nothing else wrote the note while the
+dialog was open. The brief had named the overwrite as something the dialog could already
+do to `order_number` and asked whether free text made it worse. The review reproduced it
+and rated it P2.
+
+Round 2: the fix asked "is this field dirty?", which compares with the opening value. A
+dialog save is a `PATCH` and then a ship or receive, so it can fail halfway. After that,
+the opening value is no longer what's stored. A person who restored the old text on the
+retry had a clean field, so nothing was sent and the old text stayed gone. The first fix
+introduced that defect.
+
+**A value held from when a dialog opened describes the row only until something else
+writes it: another writer, or this dialog's own first request. Test both, by writing
+between open and save, and by failing the second request of a save.** A dirty check answers
+"did the person change it?", not "does the row still say this?".
+
+Both questions reach past the note. #358 records the other header fields failing the
+first, order lines failing the second, and that its likely fix would give the header
+fields the second as well.
+
+**It recurred one field later (#350, PR #362 round 1).** An order's adjustments were the
+next field the dialog sends only when touched. They went to review with the first test
+and without the second, with this entry on file and the note's latch three lines away,
+and the review found the retry. Reading the lesson was not what was missing. The retry
+tests named one field, so nothing made a new selectively sent field owe them:
+`order-lossless.spec.ts`'s retry block now takes the order's opening note and adjustments,
+and #358 asks for the answer one level up, where a field cannot be left out.

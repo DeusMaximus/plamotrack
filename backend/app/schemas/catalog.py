@@ -4,13 +4,14 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import ItemType
+from app.schemas.base import RequestModel
 from app.schemas.numeric import Int4, NonNegativeInt4, PositiveInt4
 from app.services.currency import CURRENCY_CODE_PATTERN
 
 _COST_HELP = "Integer minor units — cents for AUD, whole yen for JPY, fils for KWD."
 
 
-class ToolCreate(BaseModel):
+class ToolCreate(RequestModel):
     name: str = Field(min_length=1)
     category: str = Field(min_length=1)
     quantity_on_hand: NonNegativeInt4 = 0
@@ -32,7 +33,7 @@ class ToolCreate(BaseModel):
         return self
 
 
-class ToolUpdate(BaseModel):
+class ToolUpdate(RequestModel):
     # No pair validator here: a PATCH may legitimately send one half and leave the
     # other on the row. The resulting pair is checked in services/catalog.py, which
     # is the only place that can see both the payload and the stored row.
@@ -58,14 +59,14 @@ class ToolRead(BaseModel):
     condition_notes: str | None
 
 
-class ConsumableCreate(BaseModel):
+class ConsumableCreate(RequestModel):
     name: str = Field(min_length=1)
     category: str = Field(min_length=1)
     quantity_on_hand: NonNegativeInt4 = 0
     low_stock_threshold: NonNegativeInt4 | None = None
 
 
-class ConsumableUpdate(BaseModel):
+class ConsumableUpdate(RequestModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1)
@@ -84,13 +85,13 @@ class ConsumableRead(BaseModel):
     low_stock_threshold: int | None
 
 
-class UpgradeCreate(BaseModel):
+class UpgradeCreate(RequestModel):
     name: str = Field(min_length=1)
     manufacturer: str = Field(min_length=1)
     quantity_on_hand: NonNegativeInt4 = 0
 
 
-class UpgradeUpdate(BaseModel):
+class UpgradeUpdate(RequestModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1)
@@ -107,7 +108,7 @@ class UpgradeRead(BaseModel):
     quantity_on_hand: int
 
 
-class DisplayItemCreate(BaseModel):
+class DisplayItemCreate(RequestModel):
     name: str = Field(min_length=1)
     category: str = Field(
         min_length=1,
@@ -122,7 +123,7 @@ class DisplayItemCreate(BaseModel):
     notes: str | None = None
 
 
-class DisplayItemUpdate(BaseModel):
+class DisplayItemUpdate(RequestModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1)
@@ -145,7 +146,7 @@ class DisplayItemRead(BaseModel):
     notes: str | None
 
 
-class UpgradeApplyRequest(BaseModel):
+class UpgradeApplyRequest(RequestModel):
     kit_id: uuid.UUID
     quantity: PositiveInt4
 
@@ -178,7 +179,7 @@ class CatalogSearchResult(BaseModel):
     quantity_on_hand: int
 
 
-class StockAdjustmentRequest(BaseModel):
+class StockAdjustmentRequest(RequestModel):
     """Body for `POST /catalog/{id}/adjust` (#55).
 
     A signed delta rather than an absolute `quantity_on_hand`, which is the whole

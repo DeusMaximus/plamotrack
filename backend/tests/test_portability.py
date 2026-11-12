@@ -9,6 +9,7 @@ import csv
 import io
 import json
 import pathlib
+import struct
 import time
 import tomllib
 import uuid
@@ -19,6 +20,7 @@ from sqlalchemy import text as sa_text
 
 from app import __version__ as app_version
 from app.db import session_scope
+from app.exceptions import DomainError
 from app.models import Retailer
 from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
@@ -2157,6 +2159,77 @@ async def test_a_utf8_bom_is_still_stripped(client):
     assert [r["name"] for r in (await client.get("/retailers")).json()] == ["Gundam Base"]
 
 
+# --- what `csv` refuses (#343) ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        pytest.param("a" * 131_073, id="one past csv's default field limit"),
+        pytest.param("n" * 1_000_000, id="a million characters"),
+        pytest.param("one\r\ntwo\nthree\rfour", id="every line ending inside the field"),
+    ],
+)
+async def test_a_kit_the_api_accepted_survives_its_own_export(http_client, notes):
+    """Rule 10: re-importing your own export changes nothing. Nothing caps
+    `build_notes`, so the API stores a field longer than `csv`'s default 131,072
+    characters and the export writes it — and the import answered that file with
+    a 500 (#343). A refusal would be wrong too: it would be refusing the server's
+    own archive. The line endings pin `newline=""`: the reader finds its own, and a
+    quoted field keeps what it held."""
+    created = await http_client.post(
+        "/kits", json={"name": "Long Notes Zaku", "grade": "HG", "build_notes": notes}
+    )
+    assert created.status_code == 201, created.text
+    archive = (await http_client.get("/export/archive")).content
+
+    # The preview first and on its own: `apply`'s helper goes on without a hash after
+    # a failed preview, so a parser failure would surface as `import.preview_required`.
+    await preview(http_client, archive)
+    resp = await apply(http_client, archive)
+    assert resp.status_code == 200, f"{resp.status_code} {resp.text[:200]}"
+    assert (resp.json()["created"], resp.json()["updated"]) == (0, 0)
+    [kit] = (await http_client.get("/kits")).json()
+    assert kit["build_notes"] == notes
+
+
+async def test_a_csv_with_bare_cr_line_endings_imports(http_client):
+    """The old Mac "CSV (Macintosh)" save: lines end in CR alone. Read through a
+    `StringIO` without `newline=""`, `csv` raised "new-line character seen in
+    unquoted field" and the upload was a 500."""
+    content = b"id,name\r,Gundam Base\r,Hobby Search\r"
+    await preview(http_client, content, filename="retailers.csv")  # as above
+    resp = await apply(http_client, content, filename="retailers.csv")
+    assert resp.status_code == 200, f"{resp.status_code} {resp.text[:200]}"
+    names = sorted(r["name"] for r in (await http_client.get("/retailers")).json())
+    assert names == ["Gundam Base", "Hobby Search"]
+
+
+@pytest.mark.parametrize("packaging", ["single", "archive"])
+async def test_what_csv_still_refuses_is_a_422_naming_the_file_and_line(http_client, packaging):
+    """No upload reaches `csv`'s field limit now, so the limit is lowered here to
+    reach the `except csv.Error` that stands behind it — rule 6 for whatever `csv`
+    refuses next. The field over the limit is on line 4, after a quoted field that
+    spans two lines: `line` is the file's line, not the row's number."""
+    content = b'id,name,notes\r\n,Gundam Base,"two\r\nlines"\r\n,' + b"x" * 64 + b",\r\n"
+    filename = "retailers.csv"
+    if packaging == "archive":
+        content, filename = zip_members({"retailers.csv": content}), "archive.zip"
+    previous = csv.field_size_limit(32)
+    try:
+        resp = await http_client.post(
+            "/import/preview",
+            files={"file": (filename, content, "application/octet-stream")},
+            data={"mode": "merge"},
+        )
+    finally:
+        csv.field_size_limit(previous)
+    assert resp.status_code == 422, f"{resp.status_code} {resp.text[:200]}"
+    body = resp.json()
+    assert body["code"] == "import.csv_unreadable", body
+    assert body["params"] == {"source": "retailers.csv", "line": 4}, body
+
+
 # --- expansion budget (#43) ------------------------------------------------------
 
 
@@ -2190,7 +2263,7 @@ async def test_the_expanded_budget_is_enforced_at_its_boundary(
         assert actions(resp.json(), "retailers") == ["create"]
     else:
         assert resp.status_code == 422, resp.text
-        assert "unpacks to more than" in resp.json()["detail"]
+        assert resp.json()["code"] == "import.archive_too_large", resp.text
 
 
 async def test_the_budget_is_cumulative_across_members(client, monkeypatch):
@@ -2209,7 +2282,7 @@ async def test_the_budget_is_cumulative_across_members(client, monkeypatch):
         data={"mode": "merge"},
     )
     assert resp.status_code == 422, resp.text
-    assert "unpacks to more than" in resp.json()["detail"]
+    assert resp.json()["code"] == "import.archive_too_large", resp.text
 
 
 async def test_a_compressible_archive_cannot_expand_past_the_real_budget(client):
@@ -2235,7 +2308,7 @@ async def test_a_compressible_archive_cannot_expand_past_the_real_budget(client)
         data={"mode": "merge"},
     )
     assert resp.status_code == 422, resp.text
-    assert "unpacks to more than" in resp.json()["detail"]
+    assert resp.json()["code"] == "import.archive_too_large", resp.text
 
 
 # --- reconciliation is over the rows actually consumed (external review of #75) ---
@@ -2465,6 +2538,343 @@ async def test_an_unreadable_member_is_a_422_naming_it(http_client, damage, id_)
     assert resp.status_code == 422, f"{id_}: {resp.status_code} {resp.text[:200]}"
     assert "retailers.csv" in resp.json()["detail"]
     assert (await http_client.get("/retailers")).json() == []
+
+
+# --- what `zipfile` raises besides BadZipFile (#341) -------------------------------
+
+
+def _one_member_zip() -> bytearray:
+    """The archive #341 was found with: one member, no manifest."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("kits.csv", "id,name,grade\r\n,Zaku,HG\r\n")
+    return bytearray(buffer.getvalue())
+
+
+def _directory_offset_past_the_end() -> bytes:
+    raw = _one_member_zip()
+    end = raw.rfind(b"PK\x05\x06")
+    struct.pack_into("<I", raw, end + 16, 0xFFFFFFFF)
+    return bytes(raw)
+
+
+def _name_flagged_utf8_that_isnt(signature: bytes, flag_at: int, name_at: int) -> bytes:
+    raw = _one_member_zip()
+    header = raw.find(signature)
+    struct.pack_into("<H", raw, header + flag_at, 0x800)
+    raw[header + name_at] = 0xFF
+    return bytes(raw)
+
+
+def _needs_zip_version_6_4() -> bytes:
+    raw = _one_member_zip()
+    raw[raw.find(b"PK\x01\x02") + 6] = 64
+    return bytes(raw)
+
+
+@pytest.mark.parametrize("endpoint", ["/import/preview", "/import/apply"])
+@pytest.mark.parametrize(
+    ("archive", "code", "entry"),
+    [
+        pytest.param(
+            _directory_offset_past_the_end(),
+            "import.archive_damaged",
+            "kits.csv",
+            id="a directory offset past the end (ValueError on open)",
+        ),
+        pytest.param(
+            _name_flagged_utf8_that_isnt(b"PK\x03\x04", 6, 30),
+            "import.archive_damaged",
+            "kits.csv",
+            id="a per-file name flagged UTF-8 that isn't (UnicodeDecodeError on open)",
+        ),
+        pytest.param(
+            _name_flagged_utf8_that_isnt(b"PK\x01\x02", 8, 46),
+            "import.archive_invalid",
+            None,
+            id="a directory name flagged UTF-8 that isn't (UnicodeDecodeError in ZipFile())",
+        ),
+        pytest.param(
+            _needs_zip_version_6_4(),
+            "import.archive_invalid",
+            None,
+            id="a record needing ZIP 6.4 (NotImplementedError in ZipFile())",
+        ),
+    ],
+)
+async def test_what_zipfile_raises_besides_bad_zip_file_is_a_422(
+    http_client, endpoint, archive, code, entry
+):
+    """Rule 6 (#341): `_read_zip` caught only `BadZipFile` around `ZipFile()`, and
+    `_ExpansionBudget.read` everything but `ValueError`, so these four were 500s
+    from preview and apply alike. `http_client`, so a 500 comes back as a status
+    rather than an exception."""
+    resp = await http_client.post(
+        endpoint,
+        files={"file": ("archive.zip", archive, "application/zip")},
+        # A hash, though no preview made it: apply refuses an empty one before it
+        # reads the file, so only a stale one reaches the reader.
+        data={"mode": "merge", "plan_hash": "0" * 64},
+    )
+    assert resp.status_code == 422, f"{resp.status_code} {resp.text[:200]}"
+    body = resp.json()
+    assert body["code"] == code, body
+    if entry is not None:
+        assert body["params"] == {"entry": entry}, body
+    assert (await http_client.get("/kits")).json() == []
+
+
+def _with_manifest_bytes(manifest: bytes, method: int = zipfile.ZIP_DEFLATED) -> bytes:
+    """manifest.json first, then a retailer — the order `zip_members` writes."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", method) as archive:
+        archive.writestr("manifest.json", manifest)
+        archive.writestr("retailers.csv", RETAILERS_CSV)
+    return buffer.getvalue()
+
+
+async def test_a_manifest_that_cannot_be_unpacked_refuses_the_import(http_client):
+    """The owner's call on #341: a member that can't be unpacked refuses the import,
+    the manifest included — as a manifest with a bad CRC already did. This one fails
+    on open (its per-file name is flagged UTF-8 and isn't), which is a `ValueError`,
+    and the `except ValueError` meant for the manifest's *contents* used to turn it
+    into the "continuing without it" warning."""
+    raw = bytearray(_with_manifest_bytes(json.dumps(declaring()).encode()))
+    local = raw.find(b"PK\x03\x04")  # the manifest's, written first
+    assert raw[local + 30 : local + 43] == b"manifest.json"
+    struct.pack_into("<H", raw, local + 6, 0x800)
+    raw[local + 30] = 0xFF
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", bytes(raw), "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, f"{resp.status_code} {resp.text[:200]}"
+    assert resp.json()["code"] == "import.archive_damaged"
+    assert resp.json()["params"] == {"entry": "manifest.json"}
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        pytest.param({"format": "\ud800"}, id="format"),
+        pytest.param({"schema_version": "\ud800"}, id="schema_version"),
+        pytest.param({"app_version": "\udc00"}, id="app_version"),
+        pytest.param({"exported_at": "\ud800"}, id="exported_at"),
+        pytest.param(
+            {"tables": {"\ud800": {"file": "retailers.csv", "rows": 1}}}, id="a table's key"
+        ),
+        pytest.param({"tables": {"retailers": {"file": "\ud800", "rows": 1}}}, id="a table's file"),
+    ],
+)
+async def test_a_manifest_string_with_no_utf8_form_is_only_the_warning(http_client, manifest):
+    """Valid JSON whose text can't leave as a response: it went into the plan and the
+    diagnostics, and the response serializer raised. On apply that was a 500 *after the
+    commit* (Codex, #353 round 1). It's a manifest that can't be read, so it gets that
+    manifest's outcome: the warning, and the rows import."""
+    content = _with_manifest_bytes(json.dumps(manifest).encode())
+    plan = await preview(http_client, content)
+    assert [w["code"] for w in plan["warnings"]] == ["import.manifest_unreadable"]
+    assert plan["manifest"] is None
+
+    resp = await apply(http_client, content)
+    assert resp.status_code == 200, f"{resp.status_code} {resp.text[:200]}"
+    assert resp.json()["created"] == 1
+    assert [r["name"] for r in (await http_client.get("/retailers")).json()] == ["Gundam Base"]
+
+
+async def test_a_nul_in_a_manifest_is_not_this_refusal(http_client):
+    """A manifest is read and never stored, and a NUL leaves in a response as `\\u0000`.
+    The control on the test above: the check is the response's, not the column's."""
+    content = _with_manifest_bytes(json.dumps({"app_version": "a\x00b"}).encode())
+    plan = await preview(http_client, content)
+    assert "import.manifest_unreadable" not in [w["code"] for w in plan["warnings"]]
+    assert plan["manifest"]["app_version"] == "a\x00b"
+
+
+async def test_a_manifest_nested_past_the_parser_is_only_the_warning(http_client):
+    content = _with_manifest_bytes(b"[" * 200_000 + b"]" * 200_000)
+    plan = await preview(http_client, content)
+    assert [w["code"] for w in plan["warnings"]] == ["import.manifest_unreadable"]
+
+
+async def test_a_manifest_that_unpacks_but_isnt_utf8_is_still_only_a_warning(http_client):
+    """The other half of the same call: the manifest's own `except ValueError` stays,
+    because `json.loads` on bytes that aren't UTF-8 raises `UnicodeDecodeError` — a
+    file that unpacked fine and says nothing readable, which the import goes on
+    without. Folding that `except` into the one above would make this a refusal."""
+    content = _with_manifest_bytes(b"\xff" + json.dumps(declaring()).encode())
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", content, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, f"{resp.status_code} {resp.text[:200]}"
+    codes = [warning["code"] for warning in resp.json()["warnings"]]
+    assert "import.manifest_unreadable" in codes, codes
+    [retailers] = [table for table in resp.json()["tables"] if table["table"] == "retailers"]
+    assert [row["action"] for row in retailers["rows"]] == ["create"]
+
+
+def _flips(raw: bytes):
+    """Every single-byte change worth trying at every position: zero, all ones, the
+    top bit and the bottom bit. Deterministic, so a failure names its byte."""
+    for index, original in enumerate(raw):
+        for value in sorted({0x00, 0xFF, original ^ 0x80, original ^ 0x01} - {original}):
+            damaged = bytearray(raw)
+            damaged[index] = value
+            yield index, value, bytes(damaged)
+
+
+def _what_escapes(filename: str, raw: bytes) -> tuple[list[str], int]:
+    escaped, refused = [], 0
+    for index, value, damaged in _flips(raw):
+        try:
+            importing.read_upload(filename, damaged, reference_currency="AUD")
+        except DomainError:
+            refused += 1
+        except Exception as exc:  # noqa: BLE001 — what escapes is the finding
+            escaped.append(f"byte {index} = {value:#04x}: {type(exc).__name__}: {exc}")
+    return escaped, refused
+
+
+#: Every compression method `zipfile` can write and read (#352): the decompressors
+#: raise different things, so "every method" is a claim only if every method is driven.
+ZIP_METHODS = [
+    pytest.param(zipfile.ZIP_STORED, id="stored"),
+    pytest.param(zipfile.ZIP_DEFLATED, id="deflate"),
+    pytest.param(zipfile.ZIP_BZIP2, id="bzip2"),
+    pytest.param(zipfile.ZIP_LZMA, id="lzma"),
+]
+#: Python 3.14's fifth, read through `compression.zstd`. The packaged runtime is 3.12,
+#: where this member is `NotImplementedError` (`test_an_unreadable_member_is_a_422_naming_it`);
+#: a source install may run either, and `requires-python` allows both.
+if hasattr(zipfile, "ZIP_ZSTANDARD"):
+    ZIP_METHODS.append(pytest.param(zipfile.ZIP_ZSTANDARD, id="zstandard"))
+
+
+@pytest.mark.filterwarnings("ignore:Overlapped entries")
+@pytest.mark.parametrize("method", ZIP_METHODS)
+def test_no_single_damaged_byte_in_an_archive_escapes_as_anything_but_a_refusal(method):
+    """Rule 6, swept rather than listed: #341 found four exceptions by hand and #343
+    a fifth. Every one-byte change to a small archive — headers, directory, payload,
+    the manifest's as well as the sheet's — either still reads or is a domain refusal.
+    Run against the reader before #341's fix, this finds its `ValueError` and
+    `NotImplementedError` (13 of them); before #352's, BZIP2's `OSError` and LZMA's
+    `LZMAError`.
+
+    Sync and through `read_upload`, which is everything the upload stage does with
+    the bytes, so the variants take well under a second a method."""
+    raw = _with_manifest_bytes(
+        json.dumps(declaring(retailers=("retailers.csv", 1))).encode(), method
+    )
+    escaped, refused = _what_escapes("archive.zip", raw)
+    assert escaped == []
+    assert refused > 0  # the sweep reached the refusals, so it isn't vacuous
+
+
+@pytest.mark.filterwarnings("ignore:Overlapped entries")
+@pytest.mark.parametrize("method", ZIP_METHODS)
+def test_no_truncation_of_an_archive_escapes_as_anything_but_a_refusal(method):
+    """The other way a payload is damaged: it ends. Cut at every length, including
+    inside the compressed data of each member."""
+    raw = _with_manifest_bytes(
+        json.dumps(declaring(retailers=("retailers.csv", 1))).encode(), method
+    )
+    escaped = []
+    for length in range(len(raw)):
+        try:
+            importing.read_upload("archive.zip", raw[:length], reference_currency="AUD")
+        except DomainError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — what escapes is the finding
+            escaped.append(f"cut at {length}: {type(exc).__name__}: {exc}")
+    assert escaped == []
+
+
+def _with_damaged_payload(member: str, method: int) -> bytes:
+    """An archive of `manifest.json` and `retailers.csv` with a byte of `member`'s
+    compressed data flipped: the tenth, past the 9 bytes of LZMA's header that its
+    decoder reads loosely, and inside BZIP2's block magic. Found through the local
+    header, not by a fixed offset."""
+    raw = bytearray(_with_manifest_bytes(json.dumps(declaring()).encode(), method))
+    name = member.encode()
+    header = raw.index(b"PK\x03\x04")
+    while raw[header + 30 : header + 30 + len(name)] != name:
+        header = raw.index(b"PK\x03\x04", header + 4)
+    name_length, extra_length = struct.unpack_from("<HH", raw, header + 26)
+    raw[header + 30 + name_length + extra_length + 9] ^= 0xFF
+    return bytes(raw)
+
+
+@pytest.mark.parametrize("method", ZIP_METHODS[2:])
+@pytest.mark.parametrize("member", ["retailers.csv", "manifest.json"])
+async def test_a_damaged_bzip2_or_lzma_member_is_a_422_naming_it(http_client, member, method):
+    """#352, from the top: both endpoints, either member, and Zstandard where the
+    runtime reads it. The manifest refuses like any other, by the owner's call on
+    #341. Each of these was a 500."""
+    content = _with_damaged_payload(member, method)
+    for path, data in (
+        ("/import/preview", {"mode": "merge"}),
+        ("/import/apply", {"mode": "merge", "plan_hash": "0" * 64}),
+    ):
+        resp = await http_client.post(
+            path, files={"file": ("archive.zip", content, "application/zip")}, data=data
+        )
+        assert resp.status_code == 422, f"{path}: {resp.status_code} {resp.text[:200]}"
+        assert resp.json()["code"] == "import.archive_damaged", resp.text
+        assert resp.json()["params"] == {"entry": member}, resp.text
+
+
+class _Decompressor(io.BytesIO):
+    """A member stream that raises what it was told to, on the first read."""
+
+    def __init__(self, raising: BaseException) -> None:
+        super().__init__()
+        self.raising = raising
+
+    def read(self, *_args):
+        raise self.raising
+
+
+@pytest.mark.parametrize(
+    "raising",
+    [
+        pytest.param(OSError("Invalid data stream"), id="a bare OSError, as bz2 raises"),
+        pytest.param(KeyError("frame"), id="an exception nobody has listed"),
+        pytest.param(type("ZstdError", (Exception,), {})("bad"), id="a decompressor's own type"),
+    ],
+)
+def test_whatever_a_decompressor_raises_is_the_upload_s_damage(monkeypatch, raising):
+    """The invariant, one level up from the sweeps. #341, #352 and Zstandard were three
+    misses in one tuple: each decompressor has its own exception, a runtime can add
+    another, and a list of them is out of date by construction. So the read owns every
+    `Exception`, independent of the Python this runs on."""
+    content = zip_members({"retailers.csv": RETAILERS_CSV})  # before the patch: it writes too
+    monkeypatch.setattr(zipfile.ZipFile, "open", lambda *_a, **_k: _Decompressor(raising))
+    with pytest.raises(DomainError) as refused:
+        importing.read_upload("archive.zip", content, reference_currency="AUD")
+    assert refused.value.code == "import.archive_damaged"
+
+
+def test_running_out_of_memory_is_not_the_upload_s_damage(monkeypatch):
+    """The one `Exception` that says something about the server, and an archive told
+    it was damaged would be a false thing to tell the owner."""
+    content = zip_members({"retailers.csv": RETAILERS_CSV})
+    monkeypatch.setattr(zipfile.ZipFile, "open", lambda *_a, **_k: _Decompressor(MemoryError()))
+    with pytest.raises(MemoryError):
+        importing.read_upload("archive.zip", content, reference_currency="AUD")
+
+
+def test_no_single_damaged_byte_in_a_csv_escapes_as_anything_but_a_refusal():
+    """The same sweep over a single CSV with a quoted field, where a stray CR or
+    quote is what `csv` itself refuses (#343)."""
+    raw = make_csv(spec.RETAILERS.header, [{"id": "", "name": 'Gundam "Base", Tokyo'}])
+    escaped, refused = _what_escapes("retailers.csv", raw)
+    assert escaped == []
+    assert refused > 0
 
 
 # --- the archive structure itself is attacker-shaped (follow-up review of #75) ----

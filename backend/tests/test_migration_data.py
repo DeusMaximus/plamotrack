@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from alembic import command
 from app import config
 from app.db import get_sessionmaker
+from app.models.base import Base
 
 # The revisions under test and the parents their seeds are planted at.
 INITIAL = "71ddc06de024"
@@ -39,6 +40,19 @@ TOOL_COST_CURRENCY = "24ee4c9024e4"
 SHIPPED_AT = "bcdb375e32d0"
 DISPLAY_ITEMS = "2c97a5ced66a"
 INSTANCE_SETTINGS = "f9979ec7b9cb"
+AUTH_TABLES = "f1058c5de0f3"
+OIDC_LOGIN = "0db6c35d0a7e"
+SESSION_AUTH_MODE = "4f3a9c1e7b2d"
+MCP_OAUTH_STATE = "d5e9362140ea"
+NON_NEGATIVE_CHECKS = "5cbec7813500"
+ORDER_NOTES = "8e41c7d2a9f6"
+UNTRACKED_LINES = "61442608b20e"
+ORDER_ADJUSTMENTS = "b7d4f0a3c915"
+
+# The current migration head, as a literal (this module keeps revision ids as
+# literals on purpose — see the header). The "recovered to head" / "nothing
+# moved" assertions compare against it, so a new migration bumps this one line.
+HEAD = ORDER_ADJUSTMENTS
 
 
 def db(sql: str, **params) -> list[tuple]:
@@ -166,7 +180,7 @@ def test_received_at_backfills_every_order_and_advances_no_kit(walk):
     received as of their order_date — every row, not just the first. It does
     NOT advance the kits those orders spawned: a database crossing this revision
     can hold a received order with an `ordered` kit, which is the documented
-    legacy state (docs/operations.md), left alone by design."""
+    legacy state (docs.gunp.la, Updating & changelog), left alone by design."""
     walk.down(INITIAL)
     _, order_id = seed_retailer_and_order("2026-08-01")
     _, second_order = seed_retailer_and_order("2026-08-05")
@@ -265,12 +279,12 @@ def test_restore_head_reraises_when_the_test_body_gave_no_signal(monkeypatch):
 
     with pytest.raises(RuntimeError, match="data-conditional failure"):
         _restore_head(cfg, body_failed=False)
-    assert current_revision() == INSTANCE_SETTINGS  # recovered to head before re-raising
+    assert current_revision() == HEAD  # recovered to head before re-raising
     assert calls["n"] == 2  # the rebuild really ran
 
     calls["n"] = 0
     _restore_head(cfg, body_failed=True)  # primary signal exists: swallow
-    assert current_revision() == INSTANCE_SETTINGS
+    assert current_revision() == HEAD
     assert calls["n"] == 2
 
 
@@ -434,9 +448,10 @@ def test_display_downgrade_refuses_until_no_display_data_in_any_form(walk):
     )
     with pytest.raises(RuntimeError, match=r"1 display item\(s\)"):
         walk.down(SHIPPED_AT)
-    # Transactional: nothing moved — including the instance_settings drop that
-    # sits between head and the refusing revision, rolled back with the rest.
-    assert current_revision() == INSTANCE_SETTINGS
+    # Transactional: nothing moved — including the auth-tables and
+    # instance_settings drops that sit between head and the refusing revision,
+    # rolled back with the rest.
+    assert current_revision() == HEAD
     assert db("SELECT count(*) FROM display_items") == [(1,)]
 
     # An order line, with the row also present: the message must put the line
@@ -518,3 +533,300 @@ def test_instance_settings_seeds_one_env_configured_row(bootstrap_currency_jpy, 
 
     walk.down(DISPLAY_ITEMS)
     assert not table_exists("instance_settings")
+
+
+# --- 4f3a9c1e7b2d: session.auth_mode (#191; Codex #209 round 1, f1) -----------------
+
+
+def test_session_auth_mode_backfills_local_and_admits_only_the_two_modes(walk):
+    """A session minted before the column existed was minted by the local
+    password flow — the only flow any released instance had — so it is stamped
+    `local`, not left for the resolver to guess at. The column is then NOT NULL
+    with the two-value CHECK (rule 5); the downgrade drops both and keeps the
+    row."""
+    walk.down(OIDC_LOGIN)
+    db(
+        "INSERT INTO session (id, token_hash) VALUES (:i, 'digest-of-a-local-session')",
+        i=uuid.uuid4(),
+    )
+    walk.up(SESSION_AUTH_MODE)
+    assert db("SELECT auth_mode FROM session") == [("local",)]
+    with pytest.raises(IntegrityError):
+        db("UPDATE session SET auth_mode = 'password'")
+    with pytest.raises(IntegrityError):
+        db("INSERT INTO session (id, token_hash) VALUES (:i, 'unstamped')", i=uuid.uuid4())
+    db(
+        "INSERT INTO session (id, token_hash, auth_mode) VALUES (:i, 'a-provider-session', 'oidc')",
+        i=uuid.uuid4(),
+    )
+    assert db("SELECT count(*) FROM session") == [(2,)]
+    walk.down(OIDC_LOGIN)
+    assert not column_exists("session", "auth_mode")
+    assert db("SELECT count(*) FROM session") == [(2,)]
+
+
+# --- 5cbec7813500: shipping cost and low-stock threshold CHECKs (#309) -----------
+
+
+def test_non_negative_checks_clear_negatives_to_null_and_keep_the_rest(walk):
+    """An importer before #305 could store a negative in either column; the upgrade
+    clears exactly those to null (the owner's call: null claims nothing, 0 would
+    claim free shipping or an alert at zero) and leaves zero, positive and null
+    alone. Afterwards the database refuses a negative; the downgrade drops both
+    constraints and cannot bring a cleared value back."""
+    walk.down(MCP_OAUTH_STATE)
+    retailer_id = uuid.uuid4()
+    db("INSERT INTO retailers (id, name) VALUES (:r, 'Migration Test Shop 309')", r=retailer_id)
+    shipping = {"negative": -100, "zero": 0, "positive": 250, "null": None}
+    for label, value in shipping.items():
+        db(
+            "INSERT INTO orders (id, retailer_id, order_date, order_number, currency_code, "
+            "shipping_cost_minor) VALUES (:o, :r, :d, :n, 'AUD', :s)",
+            o=uuid.uuid4(),
+            r=retailer_id,
+            d=date(2026, 3, 14),
+            n=label,
+            s=value,
+        )
+    threshold = {"negative": -1, "zero": 0, "positive": 3, "null": None}
+    for label, value in threshold.items():
+        db(
+            "INSERT INTO consumables (id, name, category, quantity_on_hand, low_stock_threshold) "
+            "VALUES (:i, :n, 'paint', 1, :t)",
+            i=uuid.uuid4(),
+            n=label,
+            t=value,
+        )
+
+    walk.up(NON_NEGATIVE_CHECKS)
+    assert dict(db("SELECT order_number, shipping_cost_minor FROM orders")) == {
+        "negative": None,
+        "zero": 0,
+        "positive": 250,
+        "null": None,
+    }
+    assert dict(db("SELECT name, low_stock_threshold FROM consumables")) == {
+        "negative": None,
+        "zero": 0,
+        "positive": 3,
+        "null": None,
+    }
+    with pytest.raises(IntegrityError, match="ck_orders_shipping_cost_non_negative"):
+        db("UPDATE orders SET shipping_cost_minor = -1 WHERE order_number = 'zero'")
+    with pytest.raises(IntegrityError, match="ck_consumables_low_stock_threshold_non_negative"):
+        db("UPDATE consumables SET low_stock_threshold = -1 WHERE name = 'zero'")
+
+    walk.down(MCP_OAUTH_STATE)
+    db("UPDATE orders SET shipping_cost_minor = -1 WHERE order_number = 'zero'")
+    db("UPDATE consumables SET low_stock_threshold = -1 WHERE name = 'zero'")
+    assert db("SELECT shipping_cost_minor FROM orders WHERE order_number = 'negative'") == [(None,)]
+
+
+# --- 8e41c7d2a9f6: orders.notes (#348) ---------------------------------------------
+
+
+def test_order_notes_arrive_empty_and_leave_the_order_behind(walk):
+    """An order from before the column reads as having no note, and the rest of its
+    row is untouched in both directions. The downgrade drops the note and only the
+    note: the order is still there, and its header with it."""
+    walk.down(NON_NEGATIVE_CHECKS)
+    retailer_id = uuid.uuid4()
+    db("INSERT INTO retailers (id, name) VALUES (:r, 'Migration Test Shop 348')", r=retailer_id)
+    db(
+        "INSERT INTO orders (id, retailer_id, order_date, order_number, currency_code) "
+        "VALUES (:o, :r, :d, 'AMZ-1', 'AUD')",
+        o=uuid.uuid4(),
+        r=retailer_id,
+        d=date(2026, 10, 27),
+    )
+
+    walk.up(ORDER_NOTES)
+    assert db("SELECT order_number, notes FROM orders") == [("AMZ-1", None)]
+    db("UPDATE orders SET notes = 'Part-paid with a gift card'")
+
+    walk.down(NON_NEGATIVE_CHECKS)
+    assert db("SELECT order_number, order_date FROM orders") == [("AMZ-1", date(2026, 10, 27))]
+    columns = db(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'orders' AND column_name = 'notes'"
+    )
+    assert columns == []
+
+
+# --- 61442608b20e: the `other` item type and its description (#349) ----------------
+
+
+_OTHER_LINE = (
+    "INSERT INTO order_items (id, order_id, item_type, quantity, unit_price_minor, "
+    "currency_code, description, catalog_ref_id) "
+    "VALUES (:i, :o, 'other', 2, 350, 'AUD', :description, :ref)"
+)
+
+
+def test_untracked_lines_arrive_with_their_checks_and_block_the_way_back(walk):
+    """A line from before the column reads as having no description, which is what
+    its type requires. From there the database holds the two rules every writer
+    does: an `other` line has a description and no catalog reference, and no other
+    line has a description. The downgrade refuses while an `other` line exists and
+    leaves the stored line and its order alone once none does."""
+    walk.down(ORDER_NOTES)
+    _, order_id = seed_retailer_and_order("2026-10-27")
+    kit_line_id, other_line_id = uuid.uuid4(), uuid.uuid4()
+    db(
+        "INSERT INTO order_items (id, order_id, item_type, quantity, unit_price_minor, "
+        "currency_code) VALUES (:i, :o, 'kit', 1, 2475, 'AUD')",
+        i=kit_line_id,
+        o=order_id,
+    )
+    with pytest.raises(IntegrityError, match="ck_order_items_item_type"):
+        db(
+            "INSERT INTO order_items (id, order_id, item_type, quantity, unit_price_minor, "
+            "currency_code) VALUES (:i, :o, 'other', 1, 1, 'AUD')",
+            i=uuid.uuid4(),
+            o=order_id,
+        )
+
+    walk.up(UNTRACKED_LINES)
+    assert db("SELECT item_type, description FROM order_items") == [("kit", None)]
+    db(_OTHER_LINE, i=other_line_id, o=order_id, description="Carry bag", ref=None)
+
+    with pytest.raises(IntegrityError, match="ck_order_items_description_only_on_other"):
+        db(_OTHER_LINE, i=uuid.uuid4(), o=order_id, description=None, ref=None)
+    with pytest.raises(IntegrityError, match="ck_order_items_description_only_on_other"):
+        db("UPDATE order_items SET description = 'a kit' WHERE id = :i", i=kit_line_id)
+    with pytest.raises(IntegrityError, match="ck_order_items_other_has_no_catalog_ref"):
+        db(_OTHER_LINE, i=uuid.uuid4(), o=order_id, description="Bag", ref=uuid.uuid4())
+
+    with pytest.raises(RuntimeError, match=r"holds 1 order line\(s\) of that type"):
+        walk.down(ORDER_NOTES)
+    assert current_revision() == UNTRACKED_LINES
+    assert db("SELECT count(*) FROM order_items") == [(2,)]
+
+    db("DELETE FROM order_items WHERE id = :i", i=other_line_id)
+    walk.down(ORDER_NOTES)
+    assert db("SELECT item_type, quantity, unit_price_minor FROM order_items") == [("kit", 1, 2475)]
+    assert not column_exists("order_items", "description")
+
+
+def test_every_migration_renders_offline(capsys):
+    """`alembic upgrade --sql` renders the whole chain as a script without touching a
+    database (env.py's offline mode). A migration that reads a result executes
+    nothing offline and crashed there: #309's first form read `.rowcount` (Greptile,
+    PR #313 round 1). The clean-up has to reach the script, ahead of the CHECK."""
+    command.upgrade(Config("alembic.ini"), f"base:{HEAD}", sql=True)
+    script = capsys.readouterr().out
+    clear = script.index(
+        "UPDATE orders SET shipping_cost_minor = NULL WHERE shipping_cost_minor < 0"
+    )
+    assert script.index("ck_orders_shipping_cost_non_negative") > clear
+    assert "UPDATE consumables SET low_stock_threshold = NULL WHERE low_stock_threshold < 0" in (
+        script
+    )
+
+
+#: Where the models are built for comparison, beside the migrated schema.
+MODELS_PROBE = "models_probe_309"
+
+
+async def _check_definitions(schema: str) -> dict[tuple[str, str], str]:
+    async with get_sessionmaker()() as session:
+        rows = await session.execute(
+            text(
+                "SELECT t.relname, c.conname, pg_get_constraintdef(c.oid) "
+                "FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+                "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                "WHERE c.contype = 'c' AND n.nspname = :schema"
+            ),
+            {"schema": schema},
+        )
+        return {(table, name): definition for table, name, definition in rows}
+
+
+async def _models_and_migrations() -> tuple[dict, dict]:
+    engine = get_sessionmaker().kw["bind"]
+    async with engine.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{MODELS_PROBE}" CASCADE'))
+        await conn.execute(text(f'CREATE SCHEMA "{MODELS_PROBE}"'))
+        await conn.run_sync(
+            lambda sync: Base.metadata.create_all(
+                sync.execution_options(schema_translate_map={None: MODELS_PROBE})
+            )
+        )
+    try:
+        migrated = await _check_definitions("public")
+        built = await _check_definitions(MODELS_PROBE)
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA "{MODELS_PROBE}" CASCADE'))
+    tables = {table.name for table in Base.metadata.sorted_tables}
+    return built, {key: value for key, value in migrated.items() if key[0] in tables}
+
+
+def test_every_check_the_models_declare_is_in_the_migrated_schema():
+    """The models and the migrations each declare the constraints, and nothing held
+    the two together: a CHECK added to a model without a migration, or the reverse,
+    passed every test (found while doing #309). Compared by name **and definition**
+    (Greptile, PR #313 round 1: a same-named constraint with another bound passed
+    the name-only form). Both sides are Postgres's own rendering: the models are
+    built into a scratch schema, so `BETWEEN` and `IN`, which Postgres rewrites,
+    read the same on both."""
+    built, migrated = asyncio.run(_models_and_migrations())
+    assert len(built) >= 20, built
+    assert built == migrated, {
+        "in the models only": sorted(set(built) - set(migrated)),
+        "in the database only": sorted(set(migrated) - set(built)),
+        "defined differently": {
+            key: (built[key], migrated[key])
+            for key in set(built) & set(migrated)
+            if built[key] != migrated[key]
+        },
+    }
+
+
+# --- b7d4f0a3c915: order adjustments (#350) -----------------------------------------
+
+
+_ADJUSTMENT = (
+    "INSERT INTO order_adjustments (id, order_id, label, amount_minor, position) "
+    "VALUES (:i, :o, :label, :amount, :position)"
+)
+
+
+def test_order_adjustments_arrive_with_their_checks_and_block_the_way_back(walk):
+    """An order from before the table has no adjustments and needs none. From
+    there the database holds what one row can say about itself: a positive amount,
+    a label, a position that is not negative, and an order to belong to, whose
+    deletion takes it along. The downgrade refuses while any adjustment exists,
+    and leaves the orders alone once none does."""
+    walk.down(UNTRACKED_LINES)
+    _, order_id = seed_retailer_and_order("2026-10-27")
+    assert db("SELECT to_regclass('order_adjustments')") == [(None,)]
+
+    walk.up(ORDER_ADJUSTMENTS)
+    assert db("SELECT count(*) FROM order_adjustments") == [(0,)]
+    kept = uuid.uuid4()
+    db(_ADJUSTMENT, i=kept, o=order_id, label="Gift card", amount=3388, position=0)
+    # Position is not unique: a hand-written sheet may leave every one at 0.
+    db(_ADJUSTMENT, i=uuid.uuid4(), o=order_id, label="Promo", amount=1, position=0)
+
+    for amount in (0, -1):
+        with pytest.raises(IntegrityError, match="ck_order_adjustments_amount_positive"):
+            db(_ADJUSTMENT, i=uuid.uuid4(), o=order_id, label="Bad", amount=amount, position=0)
+    with pytest.raises(IntegrityError, match="ck_order_adjustments_position_non_negative"):
+        db(_ADJUSTMENT, i=uuid.uuid4(), o=order_id, label="Bad", amount=1, position=-1)
+    with pytest.raises(IntegrityError, match="label"):
+        db(_ADJUSTMENT, i=uuid.uuid4(), o=order_id, label=None, amount=1, position=0)
+    with pytest.raises(IntegrityError, match="fk_order_adjustments_order_id_orders"):
+        db(_ADJUSTMENT, i=uuid.uuid4(), o=uuid.uuid4(), label="Orphan", amount=1, position=0)
+
+    with pytest.raises(RuntimeError, match="holds 2 of them"):
+        walk.down(UNTRACKED_LINES)
+    assert current_revision() == ORDER_ADJUSTMENTS
+    assert db("SELECT count(*) FROM order_adjustments") == [(2,)]
+
+    # Deleting the order takes its adjustments with it, and then the way back is open.
+    db("DELETE FROM orders WHERE id = :o", o=order_id)
+    assert db("SELECT count(*) FROM order_adjustments") == [(0,)]
+    walk.down(UNTRACKED_LINES)
+    assert current_revision() == UNTRACKED_LINES
+    assert db("SELECT to_regclass('order_adjustments')") == [(None,)]

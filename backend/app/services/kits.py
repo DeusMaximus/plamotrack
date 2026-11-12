@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
 from app.schemas.kits import KitCreate, KitUpdate
 from app.services.names import WHITESPACE
+from app.services.text import refuse_unstorable_text
 from app.services.write_gate import acquire_write_gate
 
 # Derived default scale per grade, overridable per kit (§3.1). SD kits are non-scale.
@@ -32,7 +34,7 @@ def default_scale_for_grade(grade: str) -> str | None:
 
 
 #: Which build date entering a status stamps (#94). One map, consulted by every
-#: *live* status writer — `update_kit` (the direct edit and the board drag) and
+#: *live* status writer — `update_kit` (the dialog's status field, an agent's move) and
 #: `receive_order`'s pipeline advance — so the derivation cannot drift between
 #: them. The CSV importer deliberately does NOT derive: an imported kit whose
 #: sheet says `complete` with no completion date stays null rather than acquiring
@@ -56,7 +58,7 @@ def stamp_build_date(
 
     Only-when-null is what makes the dates the user's: a value someone set — by
     backfill, by correction, or by an earlier pass through the status — is never
-    overwritten by a later drag, and `building` → `backlog` → `building` keeps the
+    overwritten by a later move, and `building` → `backlog` → `building` keeps the
     original start. `supplied` names the fields the same request set explicitly
     (including to null); the derivation never fights an explicit value.
     """
@@ -93,15 +95,68 @@ async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
     return kit
 
 
+#: How a kit list is ordered (§13.4, #232, #247). `created` is the order the list
+#: always had (oldest first) and `newest` the same clock reversed — the Kits page's
+#: default; `recent` is the pipeline clock — the moment the kit entered its current
+#: status, `status_updated_at` — newest first, which is what Home's Backlog strip
+#: (newest arrivals) and an agent asking "what moved lately" want; `started` and
+#: `completed` are the build's own dates, newest first, which is what the bench and
+#: Recently completed show (#247: sorted by the status clock, they printed one date
+#: and ordered by another); `name` is alphabetical. One vocabulary for REST and MCP:
+#: the router types the query parameter with it and the tool passes its string
+#: here, so both refuse the same spellings.
+KitSort = Literal["created", "newest", "recent", "started", "completed", "name"]
+KIT_SORTS: tuple[KitSort, ...] = ("created", "newest", "recent", "started", "completed", "name")
+
+
+def _kit_order(sort: KitSort):
+    if sort == "recent":
+        # Ties (kits received by one order share the instant) break by creation,
+        # then id, so the order is stable across reads.
+        return (Kit.status_updated_at.desc(), Kit.created_at.desc(), Kit.id)
+    if sort in ("started", "completed"):
+        # The date the row shows, and nothing standing in for it: a kit without
+        # one (an import never guesses it) sorts after every kit that has one,
+        # rather than by an instant the page does not show (owner's call, #247).
+        # NULLS LAST is spelled out — Postgres puts nulls *first* in a descending
+        # sort. Ties (a backfill to the same midnight) break as `recent`'s do.
+        date = Kit.build_started_at if sort == "started" else Kit.build_completed_at
+        return (date.desc().nulls_last(), Kit.created_at.desc(), Kit.id)
+    if sort == "newest":
+        return (Kit.created_at.desc(), Kit.id)
+    if sort == "name":
+        return (func.lower(Kit.name), Kit.id)
+    return (Kit.created_at, Kit.id)
+
+
+def check_list_options(sort: str, sorts: tuple[str, ...], limit: int | None) -> None:
+    """The value space of a list's `sort` and `limit`, refused as a domain error
+    so REST (400) and MCP (ToolError) answer alike for a value the router's own
+    typing did not already stop."""
+    if sort not in sorts:
+        raise InvalidInputError(
+            f"sort must be one of {', '.join(sorts)}, not {sort!r}",
+            code=error_codes.LIST_SORT_UNKNOWN,
+        )
+    if limit is not None and limit < 1:
+        raise InvalidInputError("limit must be at least 1", code=error_codes.LIST_LIMIT_INVALID)
+
+
 async def list_kits(
     session: AsyncSession,
     status: KitStatus | None = None,
     grade: str | None = None,
     series: str | None = None,
+    *,
+    sort: KitSort = "created",
+    limit: int | None = None,
 ) -> list[Kit]:
-    stmt = select(Kit).order_by(Kit.created_at, Kit.id)
+    check_list_options(sort, KIT_SORTS, limit)
+    stmt = select(Kit).order_by(*_kit_order(sort))
     if status is not None:
         stmt = stmt.where(Kit.status == status)
+    refuse_unstorable_text("grade", grade)
+    refuse_unstorable_text("series", series)
     if grade is not None:
         # Case-insensitive equality, not ILIKE — `M_` is a grade filter, not a
         # pattern that also matches MG (#49). Both sides folded by Postgres, as in
@@ -110,6 +165,8 @@ async def list_kits(
     if series is not None:
         # Same predicate shape as grade, for the same #49 reasons.
         stmt = stmt.where(func.lower(Kit.series) == func.lower(series))
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return list((await session.scalars(stmt)).all())
 
 

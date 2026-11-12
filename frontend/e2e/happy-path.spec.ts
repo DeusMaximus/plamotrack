@@ -1,6 +1,7 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
+import { openListAt } from "./listRows";
 
 // Unique names so the test never collides with (or damages) real dev data.
 const suffix = Date.now().toString(36);
@@ -18,18 +19,18 @@ const TODAY = (() => {
 
 test.describe.configure({ mode: "serial" });
 
-// Wide enough that all seven board columns fit without horizontal scrolling —
-// the drag test measures element positions, which scrolling would invalidate.
-test.use({ viewport: { width: 1920, height: 900 } });
+// Wide enough for Home's two-up bench cards and three mail columns to sit
+// side by side, as the README captures do.
+test.use({ viewport: { width: 1440, height: 900 } });
 
 test("create order → receive → kits and stock update", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
 
-  await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
+  await page.getByRole("button", { name: "New order" }).click();
 
   // Retailer quick-add
-  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "New retailer" }).click();
   await page.getByPlaceholder("New retailer name").fill(SHOP);
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
@@ -39,7 +40,7 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await page.getByPlaceholder("Grade *").fill("HG");
 
   // Line 2: a brand-new consumable via the select-or-create typeahead
-  await page.getByRole("button", { name: "+ Add line" }).click();
+  await page.getByRole("button", { name: "Add line" }).click();
   await page.locator('select:has(option[value="consumable"])').nth(1).selectOption("consumable");
   await page.getByLabel("Quantity").nth(1).fill("3");
   await page.getByLabel("Unit price").nth(1).fill("2");
@@ -55,8 +56,7 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await expect(orderRow.getByText("Pending")).toBeVisible();
 
   // Stock must NOT count while the order is pending
-  await page.goto("/inventory");
-  await page.getByRole("button", { name: "Consumables" }).click();
+  await openListAt(page, "/inventory?tab=consumables", MARKER);
   const markerRow = page.getByRole("row").filter({ hasText: MARKER });
   await expect(markerRow).toBeVisible();
   // The count, not the cell: the "on hand" cell also holds the −/+ stepper (#55),
@@ -67,63 +67,62 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   // Ship, then receive — both live in the Edit dialog now (#120): filling a
   // date that isn't stored yet performs the transition on save. Today's date =
   // "it happened now" (the server stamps the moment), matching the old dialogs.
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await orderRow.getByRole("button", { name: "Edit" }).click();
   const editDialog = page.getByRole("dialog", { name: "Edit order" });
   await editDialog.getByLabel("Shipped on").fill(TODAY);
   await editDialog.getByRole("button", { name: "Save changes" }).click();
   await expect(orderRow.getByText("Shipped")).toBeVisible();
   // The Received column counts transit live while the box is on its way (#120).
-  await expect(orderRow.getByText("in transit · today")).toBeVisible();
+  // `visible`: since #258 the row also holds what the Shipped and Received
+  // columns say for where the table folds them away, hidden at this width.
+  await expect(orderRow.getByText("in transit · today").filter({ visible: true })).toBeVisible();
 
   await orderRow.getByRole("button", { name: "Edit" }).click();
   await editDialog.getByLabel("Received on").fill(TODAY);
   await editDialog.getByRole("button", { name: "Save changes" }).click();
   await expect(orderRow.getByText("Received")).toBeVisible();
   // …and switches to the delivery date with the transit time beside it.
-  await expect(orderRow.getByText(/· same day/)).toBeVisible();
+  await expect(orderRow.getByText(/· same day/).filter({ visible: true })).toBeVisible();
 
   // Stock applied…
-  await page.goto("/inventory");
-  await page.getByRole("button", { name: "Consumables" }).click();
+  await openListAt(page, "/inventory?tab=consumables", MARKER);
   await expect(markerRow.getByTestId("stock-count")).toHaveText("3");
 
   // …and the kit advanced to Backlog (in hand, unbuilt)
-  await page.goto("/kits");
+  await page.goto(`/kits?q=${encodeURIComponent(KIT)}`);
   const kitRow = page.getByRole("row").filter({ hasText: KIT });
   await expect(kitRow).toBeVisible();
   await expect(kitRow.getByText("Backlog").first()).toBeVisible();
 });
 
-test("kanban drag moves the kit to Building", async ({ page }) => {
-  await page.goto("/board");
+test("the kit's status changes from Home's edit dialog (#233 — the drag is gone)", async ({
+  page,
+}) => {
+  // Home lists the backlog by the status clock, newest first, and the kit the
+  // order just delivered is the newest — its row is on the first strip.
+  await page.goto("/");
+  const row = page.getByRole("region", { name: "Backlog" }).getByText(KIT, { exact: true });
+  await expect(row).toBeVisible();
+  await page.getByRole("button", { name: `Edit ${KIT}` }).click();
+  const dialog = page.getByRole("dialog", { name: `Edit ${KIT}` });
+  await dialog.getByLabel("Status").selectOption("building");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toHaveCount(0);
 
-  const handle = page.locator(".cursor-grab", { hasText: KIT });
-  await expect(handle).toBeVisible();
-  const buildingHeader = page.getByText("Building", { exact: true });
-  await expect(buildingHeader).toBeVisible();
-
-  const handleBox = (await handle.boundingBox())!;
-  const targetBox = (await buildingHeader.boundingBox())!;
-
-  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(targetBox.x + 30, targetBox.y + 90, { steps: 15 });
-  await page.mouse.up();
-
-  // Optimistic UI: the card is under Building immediately; the API agrees shortly.
-  const api = await request.newContext({ baseURL: API });
-  await expect
-    .poll(async () => {
-      const kits = (await (await api.get("/kits")).json()) as { name: string; status: string }[];
-      return kits.find((kit) => kit.name === KIT)?.status;
-    })
-    .toBe("building");
+  // The bench shows it, with the start date the transition stamped (#94), and
+  // the API agrees — the same PATCH the Kits page and an agent make.
+  const bench = page.getByRole("region", { name: "On the bench" });
+  await expect(bench.getByRole("heading", { level: 3, name: KIT })).toBeVisible();
+  await expect(bench.getByText(/^Started /).first()).toBeVisible();
+  const api = await apiContext();
+  const kits = (await (await api.get("/kits")).json()) as { name: string; status: string }[];
+  expect(kits.find((kit) => kit.name === KIT)?.status).toBe("building");
   await api.dispose();
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
 
   const kits = (await (await api.get("/kits")).json()) as { id: string; name: string }[];
   const kit = kits.find((k) => k.name === KIT);
