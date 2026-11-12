@@ -41,6 +41,22 @@ Template:
 
 ---
 
+## 2026-11-12 — Claude Code (Opus 5.5) — #184 (Japanese catalogue) brought up to `main` at `034df59`; still disabled, waiting on a native reviewer
+
+- **Done:**
+  - **[PR #184](https://github.com/DeusMaximus/plamotrack/pull/184)** (draft, `feature/ja-localisation`): merged `main` in at `d5370bd` (clean), then one catalogue commit, `034df59`. Summary comment: [#184 comment](https://github.com/DeusMaximus/plamotrack/pull/184#issuecomment-6821012916).
+    - Coverage 593/797 → **797/797**. The 204 keys added since September are translated (Home, auth/OIDC, access tokens, theme, phone shell/filter sheet, order notes, adjustments, `other` lines, `api.auth.*`, `api.ingress.*`).
+    - Deleted the 11 keys `main` removed (`nav.board`, `layout.tagline`, `board.*`). After the merge they were the one failing `catalogue.test.ts` case. Dropped the leading `+` from the six buttons that lost it in English. `kit_move_to_catalog_line` follows its #349 rewording.
+    - `ja.json` is now in `en-AU.json`'s key order (plural groups carry `_other` only).
+    - Meaning fixes: `orders.pillPending` was 保留中 ("on hold") for `ordered` orders, now 発送待ち. The pre-order tooltip said "not arrived" for "not released" (発売前). The future-date errors ruled out today. Also the reference-cost placeholder, "no longer exists", and count word order.
+- **Decisions (owner deferred to the author, 2026-11-12):** the terminology, recorded in the comment above and superseding the PR body's list. 完成 (complete), 製作中 (building), ディテールアップパーツ (upgrade), 作品 (series), 到着 (received), 工具 / 在庫 (tools / inventory). Backlog is **split**: 未組立 as the kit status, 積みプラ for the Home heading and its strings. Data labels stay neutral; the hobby idiom goes on Home, as English does with "On the bench". The empty-backlog joke stays; 積みプラゼロ、お見事です。 is the safer alternative if a native reviewer prefers praise to teasing.
+- **State:**
+  - Local at `034df59`: vitest 684/684, lint (one existing warning in `Layout.tsx`), build, `git diff --check`, `i18n:report`. PR CI: Frontend passed; Backend and Integration were still pending when this was written.
+  - Not done: no rendered pass with `ja` enabled. ディテールアップパーツ is the longest label: the inventory tab row scrolls on a phone (§13.7) and should fit from 768 px, unchecked on screen.
+  - **Not for merging yet (owner):** enabling `ja` needs a named human Japanese reviewer plus the visual pass in `docs/translating.md`. The owner has no reviewer yet. Until then, keep the branch current: merge `main` in (never rebase), translate new `en-AU` keys, and compare changed `en-AU` values by hand, since coverage can't see them.
+  - **Carried from the entry below, unchanged:** CI on `main` at `341119d` passed. The owner's LXC is on v0.6.0-alpha. Unreleased on `main`: #333, #341/#343, #346/#352, #348, #349, #350, plus #351's docs drift (`.agents/next-release.md`). Owed to plamotrack-ios: #348–#350's fields, codes and scenarios. The dev DB may be three migrations behind (`alembic upgrade head`). Two T3 reviewer worktrees are T3's to remove.
+- **Next:** unchanged from the entry below: #358, #354, #355, #356, #359, #361; the next release (#351, #344); M6.7 (#279's edge probes, then #281, #282); M7 waits on #28. #184 waits on a reviewer.
+
 ## 2026-11-12 — Claude Code (Fable 5.2) — #349 MERGED as `6c70787` (PR #360); #350 MERGED as `0c8478b` (PR #362); #359, #361 filed
 
 - **Done:**
@@ -133,41 +149,3 @@ Template:
   - **#348** (order notes, a problem the owner actually hit; `RequestModel` and `parse_text` now cover a new text field), then #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price).
   - **The next release:** #351, #344.
   - **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
-
-## 2026-10-29 — Codex (GPT-6) — documentation drift filed as #351 for the next release cycle
-
-- **Done:**
-  - Created [#351](https://github.com/DeusMaximus/plamotrack/issues/351), labelled
-    `documentation`, at the owner's request. Ten checklist items cover token
-    permissions and OAuth wording, phone import, archive compatibility, source
-    setup, Node requirements, implemented auth still marked planned, release
-    status, the retired Kanban dependency, and the generic frontend README.
-  - Findings link to `9908d5f`; the published baseline checked was v0.6.0-alpha.
-    Configuration-only Compose check reproduced the missing-password failure;
-    a compatibility-function probe confirmed export-format versus app-version
-    behaviour. No service was started or collection data changed.
-  - Added #351 as explicitly pending work in `.agents/next-release.md`.
-    Documentation corrections are not implemented by this bookkeeping change.
-  - Rotated the oldest hand-off entry into `.agents/handoff/2026-10.md` verbatim.
-- **Decisions (owner):** include the smaller documentation items and complete the
-  cleanup in the next release cycle. No existing milestone names that release;
-  the issue and release checklist carry the scheduling intent.
-- **State:**
-  - Issue #351 is published. Local ledger and hand-off changes are uncommitted
-    on `main`; no commit or push was requested.
-  - Unreleased implementation remains #333 and #341/#343; #342 was tests only.
-    The release ledger retains those entries separately from the pending task.
-  - Carried from 18/10, not reverified here: #346 (NUL text reaches Postgres)
-    and #344 (dependency/image pins, low priority before or with next release).
-    #344 needs five images including uv, and the Postgres pin in Compose, CI,
-    and release-candidate; the bump mechanism remains undecided.
-  - Carried operational notes: owner's LXC on 0.5.2; refresh the Gunpla skill at
-    upgrade (#289). testhost remains in the tunnel configuration from the 0.6.0
-    gate; do not recreate its Keycloak container. Owner follow-ups: allow
-    `pkg-containers.githubusercontent.com` in cloud Network access, delete the
-    Claude.ai Testing connector, and complete #278's skill-zip check.
-  - Known gaps: #238, #324 (local e2e uses `--workers=1`), #320.
-- **Next:** implement #351 in the next release cycle, with the docs-site claim
-  check it lists. Other sequencing remains #279's edge probes, then #281's
-  packaging and #282's VPS path; M7 waits on #28. plamotrack-ios can re-sync
-  #342's scenarios once its #15 adds `update_order` and `delete_order`.
