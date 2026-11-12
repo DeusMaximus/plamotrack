@@ -72,6 +72,54 @@ class Order(UUIDPrimaryKeyMixin, Base):
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
+    # What came off the price at the checkout (#350), in entry order. Loaded with
+    # the order, always (`selectin`), rather than by an option at each query: the
+    # read schema derives `totals` from these, and under asyncio a load site that
+    # forgot the option would be a 500 on the first order serialised from it.
+    adjustments: Mapped[list["OrderAdjustment"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="(OrderAdjustment.position, OrderAdjustment.id)",
+        lazy="selectin",
+    )
+
+
+class OrderAdjustment(UUIDPrimaryKeyMixin, Base):
+    """Something that came off what an order cost: a discount, a promo code, a
+    voucher, a gift card (#350).
+
+    It belongs to the order, never to a line. Line prices stay what the shop
+    charged for each thing, because per-kit price history is read from them, and
+    what was paid is derived on the way out (`services/order_totals.py`) — items
+    plus shipping less these — so no stored total can go stale behind an edit.
+
+    `amount_minor` is positive and in the order's own `currency_code`; being an
+    adjustment is what makes it a deduction. Together an order's adjustments never
+    exceed its lines in that currency plus its shipping: every writer refuses that
+    (`order_totals.adjustment_overrun`), since the database cannot say it in a
+    CHECK across three tables.
+
+    Nothing here tracks a card's balance, its expiry, or which order drew it down.
+    """
+
+    __tablename__ = "order_adjustments"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    # What it was, in the buyer's words: "Gift card", "SPRING10". Never blank.
+    label: Mapped[str]
+    amount_minor: Mapped[int]
+    # Where it sits among the order's adjustments, lowest first. Not unique: a
+    # hand-written sheet may leave every one at the default, and `id` breaks the tie.
+    position: Mapped[int] = mapped_column(default=0)
+
+    order: Mapped[Order] = relationship(back_populates="adjustments")
+
+    __table_args__ = (
+        CheckConstraint("amount_minor > 0", name="amount_positive"),
+        CheckConstraint("position >= 0", name="position_non_negative"),
+    )
 
 
 class OrderItem(UUIDPrimaryKeyMixin, Base):

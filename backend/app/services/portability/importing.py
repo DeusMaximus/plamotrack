@@ -152,7 +152,7 @@ _check_stub_placeholders()
 #: archive's settings sheet, if any, is applied to it as an update (#23).
 _PORTABLE_TABLES = (
     "kits, kit_photos, tools, consumables, upgrades, display_items, "
-    "upgrade_applications, retailers, orders, order_items"
+    "upgrade_applications, retailers, orders, order_items, order_adjustments"
 )
 
 _ROW_MARKER = "_source_row"

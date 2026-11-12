@@ -7,9 +7,15 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { Order, OrderItem } from "../api/types";
+import type { Order, OrderItem, OrderTotal } from "../api/types";
 import { formatMoney } from "./format";
-import { convertedTotal, orderTotal, shippingLine } from "./orderMoney";
+import {
+  adjustmentLines,
+  convertedTotal,
+  orderTotal,
+  paidLine,
+  shippingLine,
+} from "./orderMoney";
 
 function line(
   currency: string,
@@ -40,22 +46,85 @@ function order(
   } as Order;
 }
 
+/** One currency's share as the server derives it (`order.totals`). */
+function total(currency: string, items: number, shipping = 0, adjustments = 0): OrderTotal {
+  return {
+    currency_code: currency,
+    items_minor: items,
+    shipping_minor: shipping,
+    adjustments_minor: adjustments,
+    paid_minor: items + shipping - adjustments,
+  };
+}
+
+function totalled(
+  currency: string,
+  totals: OrderTotal[],
+  adjustments: [label: string, amount: number][] = [],
+): Order {
+  return {
+    currency_code: currency,
+    totals,
+    adjustments: adjustments.map(([label, amount_minor], index) => ({
+      id: `adjustment-${index}`,
+      label,
+      amount_minor,
+    })),
+  } as Order;
+}
+
 describe("orderTotal", () => {
-  it("sums the lines by their own currency and adds shipping in the order's", () => {
+  it("is what was paid, per currency, in the order the server gives them", () => {
     const jpy = formatMoney(1000, "JPY"); // "JPY 1,000", with the formatter's own space
-    expect(orderTotal(order("AUD", [line("JPY", 1000, null), line("AUD", 500, null, 2)]))).toBe(
-      `${jpy} + $10.00`,
+    expect(orderTotal(totalled("AUD", [total("JPY", 1000), total("AUD", 1000, 1200)]))).toBe(
+      `${jpy} + $22.00`,
     );
-    expect(
-      orderTotal(order("AUD", [line("JPY", 1000, null)], { shipping_cost_minor: 1200 })),
-    ).toBe(`${jpy} + $12.00`);
   });
 
-  it("is a dash without lines, and a zero shipping adds no term", () => {
-    expect(orderTotal(order("AUD", []))).toBe("—");
-    expect(orderTotal(order("AUD", [line("JPY", 1000, null)], { shipping_cost_minor: 0 }))).toBe(
-      formatMoney(1000, "JPY"),
+  it("is a dash when there is nothing to total", () => {
+    expect(orderTotal(totalled("AUD", []))).toBe("—");
+  });
+
+  it("is the paid figure, never the shelf price, on an order with adjustments", () => {
+    // The issue's own receipt (#350): $51.25 of kits, a $33.88 gift card.
+    const paid = totalled("AUD", [total("AUD", 5125, 0, 3388)], [["Amazon gift card", 3388]]);
+    expect(orderTotal(paid)).toBe("$17.37");
+    // Paid in full by the card: a recorded zero is a total, not an absence.
+    expect(orderTotal(totalled("AUD", [total("AUD", 5125, 0, 5125)], [["Gift card", 5125]]))).toBe(
+      "$0.00",
     );
+  });
+});
+
+describe("adjustmentLines and paidLine", () => {
+  it("lists what came off in entry order, as negatives in the order's currency", () => {
+    const paid = totalled(
+      "AUD",
+      [total("JPY", 9000), total("AUD", 5125, 500, 3888)],
+      [
+        ["Promo", 500],
+        ["Amazon gift card", 3388],
+      ],
+    );
+    expect(adjustmentLines(paid)).toEqual([
+      { id: "adjustment-0", label: "Promo", amount: formatMoney(-500, "AUD") },
+      { id: "adjustment-1", label: "Amazon gift card", amount: formatMoney(-3388, "AUD") },
+    ]);
+    expect(adjustmentLines(paid)[1].amount).toMatch(/33\.88/);
+    expect(adjustmentLines(paid)[1].amount).not.toBe(formatMoney(3388, "AUD"));
+    expect(paidLine(paid)).toBe(`${formatMoney(9000, "JPY")} + $17.37`);
+  });
+
+  it("a yen order's adjustments are whole yen", () => {
+    const paid = totalled("JPY", [total("JPY", 9000, 0, 1500)], [["Coupon", 1500]]);
+    expect(adjustmentLines(paid)[0].amount).toBe(formatMoney(-1500, "JPY"));
+    expect(paidLine(paid)).toBe(formatMoney(7500, "JPY"));
+  });
+
+  it("says nothing on an order without adjustments", () => {
+    const plain = totalled("AUD", [total("AUD", 1000, 1200)]);
+    expect(adjustmentLines(plain)).toEqual([]);
+    expect(paidLine(plain)).toBeNull();
   });
 });
 

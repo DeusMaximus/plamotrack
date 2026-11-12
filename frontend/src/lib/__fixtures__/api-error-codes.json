@@ -558,6 +558,13 @@
         "name"
       ]
     },
+    "order.adjustments_exceed_total": {
+      "params": [
+        "currency_code",
+        "adjustments_minor",
+        "ceiling_minor"
+      ]
+    },
     "order.already_received": {
       "params": []
     },

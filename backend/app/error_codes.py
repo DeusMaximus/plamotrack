@@ -70,6 +70,10 @@ ORDER_LINE_NOT_ON_ORDER = "order_line.not_on_order"
 ORDER_LINE_DUPLICATED = "order_line.duplicated"
 ORDER_LINE_TYPE_IMMUTABLE = "order_line.item_type_immutable"
 ORDER_LINE_NO_KIT_TO_CLONE = "order_line.no_kit_to_clone"
+#: #350: an order's adjustments come to more than its lines in the order's
+#: currency plus its shipping. One code for all three writers — the importer's
+#: preview raises it as a row diagnostic on the same rule (`order_totals`).
+ORDER_ADJUSTMENTS_EXCEED_TOTAL = "order.adjustments_exceed_total"
 CATALOG_ITEM_CATEGORY_REQUIRED = "catalog_item.category_required"
 CATALOG_ITEM_MANUFACTURER_REQUIRED = "catalog_item.manufacturer_required"
 CATALOG_ITEM_CATEGORY_UNSUPPORTED = "catalog_item.category_unsupported"

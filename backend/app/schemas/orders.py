@@ -24,6 +24,7 @@ from app.schemas.kits import KitRead
 from app.schemas.numeric import NonNegativeInt4, PositiveInt4, Rating
 from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
 from app.services.order_stage import OrderStage, order_stage
+from app.services.order_totals import order_totals
 from app.services.text import stripped_or_none
 
 
@@ -201,6 +202,37 @@ class OrderItemCreate(RequestModel):
 OrderNotes = StrippedText
 
 
+def _adjustment_label(value: str) -> str:
+    stripped = stripped_or_none(value)
+    if stripped is None:
+        raise ValueError("label must not be blank — say what the adjustment was")
+    return stripped
+
+
+class OrderAdjustmentCreate(RequestModel):
+    """Something that came off what the order cost (#350): a discount, a promo
+    code, a voucher, a gift card."""
+
+    label: Annotated[str, AfterValidator(_adjustment_label)] = Field(
+        description='What it was, in your own words: "Gift card", "SPRING10".'
+    )
+    amount_minor: PositiveInt4 = Field(
+        description=(
+            "How much came off, as a positive number of minor units in the order's "
+            "own currency_code. Being an adjustment is what makes it a deduction."
+        )
+    )
+
+
+_ADJUSTMENTS_HELP = (
+    "What came off the price at the checkout — discounts, promo codes, vouchers, "
+    "gift cards — one entry each, in the order's own currency. Line prices stay "
+    "what the shop charged for each thing; never lower one to record a discount. "
+    "Together they may not come to more than the order's lines in that currency "
+    "plus its shipping."
+)
+
+
 class OrderCreate(RequestModel):
     retailer_id: uuid.UUID
     order_date: date
@@ -227,6 +259,9 @@ class OrderCreate(RequestModel):
     # only (the kits are already past that stage).
     shipped_at: AwareDatetime | None = None
     items: list[OrderItemCreate] = Field(min_length=1)
+    adjustments: list[OrderAdjustmentCreate] = Field(
+        default_factory=list, description=_ADJUSTMENTS_HELP
+    )
 
     @model_validator(mode="after")
     def _received_at_implies_received(self) -> "OrderCreate":
@@ -290,6 +325,15 @@ class OrderUpdate(RequestModel):
     shipped_at: AwareDatetime | None = None
     # None = leave line items untouched; a list is the full replacement set.
     items: list[OrderItemUpsert] | None = Field(default=None, min_length=1)
+    # Omitted or null = leave them as stored; a list is the full replacement
+    # set, and an empty one removes them all (#350).
+    adjustments: list[OrderAdjustmentCreate] | None = Field(
+        default=None,
+        description=(
+            _ADJUSTMENTS_HELP + " On an update this is the full replacement set: "
+            "omit it to leave the stored adjustments alone, send [] to remove them."
+        ),
+    )
 
 
 class OrderReceive(RequestModel):
@@ -333,6 +377,30 @@ class OrderItemRead(BaseModel):
     kits: list[KitRead] = []
 
 
+class OrderAdjustmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    label: str
+    amount_minor: int
+
+
+class OrderTotalRead(BaseModel):
+    """One currency's share of what an order cost (#350). An order whose lines
+    are all in one currency has one of these."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    currency_code: str
+    # The lines in this currency at what the shop charged: quantity × unit price.
+    items_minor: int
+    # Zero in every currency but the order's own, where the next two live.
+    shipping_minor: int
+    adjustments_minor: int
+    # items + shipping − adjustments: what was actually paid in this currency.
+    paid_minor: int
+
+
 class OrderRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -349,6 +417,8 @@ class OrderRead(BaseModel):
     received_at: datetime | None
     notes: str | None
     items: list[OrderItemRead]
+    # What came off at the checkout, in the order's currency, in entry order (#350).
+    adjustments: list[OrderAdjustmentRead]
 
     # Derived on the way out, never stored (#233, §13.2): where the order sits —
     # received, in_transit, pre_ordered (every spawned kit still a pre-order) or
@@ -358,3 +428,10 @@ class OrderRead(BaseModel):
     @property
     def stage(self) -> OrderStage:
         return order_stage(self)
+
+    # Derived on the way out, never stored (#350): what the order cost and what
+    # was paid, per currency, from the one rule the writers hold adjustments to.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def totals(self) -> list[OrderTotalRead]:
+        return [OrderTotalRead.model_validate(total) for total in order_totals(self)]

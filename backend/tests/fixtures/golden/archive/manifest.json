@@ -1,9 +1,9 @@
 {
   "format": "plamotrack-archive",
   "export_version": 2,
-  "schema_version": "61442608b20e",
+  "schema_version": "b7d4f0a3c915",
   "app_version": "0.6.0",
-  "exported_at": "2026-11-11T21:10:42.233582+00:00",
+  "exported_at": "2026-11-12T01:41:07.913267+00:00",
   "tables": {
     "instance_settings": {
       "file": "instance_settings.csv",
@@ -36,6 +36,10 @@
     "order_items": {
       "file": "order_items.csv",
       "rows": 9
+    },
+    "order_adjustments": {
+      "file": "order_adjustments.csv",
+      "rows": 2
     },
     "kits": {
       "file": "kits.csv",

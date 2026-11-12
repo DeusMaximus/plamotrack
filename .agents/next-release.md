@@ -66,6 +66,29 @@ Shape:
   lines, so an Other line is as free as a kit line, and that a description on any other
   type of line is refused.
 
+## #350 — an order records discounts, vouchers and gift cards, and what was paid (PR #362)
+- **Release note:** An order can record what came off its price at the checkout: a
+  discount, a promo code, a voucher, a gift card. Each is a label and an amount in the
+  order's currency, entered under the lines in the order editor. Line prices stay what
+  the shop charged, and the order shows what was actually paid: in the Orders list's
+  total and in a breakdown under the order's lines. Together they can't come to more
+  than the order's lines in its currency plus its shipping. On `create_order` and
+  `update_order` as `adjustments`, on every order read with per-currency `totals`
+  (items, shipping, adjustments, paid), and in a new `order_adjustments.csv`.
+- **Release note (changed behaviour):** the Orders list's total is now what was paid.
+  For an order with no adjustments that is the same figure as before.
+- **Upgrade note:** one migration (`b7d4f0a3c915`). Downgrading past it is refused
+  while any order holds an adjustment.
+- **README:** nothing. The MCP tool table does not list a tool's fields.
+- **Docs site:** `using/kits-and-orders.mdx`: recording a discount or gift card on an
+  order, that line prices are left alone, the Paid breakdown, and the limit.
+  `using/import-export.mdx`: nothing for the starter sheet, which has no adjustments.
+- **Other docs:** `docs/import-export.md`: the new `order_adjustments.csv` (columns,
+  that `order_id` is required so an adjustment can only join an order that has an id,
+  matching without an id on order + label, so two under one label on one order need ids), the archive's file list, and in
+  "What an import can't do to an order", the limit: judged on the order as it lands,
+  whichever of the three sheets changed it.
+
 ## #351 — reconcile documentation drift (pending next-release task)
 - [ ] Complete [#351](https://github.com/DeusMaximus/plamotrack/issues/351) during
   the next release cycle, including the smaller Kanban and frontend README items.

@@ -181,6 +181,7 @@ async def collection(client):
                         "kit": {"name": "Zaku II", "grade": "HG"},
                     }
                 ],
+                "adjustments": [{"label": "Coupon", "amount_minor": 10}],
             },
         )
     ).json()
@@ -218,6 +219,10 @@ async def collection(client):
                 "quantity": "1",
                 "currency_code": "JPY",
             },
+        },
+        "order_adjustments": {
+            "id": order["adjustments"][0]["id"],
+            "row": {"order_id": order["id"], "label": "Coupon", "amount_minor": "10"},
         },
         "kits": {"id": kit["id"], "row": {"name": "Zaku II", "grade": "HG"}},
         "upgrade_applications": {

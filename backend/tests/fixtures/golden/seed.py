@@ -386,6 +386,12 @@ async def _seed(client) -> dict[str, dict[str, str]]:
                         "description": 'Carry bag, "large"',
                     },
                 ],
+                # What came off at the counter (#350): two, so the archive pins
+                # their order, and labels a CSV writer has to quote.
+                "adjustments": [
+                    {"label": 'Loyalty "10% off"', "amount_minor": 570},
+                    {"label": "Gift card, store", "amount_minor": 2000},
+                ],
             },
         ),
         201,

@@ -28,6 +28,7 @@
         "display_items",
         "orders",
         "order_items",
+        "order_adjustments",
         "kits",
         "upgrade_applications",
         "kit_photos"

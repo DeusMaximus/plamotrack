@@ -1,30 +1,46 @@
-/** What an order row says about money (§6, rule 4): the order's own total, the
- *  lines' entry-time conversion snapshots summed beneath it, and the shipping
- *  line that closes the expanded lines box (§13.4). Pure over the API's `Order`,
- *  so the rules are tested here and the page only renders. */
+/** What an order row says about money (§6, rule 4): what was paid, the lines'
+ *  entry-time conversion snapshots summed beneath it, and the shipping,
+ *  adjustment and paid lines that close the expanded lines box (§13.4, #350).
+ *  Pure over the API's `Order`, so the rules are tested here and the page only
+ *  renders. */
 
 import type { Order } from "../api/types";
 import { formatMoney } from "./format";
 
-/** The order's total per currency — lines by their own currency, shipping in
- *  the order's — joined, or a dash for an order without lines. */
+/** What was paid for the order, per currency, joined — or a dash for an order
+ *  with nothing to total. The server's figures (`order.totals`, #350): lines by
+ *  their own currency, shipping and adjustments in the order's, so the page
+ *  adds nothing up and cannot disagree with what an agent reads. Without
+ *  adjustments this is the lines and shipping, as it always was. */
 export function orderTotal(order: Order): string {
-  const byCurrency = new Map<string, number>();
-  for (const item of order.items) {
-    byCurrency.set(
-      item.currency_code,
-      (byCurrency.get(item.currency_code) ?? 0) + item.quantity * item.unit_price_minor,
-    );
-  }
-  if (order.shipping_cost_minor) {
-    byCurrency.set(
-      order.currency_code,
-      (byCurrency.get(order.currency_code) ?? 0) + order.shipping_cost_minor,
-    );
-  }
   return (
-    [...byCurrency].map(([currency, minor]) => formatMoney(minor, currency)).join(" + ") || "—"
+    order.totals.map((total) => formatMoney(total.paid_minor, total.currency_code)).join(" + ") ||
+    "—"
   );
+}
+
+export type AdjustmentLine = {
+  id: string;
+  label: string;
+  /** The deduction in the order's currency, formatted as the negative it is. */
+  amount: string;
+};
+
+/** The adjustment rows of the expanded lines box (#350): what came off, in the
+ *  order they were entered, each in the order's own currency. */
+export function adjustmentLines(order: Order): AdjustmentLine[] {
+  return order.adjustments.map((adjustment) => ({
+    id: adjustment.id,
+    label: adjustment.label,
+    amount: formatMoney(-adjustment.amount_minor, order.currency_code),
+  }));
+}
+
+/** The line that closes the money in the expanded box: what was paid, shown
+ *  only on an order with adjustments. Without any, the lines and shipping above
+ *  it already say so, and a row restating the list's own total is noise. */
+export function paidLine(order: Order): string | null {
+  return order.adjustments.length === 0 ? null : orderTotal(order);
 }
 
 /** The lines' entry-time conversion snapshots summed: shown under the order's own

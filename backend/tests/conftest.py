@@ -31,7 +31,7 @@ from app.services.instance_settings import DEFAULTS as _SETTINGS_DEFAULTS  # noq
 
 _TABLES = (
     "kits, kit_photos, tools, consumables, upgrades, display_items, "
-    "upgrade_applications, retailers, orders, order_items, "
+    "upgrade_applications, retailers, orders, order_items, order_adjustments, "
     # Auth tables (M6-3, #188). Never portable, so absent from the CSV spec, but
     # they still accumulate across tests: setup claims the owner and login/setup
     # write credentials, sessions and audit rows. `owner` is the exception — a

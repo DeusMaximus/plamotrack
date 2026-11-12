@@ -104,6 +104,14 @@ interface OrderFormValues {
    *  a retailer splitting a shipment becomes two plamotrack orders. */
   pre_order: boolean;
   items: LineValues[];
+  /** What came off at the checkout (#350): a label and an amount in major units
+   *  of the order's currency, as typed. */
+  adjustments: AdjustmentValues[];
+}
+
+interface AdjustmentValues {
+  label: string;
+  amount: string;
 }
 
 function emptyLine(currency: string, kitStatus: LineValues["kit_status"] = "ordered"): LineValues {
@@ -155,6 +163,10 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
     // Not read on an edit — the toggle is create-only (#120); after entry the
     // order's pre-order state is derived from its kits (`isPreOrder`).
     pre_order: false,
+    adjustments: order.adjustments.map((adjustment) => ({
+      label: adjustment.label,
+      amount: minorToMajor(adjustment.amount_minor, order.currency_code),
+    })),
     items: order.items.map((item) => {
       // Read off the order being edited, not a cached kit list. The line can only
       // show one set of kit fields, so it shows the first spawned kit's — the
@@ -534,6 +546,88 @@ function LineEditor({
   );
 }
 
+/** One adjustment (#350): what it was and how much came off, in the order's own
+ *  currency — stated beside the amount, as a line states its own, and never a
+ *  choice here. The desktop's row is label, amount, code, remove; a phone puts
+ *  the label and the remove control on one row and the amount under it, each
+ *  under a label that shows (§13.7). */
+function AdjustmentEditor({
+  index,
+  register,
+  errors,
+  currency,
+  onRemove,
+}: {
+  index: number;
+  register: UseFormRegister<OrderFormValues>;
+  errors: FieldErrors<OrderFormValues>;
+  currency: string;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  const ids = useId();
+  const labelId = `${ids}label`;
+  const amountId = `${ids}amount`;
+  const rowErrors = errors.adjustments?.[index];
+  return (
+    <div className="space-y-1 rounded-md border border-border bg-surface-alt p-3">
+      <div className="flex items-center gap-2 max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:items-end max-md:gap-x-2 max-md:gap-y-3">
+        <div className="min-w-0 flex-1 max-md:col-start-1 max-md:row-start-1">
+          <label htmlFor={labelId} className={LINE_LABEL_CLASS}>
+            {t("orders.adjustmentLabel")}
+          </label>
+          <Input
+            id={labelId}
+            aria-label={t("orders.adjustmentLabel")}
+            placeholder={t("orders.adjustmentLabelPlaceholder")}
+            {...register(`adjustments.${index}.label`, {
+              validate: (value) => value.trim() !== "" || t("validation.adjustmentLabelRequired"),
+            })}
+          />
+        </div>
+        <div className="md:contents max-md:col-span-2 max-md:row-start-2 max-md:min-w-0">
+          <label htmlFor={amountId} className={LINE_LABEL_CLASS}>
+            {t("orders.adjustmentAmount")}
+          </label>
+          <div className="md:contents max-md:relative">
+            <Input
+              id={amountId}
+              type="number"
+              step={stepFor(currency)}
+              min={0}
+              inputMode="decimal"
+              aria-label={t("orders.adjustmentAmount")}
+              placeholder={t("orders.adjustmentAmount")}
+              className="!w-28 max-md:!w-full max-md:pe-12"
+              {...register(`adjustments.${index}.amount`, {
+                // Above zero once counted in the currency's own minor units: a
+                // third decimal of a dollar rounds to nothing, and the server
+                // refuses a zero.
+                validate: (value) =>
+                  majorToMinor(value, currency) > 0 || t("validation.adjustmentAmountRequired"),
+              })}
+            />
+            <span className={CODE_CLASS}>{currency}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={t("orders.removeAdjustment")}
+          className="rounded-sm p-1 text-faint hover:bg-chip hover:text-text touch:p-[15px] max-md:col-start-2 max-md:row-start-1"
+        >
+          <X size={14} aria-hidden />
+        </button>
+      </div>
+      {(rowErrors?.label || rowErrors?.amount) && (
+        <span className="block text-xs text-danger">
+          {rowErrors?.label?.message ?? rowErrors?.amount?.message}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Gate, so the form below is only ever *mounted* with everything it reconstructs
  * the stored order from.
  *
@@ -714,6 +808,7 @@ function OrderForm({
         shipped_date: "",
         pre_order: false,
         items: [emptyLine(referenceCurrency)],
+        adjustments: [],
       };
     }
     const catalogName = new Map(catalog.map((row) => [row.id, row.name]));
@@ -731,6 +826,7 @@ function OrderForm({
     formState: { errors, isSubmitting, dirtyFields },
   } = useForm<OrderFormValues>({ defaultValues: defaults });
   const { fields, append, remove } = useFieldArray({ control, name: "items" });
+  const adjustmentRows = useFieldArray({ control, name: "adjustments" });
 
   const addRetailer = async () => {
     const name = newRetailerName?.trim();
@@ -756,6 +852,16 @@ function OrderForm({
     // it tracks fields, and a deleted line has none.
     const lineDirty =
       !order || values.items.length !== order.items.length || anyDirty(dirtyFields.items);
+    // The same rule for what came off (#350): restated only when this edit touched
+    // them, since the rows hold a copy from when the dialog opened. A changed
+    // order currency counts as touching them — the amounts on screen are in the
+    // currency now chosen, and a yen figure left standing as cents would be
+    // a hundredth of what the form shows.
+    const adjustmentsDirty =
+      !order ||
+      values.adjustments.length !== order.adjustments.length ||
+      anyDirty(dirtyFields.adjustments) ||
+      (Boolean(dirtyFields.currency_code) && values.adjustments.length > 0);
     const payload: OrderUpdate = {
       retailer_id: values.retailer_id,
       order_date: values.order_date,
@@ -796,6 +902,12 @@ function OrderForm({
             ]);
             return toOrderItem(line, referenceCurrency, kitRestated);
           })
+        : undefined,
+      adjustments: adjustmentsDirty
+        ? values.adjustments.map((adjustment) => ({
+            label: adjustment.label.trim(),
+            amount_minor: majorToMinor(adjustment.amount, values.currency_code),
+          }))
         : undefined,
     };
     // The same two date fields do two jobs (#120). On an order that already
@@ -879,6 +991,7 @@ function OrderForm({
               true, // a create always states kit details — there is nothing stored to echo
             ),
           ),
+          adjustments: payload.adjustments,
         });
       }
       await invalidateOrderViews(queryClient);
@@ -1174,6 +1287,37 @@ function OrderForm({
           ))}
         </div>
 
+        {/* What came off at the checkout (#350): the order's, never a line's, so
+            it sits under the lines and a line's price stays what the shop charged. */}
+        <div className="space-y-2">
+          {/* May wrap: under an enlarged font on a narrow phone the heading and
+              the button are each wider than half the form, and a row that
+              cannot wrap pushes the button past the screen (dialogs.spec.ts). */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="min-w-0 text-sm font-semibold text-text">
+              {t("orders.adjustmentsHeading")}
+            </h3>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={Plus}
+              onClick={() => adjustmentRows.append({ label: "", amount: "" })}
+            >
+              {t("orders.addAdjustment")}
+            </Button>
+          </div>
+          <p className="text-xs text-muted">{t("orders.adjustmentsHelp")}</p>
+          {adjustmentRows.fields.map((field, index) => (
+            <AdjustmentEditor
+              key={field.id}
+              index={index}
+              register={register}
+              errors={errors}
+              currency={watch("currency_code")}
+              onRemove={() => adjustmentRows.remove(index)}
+            />
+          ))}
+        </div>
       </form>
     </Modal>
   );

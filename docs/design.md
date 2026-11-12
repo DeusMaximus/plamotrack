@@ -380,6 +380,65 @@ a gamble that remembering which ones pack properly has real value.
 | received_at | timestamp (nullable) | null = pending (not yet arrived) — see §3.9 |
 | notes | text (nullable) | what no other field holds about this purchase: how it was paid, a substitution, a partial refund, a damage claim (#348). Read by nothing but the person reading it, so no state refuses an edit to it. Every writer stores what the importer's `parse_text` would read (`services/text.stripped_or_none`): no surrounding whitespace, blank is null, so its own export re-imports as no change (rule 10). Not on the starter sheet, whose rows are lines and would each have to say it |
 
+### 3.8a `order_adjustments` ✅ (#350, 12/11/2026)
+
+| Field | Type | Notes |
+|---|---|---|
+| id | uuid | |
+| order_id | uuid FK | cascades with the order |
+| label | text | what it was, in the buyer's words: "Gift card", "SPRING10". Never blank |
+| amount_minor | int | positive, in the order's own `currency_code`. Being an adjustment is what makes it a deduction |
+| position | int | where it sits among the order's adjustments, lowest first. Not unique; `id` breaks a tie |
+
+A discount, a promo code, a voucher or a gift card applied to an order. Before this
+there was nowhere to put one, so an order could not say what was paid, and the
+workaround was to lower a line's price until the sum came out. That corrupts per-kit
+price history and retailer comparisons, and an even split gives the cheaper kit the
+bigger cut. So:
+
+- **It belongs to the order, never to a line.** `unit_price_minor` stays what the shop
+  charged for each thing. Nothing allocates an adjustment across lines. If a per-kit
+  effective cost is ever wanted, allocate at read time, in proportion to line value,
+  with largest-remainder rounding so the shares sum exactly, and store none of it.
+- **A list, not a single discount field,** because shops stack them: a promo code and
+  a gift card on one order.
+- **What was paid is derived, never stored.** Every order read carries `totals`
+  (`services/order_totals.py`): per currency, the lines at shelf price, shipping,
+  adjustments and `paid_minor`. An edit to a line cannot leave a stale total behind.
+  Per currency because an order is: a line has its own `currency_code` (§6), nothing
+  here converts, and shipping and adjustments are in the order's currency alone.
+- **Adjustments never exceed what they came off** (owner's call, 05/11/2026): together
+  they may not come to more than the order's lines *in the order's currency* plus its
+  shipping, so `paid_minor` is never negative. Lines in another currency do not count:
+  a deduction in dollars cannot come off a price in yen. It is one predicate
+  (`order_totals.adjustment_overrun`) asked of the order **as it will be stored**, by
+  `create_order` and `update_order` and by the importer's preview (§12.5a), since a
+  cheaper line, a removed line, a dropped shipping cost and a changed order currency
+  break it without the adjustments being mentioned. The database cannot hold it; it
+  spans three tables. All three writers refuse with `order.adjustments_exceed_total`.
+- **A stated list replaces the set.** On an update, omitted means leave them, a list
+  is all of them in order, and an empty list removes them. A list that restates what
+  is stored writes nothing, so the rows keep their ids and the next export is the last
+  one (rule 10). The order editor sends the list only when it was touched (the #358
+  class), or when the order's currency was, since the amounts on screen are in the
+  currency now chosen.
+- **No balances.** Nothing tracks a card's remaining value, its expiry, or which
+  order drew it down.
+- **Spend reporting is unchanged** (owner's call, 05/11/2026). There is none today:
+  `get_summary` counts kits and orders, not money. When there is, it reads shelf
+  prices, not what was paid.
+- **In the archive** as `order_adjustments.csv`, one row each, matched without an id
+  on order + label. The amount is not part of the match, so a corrected amount updates
+  the row and cannot land as a second deduction; two adjustments under one label on
+  one order need ids. The `export_version` stays 2: no release was published
+  between #349 and this, so no reader of version 2 exists that lacks the file, and a
+  version-1 reader already refuses the archive.
+
+One thing the Orders list does not do: the converted sub-line under an order's total
+(§6) is still the lines' entry-time snapshots summed, at shelf price. With an
+adjustment on a foreign-currency order it sits under a paid total and is not reduced
+by it, because an adjustment has no snapshot of its own.
+
 ### 3.9 `order_items`
 
 The dispatch point between orders and the catalog tables.
@@ -2661,6 +2720,9 @@ refused rather than mangled; a `schema_version` mismatch is a warning. The versi
 **2** since #349 (12/11/2026), which added a row an older reader cannot hold: an
 `other` order line (§3.9). A column an older reader would merely drop, such as
 `orders.notes` (#348), does not move it. Version-1 archives read unchanged.
+`order_adjustments.csv` (#350, §3.8a) joined the archive under the same version 2,
+because no release was published in between. An archive without the file, which is
+every version-1 archive, restores with no adjustments.
 
 The CSVs are deliberately human-readable as well as machine-restorable: every uuid FK
 carries a readable twin column (`retailer_name`, `catalog_name`), and every integer

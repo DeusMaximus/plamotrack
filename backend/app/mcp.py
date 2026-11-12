@@ -35,6 +35,7 @@ from app.schemas.catalog import (
 from app.schemas.kits import KitCreate, KitRead, KitUpdate
 from app.schemas.numeric import Int4, NonNegativeInt4, PositiveInt4
 from app.schemas.orders import (
+    OrderAdjustmentCreate,
     OrderCreate,
     OrderItemCreate,
     OrderRead,
@@ -509,6 +510,7 @@ async def create_order(
     received: bool = False,
     received_at: str | None = None,
     shipped_at: str | None = None,
+    adjustments: list[OrderAdjustmentCreate] | None = None,
 ) -> dict:
     """Record a purchase. Name the shop with exactly one of `retailer_id` — the id
     of a shop already on record, from list_retailers; use it whenever you have the
@@ -543,7 +545,14 @@ async def create_order(
     reference — only unique per retailer, never treat it as an identifier). `notes`
     is free text for what no other field holds about this purchase: how it was paid,
     a substitution, a partial refund, a damage claim. It changes no total and no
-    stock, so a real price or quantity belongs on the lines. Prices
+    stock, so a real price or quantity belongs on the lines. `adjustments` is what
+    came off the price at the checkout — a discount, a promo code, a voucher, a
+    gift card — one `{label, amount_minor}` each, the amount a positive number of
+    minor units in the order's currency. Keep every line at the price the shop
+    charged and record the deduction here; never lower a line price to make the
+    total match. Together they may not exceed the order's lines in that currency
+    plus its shipping. The order's `totals` then show, per currency, items,
+    shipping, adjustments and what was actually paid. Prices
     are integer minor units (cents/yen) with an ISO 4217 currency_code. Each item
     line's currency_code is required; the order-level currency_code is what may be
     omitted, and omitting it takes the instance's own reference currency, which
@@ -585,6 +594,7 @@ async def create_order(
             received_at=parsed_received_at,
             shipped_at=parsed_shipped_at,
             items=items,
+            adjustments=adjustments or [],
         )
         order = await orders_service.create_order(session, data)
         return OrderRead.model_validate(order).model_dump(mode="json")
@@ -613,8 +623,10 @@ async def list_orders(
 
 @mcp.tool
 async def get_order(order_id: str) -> dict:
-    """Read one order in full: header fields, received state, and every line with
-    its id, prices, the §6 conversion snapshot, and the kits it spawned. ALWAYS
+    """Read one order in full: header fields, received state, every line with
+    its id, prices, the §6 conversion snapshot, and the kits it spawned, the
+    adjustments that came off its price, and `totals` — per currency, items,
+    shipping, adjustments and `paid_minor`, what was actually paid. ALWAYS
     read the order with this before editing it with update_order — line edits are
     keyed by the line ids this returns, and the full line set you must restate
     comes from here. Ids come from list_orders."""
@@ -632,6 +644,12 @@ async def update_order(
     tracking, shipping_cost_minor, currency_code, retailer_id, notes) and/or the
     line set. Read the order with get_order first. Only the fields present in
     `changes` are touched; a null or blank `notes` clears it.
+
+    `changes.adjustments`, when present, is the full replacement set of what
+    came off the price (discounts, vouchers, gift cards — see create_order): omit
+    it to leave the stored ones alone, send [] to remove them all. An edit that
+    would leave the adjustments larger than the order's lines in its currency
+    plus its shipping is refused, whichever of those the edit changed.
 
     `changes.items`, when present, is the FULL replacement set: a line with an
     `id` (from get_order) updates that line, a line without one is added — and a

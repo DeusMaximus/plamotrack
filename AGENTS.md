@@ -107,7 +107,7 @@ docker-compose.dev.yml  # explicit dev overlay: publishes Postgres on loopback o
 backend/
   Dockerfile            # multi-stage uv build; also the migrate service's image
   app/
-    models/             # SQLAlchemy 2.0 async models — 10 tables
+    models/             # SQLAlchemy 2.0 async models — 11 tables
     schemas/            # Pydantic v2 request/response models
     services/           # ALL business logic lives here (see rules below)
       portability/      # CSV import/export — spec.py registry drives all of it
@@ -406,6 +406,15 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    null-or-present together, enforced by a CHECK constraint. The instance default
    lives in `settings.reference_currency` and is stamped in by the service layer at
    write time; `converted_price_aud_minor` survives only as a CSV import alias.
+   - **An order's adjustments (#350)** — discounts, vouchers, gift cards — are rows
+     of their own in the order's currency, never a lowered line price, and what was
+     paid is derived (`services/order_totals.py`, the `totals` on every order read),
+     never stored. Together they may not exceed the order's lines in its currency
+     plus its shipping. That is a rule about the **order as it will be stored**, not
+     about adjustments: `order_totals.adjustment_overrun` is the one predicate, asked
+     by `create_order`, `update_order` and `invariants.py`, so anything new that can
+     change a line's quantity, price or currency, an order's shipping or its
+     currency owes the same question (rule 1).
 5. **Enums are text + CHECK constraint,** not native Postgres enums — the
    generic-vs-Gunpla taxonomy question (§9.1) is still open, keep it a data migration.
 6. **Errors:** services raise `app.exceptions` domain errors (`NotFoundError`,

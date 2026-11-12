@@ -46,7 +46,13 @@ import {
   useTextParam,
   useWriteParams,
 } from "../lib/listState";
-import { convertedTotal, orderTotal, shippingLine } from "../lib/orderMoney";
+import {
+  adjustmentLines,
+  convertedTotal,
+  orderTotal,
+  paidLine,
+  shippingLine,
+} from "../lib/orderMoney";
 import { usePresentationVersion } from "../lib/presentation";
 import { useShell } from "../lib/shell";
 
@@ -822,6 +828,7 @@ function OrderCard({
 function CardLines({ order, itemName }: { order: Order; itemName: Map<string, string> }) {
   const { t } = useTranslation();
   const shipping = shippingLine(order);
+  const paid = paidLine(order);
   const foot = "flex items-baseline justify-between gap-2.5 border-t border-rule px-3 py-2.5 text-[12.5px] text-muted";
   return (
     <div className="mx-3 mb-3 overflow-hidden rounded-sm border border-rule bg-surface-alt">
@@ -861,6 +868,18 @@ function CardLines({ order, itemName }: { order: Order; itemName: Map<string, st
           <span className="tabular-nums">{shipping.amount ?? "—"}</span>
         </div>
       )}
+      {adjustmentLines(order).map((adjustment) => (
+        <div key={adjustment.id} className={`${foot} bg-surface`}>
+          <span className="min-w-0 wrap-anywhere">{adjustment.label}</span>
+          <span className="shrink-0 tabular-nums">{adjustment.amount}</span>
+        </div>
+      ))}
+      {paid !== null && (
+        <div className={`${foot} bg-surface font-medium text-text`}>
+          <span>{t("orders.paidLine")}</span>
+          <span className="shrink-0 tabular-nums">{paid}</span>
+        </div>
+      )}
       {hasTracking(order) && (
         <div className={`${foot} bg-surface`}>
           <span>{t("orders.headerTracking")}</span>
@@ -886,6 +905,7 @@ function CardLines({ order, itemName }: { order: Order; itemName: Map<string, st
 function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, string> }) {
   const { t } = useTranslation();
   const shipping = shippingLine(order);
+  const paid = paidLine(order);
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_6rem_max-content_8rem] overflow-hidden rounded-sm border border-rule bg-surface-alt text-[13px]">
       {order.items.map((item, index) => {
@@ -925,6 +945,25 @@ function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, str
             )}
           </span>
           <span className="tabular-nums">{shipping.amount ?? "—"}</span>
+        </div>
+      )}
+      {/* What came off at the checkout, then what was paid (#350). A label is
+          free text, so it is measured like every other free-text cell (#323). */}
+      {adjustmentLines(order).map((adjustment) => (
+        <div
+          key={adjustment.id}
+          className="col-span-4 flex items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs text-muted"
+        >
+          <span className="min-w-0">
+            <Measured text={adjustment.label} kind="text" />
+          </span>
+          <span className="shrink-0 tabular-nums">{adjustment.amount}</span>
+        </div>
+      ))}
+      {paid !== null && (
+        <div className="col-span-4 flex items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs font-medium text-text">
+          <span>{t("orders.paidLine")}</span>
+          <span className="shrink-0 tabular-nums">{paid}</span>
         </div>
       )}
       {/* Where the Tracking column goes when the table folds it away (§13.7). */}
