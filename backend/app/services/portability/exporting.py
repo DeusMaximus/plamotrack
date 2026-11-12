@@ -26,6 +26,7 @@ from app.models import (
     ItemType,
     Kit,
     Order,
+    OrderAdjustment,
     OrderItem,
     Retailer,
     Tool,
@@ -126,6 +127,15 @@ async def _load_all(session: AsyncSession) -> dict[str, list[Any]]:
         ),
         "orders": list(orders),
         "order_items": list(order_items),
+        "order_adjustments": list(
+            (
+                await session.scalars(
+                    select(OrderAdjustment).order_by(
+                        OrderAdjustment.order_id, OrderAdjustment.position, OrderAdjustment.id
+                    )
+                )
+            ).all()
+        ),
         "kits": list((await session.scalars(select(Kit).order_by(Kit.created_at, Kit.id))).all()),
         # `id` breaks ties: two applications at one instant otherwise came out in
         # whatever order the plan produced them, and the archive's row order is

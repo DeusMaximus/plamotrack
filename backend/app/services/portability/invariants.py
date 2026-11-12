@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 from app import error_codes
 from app.models import ItemType
 from app.schemas.portability import Diagnostic, RowAction
+from app.services.order_totals import adjustment_overrun
 from app.services.orders import IMMUTABLE_LINE_COLUMNS, receipt_is_future
 from app.services.portability.spec import CATALOG_TABLE_BY_ITEM_TYPE
 
@@ -74,6 +75,7 @@ def check(
     _check_receipt_transitions(rows)
     _check_future_receipts(rows)
     _check_ship_dates(rows)
+    _check_adjustment_totals(rows, by_id=by_id, replace_all=replace_all)
 
 
 def _writes(row: "_Row") -> bool:
@@ -566,3 +568,150 @@ def _receipt_diagnostic(arriving: bool, types: set[str]) -> Diagnostic:
             f"own and leave the order alone, state it in {files}"
         ),
     )
+
+
+# --- adjustments never exceed what they came off (#350) --------------------------
+
+#: The columns the rule reads, by table. A row that writes none of them cannot
+#: break it, and is never blamed for an overrun it did not cause.
+_ADJUSTMENT_INPUTS = ("amount_minor", "order_id")
+_ORDER_INPUTS = ("shipping_cost_minor", "currency_code")
+_LINE_INPUTS = ("quantity", "unit_price_minor", "currency_code")
+
+
+def _lands(row: "_Row", field: str) -> Any:
+    """What `field` will hold once this row is written — `apply_import`'s own
+    reading: a create writes the sheet's value, an update writes only its
+    `changes` and keeps the stored value for everything else."""
+    if row.target is None or _change(row, field) is not None:
+        return row.values.get(field)
+    return getattr(row.target, field)
+
+
+def _check_adjustment_totals(
+    rows: dict[str, list["_Row"]],
+    *,
+    by_id: dict[str, dict[uuid.UUID, Any]],
+    replace_all: bool,
+) -> None:
+    """An order's adjustments never come to more than its lines in the order's
+    currency plus its shipping — `order_totals.adjustment_overrun`, the predicate
+    `create_order` and `update_order` refuse on (rule 1). The database cannot hold
+    it: it spans three tables.
+
+    Judged on the order **as it lands**, which three sheets decide between them:
+    a larger adjustment, a cheaper or re-denominated line, a dropped shipping
+    cost and a changed order currency all reach the same state. So the stored
+    rows are overlaid with every row this upload writes, and each order whose
+    inputs the upload changed is asked the question once.
+
+    **Only orders the upload changed the inputs of.** A row restating what is
+    stored — every row of a re-imported archive — moves nothing and is never
+    asked. A new line or a new order is not an input change either: a line only
+    ever raises the ceiling, and a new order's adjustments are rows of their own,
+    which are.
+
+    **Who is refused.** The adjustment rows this upload writes onto the order,
+    when there are any: they are what the sheet can lower. Otherwise the order or
+    line rows whose change brought the ceiling down under adjustments already
+    stored.
+
+    `replace_all` reads the upload alone, for the reason the checks above give:
+    `by_id` is the database that mode is about to truncate.
+    """
+    stored: dict[str, dict[uuid.UUID, Any]] = {
+        table: {} if replace_all else by_id[table]
+        for table in ("orders", "order_items", "order_adjustments")
+    }
+    # order id -> (currency, shipping)
+    orders: dict[uuid.UUID, tuple[Any, Any]] = {
+        order.id: (order.currency_code, order.shipping_cost_minor)
+        for order in stored["orders"].values()
+    }
+    # order id -> line id -> (currency, quantity, unit price)
+    lines: dict[uuid.UUID, dict[uuid.UUID, tuple[Any, Any, Any]]] = {}
+    for line in stored["order_items"].values():
+        lines.setdefault(line.order_id, {})[line.id] = (
+            line.currency_code,
+            line.quantity,
+            line.unit_price_minor,
+        )
+    # order id -> adjustment id -> amount
+    adjustments: dict[uuid.UUID, dict[uuid.UUID, Any]] = {}
+    for adjustment in stored["order_adjustments"].values():
+        adjustments.setdefault(adjustment.order_id, {})[adjustment.id] = adjustment.amount_minor
+
+    #: order id -> the rows whose change moved one of its inputs, by table.
+    moved: dict[uuid.UUID, dict[str, list[_Row]]] = {}
+
+    def _moved(order_id: Any, row: "_Row") -> None:
+        moved.setdefault(order_id, {}).setdefault(row.table, []).append(row)
+
+    for row in rows.get("orders", []):
+        if not _writes(row):
+            continue
+        order_id = row.matched_id or row.new_id
+        orders[order_id] = (_lands(row, "currency_code"), _lands(row, "shipping_cost_minor"))
+        if row.target is not None and any(_change(row, field) for field in _ORDER_INPUTS):
+            _moved(order_id, row)
+
+    for row in rows.get("order_items", []):
+        if not _writes(row):
+            continue
+        order_id = _lands(row, "order_id")
+        lines.setdefault(order_id, {})[row.matched_id or row.new_id] = (
+            _lands(row, "currency_code"),
+            _lands(row, "quantity"),
+            # `_COLUMN_DEFAULTS`: a hand-written line may leave its price out.
+            _lands(row, "unit_price_minor") or 0,
+        )
+        if row.target is not None and any(_change(row, field) for field in _LINE_INPUTS):
+            _moved(order_id, row)
+
+    for row in rows.get("order_adjustments", []):
+        if not _writes(row):
+            continue
+        adjustment_id = row.matched_id or row.new_id
+        order_id = _lands(row, "order_id")
+        if row.target is not None:
+            adjustments.get(row.target.order_id, {}).pop(adjustment_id, None)
+        adjustments.setdefault(order_id, {})[adjustment_id] = _lands(row, "amount_minor")
+        if row.target is None or any(_change(row, field) for field in _ADJUSTMENT_INPUTS):
+            _moved(order_id, row)
+
+    for order_id, by_table in moved.items():
+        # Always there: a row that writes names an order that is stored or that
+        # this upload writes, or its reference was refused before it got here.
+        currency_code, shipping_cost_minor = orders[order_id]
+        overrun = adjustment_overrun(
+            currency_code=currency_code,
+            shipping_cost_minor=shipping_cost_minor,
+            lines=lines.get(order_id, {}).values(),
+            adjustments=adjustments.get(order_id, {}).values(),
+        )
+        if overrun is None:
+            continue
+        blamed = by_table.get("order_adjustments") or [
+            *by_table.get("orders", []),
+            *by_table.get("order_items", []),
+        ]
+        for row in blamed:
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.ORDER_ADJUSTMENTS_EXCEED_TOTAL,
+                    params={
+                        "currency_code": overrun.currency_code,
+                        "adjustments_minor": overrun.adjustments_minor,
+                        "ceiling_minor": overrun.ceiling_minor,
+                    },
+                    detail=(
+                        f"this order's adjustments would come to {overrun.adjustments_minor} "
+                        f"{overrun.currency_code} in minor units, more than the "
+                        f"{overrun.ceiling_minor} its {overrun.currency_code} lines and "
+                        "shipping come to — an adjustment is in the order's own currency "
+                        "and cannot take off more than was charged in it. Lower the "
+                        "adjustments, or correct the lines, the shipping or the order's "
+                        "currency, the same as the app requires"
+                    ),
+                )
+            )

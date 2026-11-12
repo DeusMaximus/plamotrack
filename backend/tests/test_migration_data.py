@@ -47,11 +47,12 @@ MCP_OAUTH_STATE = "d5e9362140ea"
 NON_NEGATIVE_CHECKS = "5cbec7813500"
 ORDER_NOTES = "8e41c7d2a9f6"
 UNTRACKED_LINES = "61442608b20e"
+ORDER_ADJUSTMENTS = "b7d4f0a3c915"
 
 # The current migration head, as a literal (this module keeps revision ids as
 # literals on purpose — see the header). The "recovered to head" / "nothing
 # moved" assertions compare against it, so a new migration bumps this one line.
-HEAD = UNTRACKED_LINES
+HEAD = ORDER_ADJUSTMENTS
 
 
 def db(sql: str, **params) -> list[tuple]:
@@ -780,3 +781,52 @@ def test_every_check_the_models_declare_is_in_the_migrated_schema():
             if built[key] != migrated[key]
         },
     }
+
+
+# --- b7d4f0a3c915: order adjustments (#350) -----------------------------------------
+
+
+_ADJUSTMENT = (
+    "INSERT INTO order_adjustments (id, order_id, label, amount_minor, position) "
+    "VALUES (:i, :o, :label, :amount, :position)"
+)
+
+
+def test_order_adjustments_arrive_with_their_checks_and_block_the_way_back(walk):
+    """An order from before the table has no adjustments and needs none. From
+    there the database holds what one row can say about itself: a positive amount,
+    a label, a position that is not negative, and an order to belong to, whose
+    deletion takes it along. The downgrade refuses while any adjustment exists,
+    and leaves the orders alone once none does."""
+    walk.down(UNTRACKED_LINES)
+    _, order_id = seed_retailer_and_order("2026-10-27")
+    assert db("SELECT to_regclass('order_adjustments')") == [(None,)]
+
+    walk.up(ORDER_ADJUSTMENTS)
+    assert db("SELECT count(*) FROM order_adjustments") == [(0,)]
+    kept = uuid.uuid4()
+    db(_ADJUSTMENT, i=kept, o=order_id, label="Gift card", amount=3388, position=0)
+    # Position is not unique: a hand-written sheet may leave every one at 0.
+    db(_ADJUSTMENT, i=uuid.uuid4(), o=order_id, label="Promo", amount=1, position=0)
+
+    for amount in (0, -1):
+        with pytest.raises(IntegrityError, match="ck_order_adjustments_amount_positive"):
+            db(_ADJUSTMENT, i=uuid.uuid4(), o=order_id, label="Bad", amount=amount, position=0)
+    with pytest.raises(IntegrityError, match="ck_order_adjustments_position_non_negative"):
+        db(_ADJUSTMENT, i=uuid.uuid4(), o=order_id, label="Bad", amount=1, position=-1)
+    with pytest.raises(IntegrityError, match="label"):
+        db(_ADJUSTMENT, i=uuid.uuid4(), o=order_id, label=None, amount=1, position=0)
+    with pytest.raises(IntegrityError, match="fk_order_adjustments_order_id_orders"):
+        db(_ADJUSTMENT, i=uuid.uuid4(), o=uuid.uuid4(), label="Orphan", amount=1, position=0)
+
+    with pytest.raises(RuntimeError, match="holds 2 of them"):
+        walk.down(UNTRACKED_LINES)
+    assert current_revision() == ORDER_ADJUSTMENTS
+    assert db("SELECT count(*) FROM order_adjustments") == [(2,)]
+
+    # Deleting the order takes its adjustments with it, and then the way back is open.
+    db("DELETE FROM orders WHERE id = :o", o=order_id)
+    assert db("SELECT count(*) FROM order_adjustments") == [(0,)]
+    walk.down(UNTRACKED_LINES)
+    assert current_revision() == UNTRACKED_LINES
+    assert db("SELECT to_regclass('order_adjustments')") == [(None,)]

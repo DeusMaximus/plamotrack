@@ -228,6 +228,27 @@ export interface OrderItem {
   kits: Kit[];
 }
 
+/** Something that came off what an order cost (#350): a discount, a promo
+ *  code, a voucher, a gift card. `amount_minor` is positive, in the order's own
+ *  currency; being an adjustment is what makes it a deduction. */
+export interface OrderAdjustment {
+  id: string;
+  label: string;
+  amount_minor: number;
+}
+
+/** One currency's share of what an order cost (#350), derived on the server
+ *  (`services/order_totals.py`) and never recomputed here. Shipping and
+ *  adjustments are zero in every currency but the order's own. */
+export interface OrderTotal {
+  currency_code: string;
+  items_minor: number;
+  shipping_minor: number;
+  adjustments_minor: number;
+  /** items + shipping − adjustments: what was actually paid in this currency. */
+  paid_minor: number;
+}
+
 export interface Order {
   id: string;
   retailer_id: string;
@@ -246,6 +267,11 @@ export interface Order {
    *  strips it and stores a blank one as null. */
   notes: string | null;
   items: OrderItem[];
+  /** What came off at the checkout, in entry order (#350). */
+  adjustments: OrderAdjustment[];
+  /** What the order cost and what was paid, one entry per currency, in the
+   *  order the lines first name them (#350). */
+  totals: OrderTotal[];
   /** Where the order sits (§13.2, #233), derived on the server from the dates
    *  and the spawned kits — received, in_transit (shipped), pre_ordered (every
    *  kit still a pre-order) or ordered. Never stored; the Orders filter, Home's
@@ -303,6 +329,11 @@ export interface OrderItemCreate {
   description?: string | null;
 }
 
+export interface OrderAdjustmentCreate {
+  label: string;
+  amount_minor: number;
+}
+
 export interface OrderCreate {
   retailer_id: string;
   order_date: string;
@@ -321,6 +352,7 @@ export interface OrderCreate {
    *  the assertion. On its own it lands spawned kits in_transit. */
   shipped_at?: string;
   items: OrderItemCreate[];
+  adjustments?: OrderAdjustmentCreate[];
 }
 
 /** A line in an order edit: with id = update, without = new; omitted = removed. */
@@ -345,6 +377,9 @@ export interface OrderUpdate {
    *  shipping goes through `shipOrder`. Cannot be nulled. */
   shipped_at?: string;
   items?: OrderItemUpsert[];
+  /** Omitted = leave the stored ones alone; a list is the full replacement
+   *  set, and an empty one removes them all (#350). */
+  adjustments?: OrderAdjustmentCreate[];
 }
 
 /** Optional body for the receive call: omit entirely for "it arrived now". */

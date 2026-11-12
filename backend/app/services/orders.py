@@ -18,6 +18,7 @@ from app.models import (
     Kit,
     KitStatus,
     Order,
+    OrderAdjustment,
     OrderItem,
     Retailer,
     Tool,
@@ -25,6 +26,7 @@ from app.models import (
 )
 from app.schemas.orders import (
     NewCatalogItem,
+    OrderAdjustmentCreate,
     OrderCreate,
     OrderItemCreate,
     OrderKitDetails,
@@ -48,6 +50,7 @@ from app.services.names import (
     find_by_name,
     require_unique_name,
 )
+from app.services.order_totals import order_adjustment_overrun
 from app.services.text import refuse_unstorable_text
 from app.services.write_gate import acquire_write_gate
 
@@ -997,7 +1000,9 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
             params={"retailer_id": data.retailer_id},
         )
 
-    order = Order(**data.model_dump(exclude={"items", "received", "received_at", "shipped_at"}))
+    order = Order(
+        **data.model_dump(exclude={"items", "adjustments", "received", "received_at", "shipped_at"})
+    )
     received_at: datetime | None = None
     if data.received:
         # The schema guarantees received_at only arrives alongside received=true.
@@ -1026,10 +1031,75 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
             shipped_at=data.shipped_at,
             reference=reference,
         )
+    await _set_adjustments(session, order, data.adjustments, stored=[])
 
+    await session.flush()
     result = await get_order(session, order.id)
+    _refuse_adjustment_overrun(result)
     await session.commit()
     return result
+
+
+async def _set_adjustments(
+    session: AsyncSession,
+    order: Order,
+    adjustments: list[OrderAdjustmentCreate],
+    *,
+    stored: list[OrderAdjustment],
+) -> None:
+    """Make `adjustments` the order's whole set, in the order given (#350).
+
+    A replacement, not a diff: an adjustment has no kits and no stock behind it,
+    so there is nothing to carry from an old row to a new one. A set that restates
+    what is stored writes nothing, which keeps the rows' ids — and so the next
+    export — unchanged by a save that changed nothing.
+
+    `stored` is passed in rather than read off `order.adjustments`: on a new
+    order that collection was never loaded, and touching it under asyncio is a
+    lazy load. Rows are written by `order_id` for the same reason, and the caller
+    re-reads the order (`get_order`) before it answers.
+    """
+    if [(row.label, row.amount_minor) for row in stored] == [
+        (entry.label, entry.amount_minor) for entry in adjustments
+    ]:
+        return
+    for row in stored:
+        await session.delete(row)
+    session.add_all(
+        OrderAdjustment(
+            order_id=order.id,
+            label=entry.label,
+            amount_minor=entry.amount_minor,
+            position=position,
+        )
+        for position, entry in enumerate(adjustments)
+    )
+
+
+def _refuse_adjustment_overrun(order: Order) -> None:
+    """The order as it is about to be stored, against the one rule its adjustments
+    answer to together (`order_totals.adjustment_overrun`).
+
+    Asked of the finished order on every write, never of the adjustments alone:
+    a cheaper line, a removed line, a dropped shipping cost and a changed order
+    currency each break it without the adjustments being mentioned.
+    """
+    overrun = order_adjustment_overrun(order)
+    if overrun is None:
+        return
+    raise InvalidInputError(
+        f"the adjustments come to {overrun.adjustments_minor} {overrun.currency_code} "
+        f"in minor units, more than the {overrun.ceiling_minor} this order's "
+        f"{overrun.currency_code} lines and shipping come to — an adjustment is in the "
+        "order's own currency and cannot take off more than was charged in it. Lower "
+        "the adjustments, or correct the lines, the shipping or the order's currency",
+        code=error_codes.ORDER_ADJUSTMENTS_EXCEED_TOTAL,
+        params={
+            "currency_code": overrun.currency_code,
+            "adjustments_minor": overrun.adjustments_minor,
+            "ceiling_minor": overrun.ceiling_minor,
+        },
+    )
 
 
 async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Order:
@@ -1078,7 +1148,7 @@ async def update_order(
     received = order.received_at is not None
     await _lock_catalog_targets(session, items=order.items, lines=data.items or ())
 
-    header = data.model_dump(exclude_unset=True, exclude={"items"})
+    header = data.model_dump(exclude_unset=True, exclude={"items", "adjustments"})
     if "retailer_id" in header:
         if header["retailer_id"] is None:
             raise InvalidInputError(
@@ -1206,8 +1276,12 @@ async def update_order(
             if item_id not in seen:
                 await _remove_line(session, item, received)
 
+    if data.adjustments is not None:
+        await _set_adjustments(session, order, data.adjustments, stored=list(order.adjustments))
+
     await session.flush()
     result = await get_order(session, order.id)
+    _refuse_adjustment_overrun(result)
     await session.commit()
     return result
 

@@ -465,6 +465,181 @@
           "consumables": [{ "id": "@consumables:marker", "quantity_on_hand": 1 }]
         }
       }
+    },
+    {
+      "id": "an-order-records-what-came-off-and-keeps-its-line-prices",
+      "why": "rule 4, #350: a discount, voucher or gift card is an adjustment on the order, a label and a positive amount in the order's currency, stored in the order given. The lines keep the prices the shop charged, so per-kit price history is not bent to make a total come out. What was paid is derived: 2475 + 2650 - 500 - 3388 = 1237",
+      "given": {
+        "retailers": [{ "id": "@retailers:amazon", "name": "Amazon AU" }]
+      },
+      "steps": [
+        {
+          "op": "create_order",
+          "args": {
+            "retailer_id": "@retailers:amazon",
+            "order_date": "2026-10-27",
+            "currency_code": "AUD",
+            "items": [
+              {
+                "item_type": "other",
+                "quantity": 1,
+                "unit_price_minor": 2475,
+                "currency_code": "AUD",
+                "description": "Demi Trainer"
+              },
+              {
+                "item_type": "other",
+                "quantity": 1,
+                "unit_price_minor": 2650,
+                "currency_code": "AUD",
+                "description": "Dilanza"
+              }
+            ],
+            "adjustments": [
+              { "label": "Promo", "amount_minor": 500 },
+              { "label": "Amazon gift card", "amount_minor": 3388 }
+            ]
+          },
+          "as": "@orders:new"
+        }
+      ],
+      "then": {
+        "tables": {
+          "orders": [{ "id": "@orders:new", "currency_code": "AUD" }],
+          "order_items": [
+            { "order_id": "@orders:new", "description": "Demi Trainer", "unit_price_minor": 2475 },
+            { "order_id": "@orders:new", "description": "Dilanza", "unit_price_minor": 2650 }
+          ],
+          "order_adjustments": [
+            { "order_id": "@orders:new", "label": "Promo", "amount_minor": 500, "position": 0 },
+            { "order_id": "@orders:new", "label": "Amazon gift card", "amount_minor": 3388, "position": 1 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "adjustments-cannot-come-to-more-than-the-order-was-charged",
+      "why": "rule 4, #350: an order's adjustments together never exceed its lines in the order's own currency plus its shipping, so what was paid is never negative. The yen line counts for nothing against a deduction in dollars: the ceiling here is the 400 dollar line plus 500 shipping. 901 is refused and stores nothing; 900 is stored",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }]
+      },
+      "steps": [
+        {
+          "op": "create_order",
+          "args": {
+            "retailer_id": "@retailers:hlj",
+            "order_date": "2026-03-14",
+            "currency_code": "AUD",
+            "shipping_cost_minor": 500,
+            "items": [
+              { "item_type": "other", "quantity": 2, "unit_price_minor": 9000, "currency_code": "JPY", "description": "Nippers" },
+              { "item_type": "other", "quantity": 1, "unit_price_minor": 400, "currency_code": "AUD", "description": "Carry bag" }
+            ],
+            "adjustments": [
+              { "label": "Promo", "amount_minor": 1 },
+              { "label": "Gift card", "amount_minor": 900 }
+            ]
+          },
+          "expect": {
+            "refused": {
+              "kind": "invalid_input",
+              "code": "order.adjustments_exceed_total",
+              "params": { "currency_code": "AUD", "adjustments_minor": 901, "ceiling_minor": 900 }
+            }
+          }
+        },
+        {
+          "op": "create_order",
+          "args": {
+            "retailer_id": "@retailers:hlj",
+            "order_date": "2026-03-14",
+            "currency_code": "AUD",
+            "shipping_cost_minor": 500,
+            "items": [
+              { "item_type": "other", "quantity": 2, "unit_price_minor": 9000, "currency_code": "JPY", "description": "Nippers" },
+              { "item_type": "other", "quantity": 1, "unit_price_minor": 400, "currency_code": "AUD", "description": "Carry bag" }
+            ],
+            "adjustments": [{ "label": "Gift card", "amount_minor": 900 }]
+          },
+          "as": "@orders:new"
+        }
+      ],
+      "then": {
+        "tables": {
+          "orders": [{ "id": "@orders:new", "shipping_cost_minor": 500 }],
+          "order_items": [
+            { "order_id": "@orders:new", "description": "Nippers", "quantity": 2, "unit_price_minor": 9000, "currency_code": "JPY" },
+            { "order_id": "@orders:new", "description": "Carry bag", "quantity": 1, "unit_price_minor": 400, "currency_code": "AUD" }
+          ],
+          "order_adjustments": [{ "order_id": "@orders:new", "label": "Gift card", "amount_minor": 900, "position": 0 }]
+        }
+      }
+    },
+    {
+      "id": "an-edit-that-leaves-stored-adjustments-too-large-is-refused",
+      "why": "rule 4, #350: the ceiling is a rule about the order as it will be stored, not about adjustments. A cheaper line breaks it without mentioning them, and so does a changed order currency, which re-denominates them. The same cheaper line is accepted once the adjustments are lowered in the same edit, and an edit that does not state adjustments leaves them as they are",
+      "given": {
+        "retailers": [{ "id": "@retailers:amazon", "name": "Amazon AU" }],
+        "orders": [
+          { "id": "@orders:amazon", "retailer_id": "@retailers:amazon", "order_date": "2026-10-27", "currency_code": "AUD" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:amazon", "item_type": "other", "quantity": 1, "unit_price_minor": 5125, "currency_code": "AUD", "description": "Two kits" }
+        ],
+        "order_adjustments": [
+          { "id": "@order_adjustments:card", "order_id": "@orders:amazon", "label": "Amazon gift card", "amount_minor": 3388, "position": 0 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "update_order",
+          "args": {
+            "order_id": "@orders:amazon",
+            "items": [
+              { "id": "@order_items:kit", "item_type": "other", "quantity": 1, "unit_price_minor": 3387, "currency_code": "AUD", "description": "Two kits" }
+            ]
+          },
+          "expect": {
+            "refused": {
+              "kind": "invalid_input",
+              "code": "order.adjustments_exceed_total",
+              "params": { "currency_code": "AUD", "adjustments_minor": 3388, "ceiling_minor": 3387 }
+            }
+          }
+        },
+        {
+          "op": "update_order",
+          "args": { "order_id": "@orders:amazon", "currency_code": "JPY" },
+          "expect": {
+            "refused": {
+              "kind": "invalid_input",
+              "code": "order.adjustments_exceed_total",
+              "params": { "currency_code": "JPY", "adjustments_minor": 3388, "ceiling_minor": 0 }
+            }
+          }
+        },
+        {
+          "op": "update_order",
+          "args": { "order_id": "@orders:amazon", "order_number": "111-222" }
+        },
+        {
+          "op": "update_order",
+          "args": {
+            "order_id": "@orders:amazon",
+            "items": [
+              { "id": "@order_items:kit", "item_type": "other", "quantity": 1, "unit_price_minor": 3387, "currency_code": "AUD", "description": "Two kits" }
+            ],
+            "adjustments": [{ "label": "Amazon gift card", "amount_minor": 3387 }]
+          }
+        }
+      ],
+      "then": {
+        "tables": {
+          "orders": [{ "id": "@orders:amazon", "order_number": "111-222", "currency_code": "AUD" }],
+          "order_items": [{ "id": "@order_items:kit", "unit_price_minor": 3387 }],
+          "order_adjustments": [{ "order_id": "@orders:amazon", "label": "Amazon gift card", "amount_minor": 3387, "position": 0 }]
+        }
+      }
     }
   ]
 }

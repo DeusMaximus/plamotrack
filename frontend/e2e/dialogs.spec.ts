@@ -813,6 +813,11 @@ test("a dialog fits a phone under the browser's own font-size preference", async
         await expectDialogInsideScreen(page, `the offer to create ${at}`);
         await restorePage(page);
         await create.click();
+        // A discount row rides along (#350): its fields and its remove control
+        // are held to the same fit below, with a label as unbroken as the name.
+        await dialog(page).getByRole("button", { name: "Add discount" }).click();
+        await dialog(page).getByLabel("What came off").fill(NAMES.unbroken);
+        await dialog(page).getByLabel("Amount off").fill("123456.78");
         const back = dialog(page).getByRole("button", { name: /back to search/ });
         await isolateSheet(page, size.width, `a new item ${at}`);
         await expectLabelReads(back, `${at}: back to search`);

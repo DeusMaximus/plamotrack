@@ -43,7 +43,12 @@ from app.schemas.catalog import (
     UpgradeCreate,
 )
 from app.schemas.kits import KitUpdate
-from app.schemas.orders import OrderCreate, OrderItemCreate, RetailerCreate
+from app.schemas.orders import (
+    OrderAdjustmentCreate,
+    OrderCreate,
+    OrderItemCreate,
+    RetailerCreate,
+)
 from app.services.portability import spec
 from tests.test_portability import apply, make_archive, make_csv, preview
 
@@ -63,6 +68,7 @@ SCHEMA_FIELD = {
     ("orders", "shipping_cost_minor"): (OrderCreate, "shipping_cost_minor"),
     ("order_items", "unit_price_minor"): (OrderItemCreate, "unit_price_minor"),
     ("order_items", "converted_price_minor"): (OrderItemCreate, "converted_price_minor"),
+    ("order_adjustments", "amount_minor"): (OrderAdjustmentCreate, "amount_minor"),
     ("upgrade_applications", "quantity_used"): (UpgradeApplyRequest, "quantity"),
 }
 
@@ -70,6 +76,12 @@ SCHEMA_FIELD = {
 #: the live writers' codes (`order_line.quantity_too_small`) and holds the fan-out
 #: ceiling too. Declaring a bound on the column as well would report one problem twice.
 OWN_GUARD = {("order_items", "quantity")}
+
+#: No request states an adjustment's position: REST and MCP send a list, and the
+#: service numbers it from zero (#350). So there is no schema field to agree with.
+#: The importer is the one writer that can state it, and its declared floor is held
+#: to the column's CHECK by the walk below like any other.
+SERVICE_ASSIGNED = {("order_adjustments", "position")}
 
 _RANGE = (
     (re.compile(r"(\w+) >= (-?\d+)"), lambda m: (int(m[2]), None)),
@@ -172,15 +184,17 @@ def test_every_declared_bound_is_the_request_schemas():
 
 
 def test_every_integer_column_is_accounted_for():
-    """A new integer column owes an answer: a schema field to agree with, or a guard
-    of its own."""
+    """A new integer column owes an answer: a schema field to agree with, a guard
+    of its own, or the reason no request can state it."""
     integer_columns = {
         (table_spec.key, column.name)
         for table_spec in spec.TABLE_SPECS
         for column in table_spec.columns
         if column.parse is spec.parse_int and column.persisted
     }
-    assert integer_columns == set(SCHEMA_FIELD) | OWN_GUARD
+    assert integer_columns == set(SCHEMA_FIELD) | OWN_GUARD | SERVICE_ASSIGNED
+    for key in SERVICE_ASSIGNED:
+        assert key in _range_checks(), key
 
 
 # --- the preview refuses, the apply never 500s ---------------------------------------

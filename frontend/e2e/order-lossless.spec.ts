@@ -34,7 +34,10 @@ type StoredOrder = {
   tracking_number: string | null;
   notes: string | null;
   items: Line[];
+  adjustments: { id: string; label: string; amount_minor: number }[];
 };
+
+type Adjustment = { label: string; amount_minor: number };
 
 test.describe.configure({ mode: "serial" });
 
@@ -203,7 +206,12 @@ test.describe("a save that fails after its note was stored", () => {
   let seeded = 0;
 
   /** An order of its own: a transition can't be undone for the next case. */
-  async function openFailingSave(page: Page, transition: Transition, notes: string | null) {
+  async function openFailingSave(
+    page: Page,
+    transition: Transition,
+    notes: string | null,
+    adjustments: Adjustment[] = [],
+  ) {
     const number = `RETRY-${suffix}-${++seeded}`;
     const api = await apiContext();
     const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
@@ -214,6 +222,7 @@ test.describe("a save that fails after its note was stored", () => {
         order_number: number,
         currency_code: reference,
         notes,
+        adjustments,
         items: [
           {
             item_type: "kit",
@@ -298,6 +307,55 @@ test.describe("a save that fails after its note was stored", () => {
       await write({ notes: "Written between the two tries." });
       await saveAndClose();
       expect((await read()).notes).toBe("The person's note.");
+    });
+
+    // The same three questions of what came off (#350; Codex #362, finding 1): it is
+    // sent only when this edit touched it, so it has the note's retry to answer for.
+    const cameOff = (stored: StoredOrder): Adjustment[] =>
+      stored.adjustments.map(({ label, amount_minor }) => ({ label, amount_minor }));
+    const GIFT: Adjustment = { label: "Gift card", amount_minor: 100 };
+    const BETWEEN: Adjustment = { label: "Written between the two tries", amount_minor: 300 };
+
+    for (const before of [[], [GIFT]]) {
+      test(`${transition}: putting what came off back to how it opened is kept, from ${before.length ? "one adjustment" : "none"}`, async ({ page }) => {
+        const { read, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null, before);
+        if (before.length === 0) {
+          await page.getByRole("button", { name: "Add discount" }).click();
+          await page.getByLabel("What came off").fill(GIFT.label);
+        }
+        const amount = page.getByLabel("Amount off");
+        // As the form wrote it, so that putting it back is not a change of spelling.
+        const opening = await amount.inputValue();
+        await amount.fill("2.00");
+        await saveAndFail();
+        expect(cameOff(await read())).toEqual([{ ...GIFT, amount_minor: 200 }]);
+
+        // Back to how it opened, which is not dirty, and is not what is stored.
+        if (before.length === 0) await page.getByRole("button", { name: "Remove discount" }).click();
+        else await amount.fill(opening);
+        await saveAndClose();
+        const stored = await read();
+        expect(cameOff(stored)).toEqual(before);
+        expect(stored[STAMP[transition]]).not.toBeNull();
+      });
+    }
+
+    test(`${transition}: a retry that never touched what came off still leaves what an agent wrote`, async ({ page }) => {
+      const { read, write, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null, [GIFT]);
+      await page.getByLabel("Tracking number").fill(`RETRY-${suffix}`);
+      await saveAndFail();
+      await write({ adjustments: [BETWEEN] });
+      await saveAndClose();
+      expect(cameOff(await read())).toEqual([BETWEEN]);
+    });
+
+    test(`${transition}: what the person said came off is still theirs on the retry`, async ({ page }) => {
+      const { read, write, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null, [GIFT]);
+      await page.getByLabel("Amount off").fill("2.00");
+      await saveAndFail();
+      await write({ adjustments: [BETWEEN] });
+      await saveAndClose();
+      expect(cameOff(await read())).toEqual([{ ...GIFT, amount_minor: 200 }]);
     });
   }
 });

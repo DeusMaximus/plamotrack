@@ -102,6 +102,8 @@ function order(stage: OrderStage, items: OrderItem[], id = `order-${stage}`): Or
     shipped_at: stage === "in_transit" ? "2026-08-25T00:00:00Z" : null,
     received_at: stage === "received" ? "2026-08-30T00:00:00Z" : null,
     notes: null,
+    adjustments: [],
+    totals: [],
     items,
     stage,
   };

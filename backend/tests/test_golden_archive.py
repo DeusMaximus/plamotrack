@@ -56,6 +56,7 @@ MEMBERS = (
     "display_items.csv",
     "orders.csv",
     "order_items.csv",
+    "order_adjustments.csv",
     "kits.csv",
     "upgrade_applications.csv",
     "kit_photos.csv",
@@ -138,6 +139,7 @@ HEADERS = {
         "kit_status",
         "description",
     ),
+    "order_adjustments": ("id", "order_id", "label", "amount_minor", "position"),
     "kits": (
         "id",
         "name",

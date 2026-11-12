@@ -133,6 +133,11 @@ const TRACKING = "EJ482113905JP";
 const WIDE_ORDER_NUMBER = `8123456789${suffix}12345678901234`;
 const WIDE_TRACKING = "420902109400111899223197428490";
 const WIDE_TOTAL = ["JPY 2,800", "USD 45.00", "EUR 34.00"];
+// An order of the enlarged-font test's own: three currencies and a deduction, so
+// its expanded card has a Paid row (#350), one figure per currency.
+const PAID_ORDER_NUMBER = `LST-PAID-${suffix}`;
+const PAID_FIGURES = ["$0.01", "JPY 3,000", "USD 30.00"];
+const PAID_OFF = "$21,474,836.46";
 // Two currencies is the total that leaves a phone's card *some* room for the
 // retailer and not enough: three takes the whole line whatever the name is given.
 // Its references are the same *count* of characters as the ordinary ones and
@@ -2381,6 +2386,28 @@ test("a card says who it is under the browser's own font-size preference", async
       ] as const) {
         mine.push(`${route}/${(await post(api, route, data)).id}`);
       }
+      // An order paid in three currencies with something off it (Codex #362,
+      // finding 2): its expanded card closes on a Paid row with a figure per
+      // currency, the widest thing that row can say, under the largest deduction
+      // the column stores, off the largest price. Lines the collection does not
+      // track, so it adds no kit and no stock to the other lists.
+      const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
+      const paidLine = (currency: string, price: number) => ({
+        item_type: "other",
+        description: `Paid ${currency} ${suffix}`,
+        quantity: 1,
+        unit_price_minor: price,
+        currency_code: currency,
+      });
+      const paidOrder = await post(api, "/orders", {
+        retailer_id: retailers.find((retailer) => retailer.name === NAMES.retailer)!.id,
+        order_date: day(60),
+        order_number: PAID_ORDER_NUMBER,
+        currency_code: "AUD",
+        items: [paidLine("AUD", 2147483647), paidLine("JPY", 3000), paidLine("USD", 3000)],
+        adjustments: [{ label: "Gift card", amount_minor: 2147483646 }],
+      });
+      mine.push(`/orders/${paidOrder.id}`);
       browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
       const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
       const page = await context.newPage();
@@ -2443,6 +2470,39 @@ test("a card says who it is under the browser's own font-size preference", async
           expect.soft(report.small, `${label}: targets under a finger`).toEqual([]);
         };
         await listFits(`/orders ${at}`);
+        // The Paid row of the three-currency order: every figure said, none
+        // of it past the card, and the page no wider for it.
+        const paidCard = rowOf(page, PAID_ORDER_NUMBER);
+        await paidCard.getByRole("button", { name: /^Show line items/ }).click();
+        const paid = paidCard.getByText("Paid", { exact: true }).locator("xpath=following-sibling::span[1]");
+        await expect.soft(paid, `${at}: what was paid`).toHaveText(PAID_FIGURES.join(" + "));
+        const paidEdges = await paid.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const card = (element.closest("li") as HTMLElement).getBoundingClientRect();
+          return { left: rect.left, right: rect.right, cardLeft: card.left, cardRight: card.right };
+        });
+        expect.soft(paidEdges.right, `${at}: what was paid ends in its card`).toBeLessThanOrEqual(paidEdges.cardRight + 0.5);
+        expect.soft(paidEdges.left, `${at}: what was paid starts in its card`).toBeGreaterThanOrEqual(paidEdges.cardLeft - 0.5);
+        // Figures that take more than a line have the row to themselves, under
+        // "Paid": wrapped in what the label leaves, a figure breaks mid-amount.
+        const paidPlace = await paid.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const label = (element.previousElementSibling as HTMLElement).getBoundingClientRect();
+          return { lines: Math.round(rect.height / parseFloat(getComputedStyle(element).lineHeight)), top: rect.top, labelBottom: label.bottom };
+        });
+        if (paidPlace.lines > 1) expect.soft(paidPlace.top, `${at}: what was paid, on ${paidPlace.lines} lines, is under its label`).toBeGreaterThanOrEqual(paidPlace.labelBottom - 1);
+        // The control: a phone this narrow does make it wrap, so that was asked.
+        if (font === 40 && size.width <= 390) expect.soft(paidPlace.lines, `${at}: lines what was paid takes`).toBeGreaterThan(1);
+        // What came off, said in full above it; and the lines' own amounts, which
+        // the same box cut before this test opened a card at these sizes.
+        const off = paidCard.getByText(PAID_OFF, { exact: false }).first();
+        await expect.soft(off, `${at}: what came off`).toBeVisible();
+        // At the row's end whether it is beside its label or under it: the
+        // same edge what was paid ends on.
+        const offRight = await off.evaluate((element) => element.getBoundingClientRect().right);
+        expect.soft(Math.abs(offRight - paidEdges.right), `${at}: what came off ends where what was paid does`).toBeLessThanOrEqual(1);
+        await nothingEscapes(paidCard, `/orders ${at}, paid in three currencies`);
+        await listFits(`/orders ${at}, paid in three currencies`);
         for (const [path, anchor] of [
           [`/kits?q=${q}`, NAMES.twin],
           [`/retailers?q=${q}`, NAMES.retailer],

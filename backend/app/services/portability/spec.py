@@ -39,6 +39,7 @@ from app.models import (
     Kit,
     KitPhoto,
     Order,
+    OrderAdjustment,
     OrderItem,
     Retailer,
     Tool,
@@ -801,6 +802,61 @@ ORDER_ITEMS = TableSpec(
     money_pairs=(("converted_price_minor", "converted_currency_code"),),
 )
 
+
+def _adjustment_key(row: dict) -> tuple | None:
+    """An id-less adjustment is the one on that order with that label, whatever
+    case it is typed in. So a hand-written sheet imported twice adds nothing the
+    second time, and one whose amount was corrected corrects the stored row.
+
+    The amount is deliberately not part of who it is. With it, a corrected amount
+    would describe a row that does not exist yet and land as a second deduction
+    beside the first, silently, wherever the two still fit under the order's
+    ceiling. Without it the cost is loud instead: two adjustments on one order
+    under one label need ids to be told apart, and the refusal says so."""
+    order_id = row.get("order_id")
+    label = (row.get("label") or "").strip().casefold()
+    if not order_id or not label:
+        return None
+    return ("adjustment", str(order_id), label)
+
+
+ORDER_ADJUSTMENTS = TableSpec(
+    key="order_adjustments",
+    model=OrderAdjustment,
+    description=(
+        "What came off an order's price at the checkout: a discount, a promo code, "
+        "a voucher, a gift card. One row each, in the order's own currency. Line "
+        "prices stay what the shop charged; what was paid is worked out from these."
+    ),
+    depends_on=("orders",),
+    columns=(
+        id_col(),
+        col("order_id", parse_uuid, role=ColumnRole.REF, ref_table="orders", required=True),
+        col("label", parse_text, required=True, help='What it was: "Gift card", "SPRING10".'),
+        col(
+            "amount_minor",
+            parse_int,
+            required=True,
+            minimum=1,
+            help=(
+                "How much came off, as a positive number of minor units in the order's "
+                "currency — cents for AUD, whole yen for JPY. An order's adjustments "
+                "together may not exceed its lines in that currency plus its shipping."
+            ),
+        ),
+        col(
+            "position",
+            parse_int,
+            minimum=0,
+            help="Where it sits among the order's adjustments, lowest first. Blank = 0.",
+        ),
+    ),
+    label=lambda row: (
+        f"adjustment {row.get('label') or '(no label)'} — {render(row.get('amount_minor'))}"
+    ),
+    natural_key=_adjustment_key,
+)
+
 KITS = TableSpec(
     key="kits",
     model=Kit,
@@ -909,6 +965,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     DISPLAY_ITEMS,
     ORDERS,
     ORDER_ITEMS,
+    ORDER_ADJUSTMENTS,
     KITS,
     UPGRADE_APPLICATIONS,
     KIT_PHOTOS,
