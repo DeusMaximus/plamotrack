@@ -1526,7 +1526,7 @@ CASES = [
     (
         "rcv-2. kit lines are caught too",
         INV,
-        '        if item_type is None or item_type is ItemType.KIT:\n            continue\n        parent = by_id["orders"].get(row.values.get("order_id"))',
+        '        if item_type is None or not _moves_stock(item_type):\n            continue\n        parent = by_id["orders"].get(row.values.get("order_id"))',
         '        if item_type is None:\n            continue\n        parent = by_id["orders"].get(row.values.get("order_id"))',
         "new_kit_line_still_joins",
     ),
@@ -1725,8 +1725,8 @@ CASES = [
     (
         "o67-1. schema override loses the id branch",
         SCH,
-        "            if self.kit is None and self.id is None:",
-        "            if self.kit is None:",
+        "        _validate_line_dispatch(self, kit_required=self.id is None)\n",
+        "        _validate_line_dispatch(self, kit_required=True)\n",
         "kit_omitted or update_order_kit_omitted",
     ),
     (
@@ -6487,8 +6487,8 @@ CASES += [
     (
         "scn-10. a receipt adds each catalog line twice",
         ORD,
-        "        elif item.catalog_ref_id is not None:\n            await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
-        "        elif item.catalog_ref_id is not None:\n            await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity * 2)\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "            await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "            await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity * 2)\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
         "receive-applies-stock-once",
     ),
     (
@@ -6884,8 +6884,8 @@ CASES += [
     (
         "348-1. a note keeps the whitespace around it",
         ORDER_SCHEMAS,
-        "AfterValidator(lambda value: None if value is None else stripped_or_none(value))",
-        "AfterValidator(lambda value: value)",
+        "    return None if value is None else stripped_or_none(value)\n",
+        "    return value\n",
         "stores_what_a_note_is or re_imports_as_no_change",
     ),
     (
@@ -6925,8 +6925,165 @@ CASES += [
     ),
 ]
 
+# --- #349: order lines the collection does not track (`item_type: "other"`). -------
+# One place at a time: the request schema's rule (each field it refuses separately),
+# the service's dispatch, the catalog tools' vocabulary, and each of the importer's
+# readings of "a line that moves stock" and "a line with a description".
+CASES += [
+    (
+        "349-1. an other line is dispatched as a catalog line",
+        ORD,
+        "    elif line.item_type in CATALOG_MODELS:\n",
+        "    else:\n",
+        "is_its_description or an-other-line-is-tracked-nowhere",
+    ),
+    (
+        "349-2. an entered other line stores no description",
+        ORD,
+        "        # Null on every line but an `other` one: the schema refuses it elsewhere.\n        description=line.description,\n",
+        "",
+        "is_its_description or an-other-line-is-tracked-nowhere",
+    ),
+    (
+        "349-3. an edit never reaches an other line's own branch",
+        ORD,
+        "    elif item.item_type is ItemType.OTHER:\n",
+        "    elif False:\n",
+        "an_edit_restates",
+    ),
+    (
+        "349-4. an other line needs no description",
+        ORDER_SCHEMAS,
+        "        if line.description is None:\n            raise ValueError(\n",
+        "        if False:\n            raise ValueError(\n",
+        "refuses_a_line_its_type_does_not_take or omits_the_description",
+    ),
+    (
+        "349-5. an other line may carry kit details",
+        ORDER_SCHEMAS,
+        "        if line.kit is not None or line.catalog_ref_id is not None or line.new_item is not None:\n",
+        "        if line.catalog_ref_id is not None or line.new_item is not None:\n",
+        "refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-6. an other line may carry a catalog reference",
+        ORDER_SCHEMAS,
+        "        if line.kit is not None or line.catalog_ref_id is not None or line.new_item is not None:\n",
+        "        if line.kit is not None or line.new_item is not None:\n",
+        "refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-7. an other line may create a catalog item",
+        ORDER_SCHEMAS,
+        "        if line.kit is not None or line.catalog_ref_id is not None or line.new_item is not None:\n",
+        "        if line.kit is not None or line.catalog_ref_id is not None:\n",
+        "refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-8. any line may carry a description",
+        ORDER_SCHEMAS,
+        "    if line.description is not None:\n        raise ValueError(\n",
+        "    if False:\n        raise ValueError(\n",
+        "refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-9. a description keeps the whitespace around it, and blank is one",
+        ORDER_SCHEMAS,
+        "    description: StrippedText = Field(\n",
+        "    description: str | None = Field(\n",
+        "stores_what_a_description_is or refuses_a_line_its_type_does_not_take",
+    ),
+    (
+        "349-10. the catalog tools take any order-line type for a table",
+        MCP,
+        "    if parsed not in _CATALOG_READ_MODELS:\n",
+        "    if parsed is None:\n",
+        "other_names_no_catalog_table",
+    ),
+    (
+        "349-11. the importer lands an other line with no description",
+        INV,
+        "            if value is None:\n                row.refuse(\n                    Diagnostic(\n                        code=error_codes.IMPORT_LINE_DESCRIPTION_REQUIRED,\n",
+        "            if False:\n                row.refuse(\n                    Diagnostic(\n                        code=error_codes.IMPORT_LINE_DESCRIPTION_REQUIRED,\n",
+        "without_a_description or lands_with_a_description",
+    ),
+    (
+        "349-12. a sheet that leaves the column out is read as emptying it",
+        INV,
+        "            if not stated and row.action is not RowAction.CREATE and row.target is not None:\n",
+        "            if False:\n",
+        "lands_with_a_description",
+    ),
+    (
+        "349-13. the importer lands a description on any line",
+        INV,
+        "        elif stated and value is not None:\n",
+        "        elif False:\n",
+        "description_on_any_other_type or invariant_matrix",
+    ),
+    (
+        "349-14. a stored other line counts as stock at a receipt",
+        INV,
+        "        if _moves_stock(item.item_type):\n",
+        "        if item.item_type is not ItemType.KIT:\n",
+        "may_receive_an_order",
+    ),
+    (
+        "349-15. an arriving other line counts as stock at a receipt",
+        INV,
+        "        if item_type is not None and _moves_stock(item_type):\n",
+        "        if item_type is not None and item_type is not ItemType.KIT:\n",
+        "may_receive_an_order",
+    ),
+    (
+        "349-16. an other line may not join a received order",
+        INV,
+        "        if item_type is None or not _moves_stock(item_type):\n            continue\n        parent = by_id",
+        "        if item_type is None or item_type is ItemType.KIT:\n            continue\n        parent = by_id",
+        "joining_a_received_order",
+    ),
+    (
+        "349-17. a catalog reference on an other line is reported as a kit line's",
+        IMP,
+        "                if item_type is ItemType.OTHER:\n",
+        "                if False:\n",
+        "catalog_reference_on_an_other_line",
+    ),
+    (
+        "349-18. a stored other line is fingerprinted by a catalog name it has none of",
+        IMP,
+        "        elif item.item_type is ItemType.OTHER:\n",
+        "        elif False:\n",
+        "matched_by_its_lines_descriptions",
+    ),
+    (
+        "349-19. an incoming other line is fingerprinted by a catalog name it has none of",
+        IMP,
+        "        elif item_type is ItemType.OTHER:\n",
+        "        elif False:\n",
+        "matched_by_its_lines_descriptions",
+    ),
+    (
+        "349-20. the archive has no description column",
+        SPEC,
+        '        col(\n            "description",\n            parse_text,\n',
+        '        col(\n            "description",\n            parse_text,\n            virtual=True,\n            get=lambda i: None,\n',
+        "its_own_export or restores_the_line",
+    ),
+    (
+        "scn-16. a line's type can change",
+        ORD,
+        "    if line.item_type != item.item_type:\n",
+        "    if False:\n",
+        "an-other-line-cannot-become-a-tracked-one",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
+    # The #349 (349-) set: every 349- kill lives here, bar 349-13's second witness
+    # in the shared matrix and the two scenarios in test_scenarios.py.
+    "tests/test_untracked_lines.py",
     "tests/test_cell_semantics.py",
     "tests/test_portability.py",
     "tests/test_unstorable_text.py",

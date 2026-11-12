@@ -507,7 +507,9 @@ async def _lock_catalog_targets(
     targets: dict[uuid.UUID, type[CatalogRow]] = {}
     for referrer in (*items, *lines):
         ref_id = referrer.catalog_ref_id
-        if referrer.item_type is not ItemType.KIT and ref_id is not None:
+        # Catalog lines only: a kit line and an `other` line (#349) point at no
+        # catalog row, so neither has anything here to lock.
+        if referrer.item_type in CATALOG_MODELS and ref_id is not None:
             targets[ref_id] = CATALOG_MODELS[referrer.item_type]
     for ref_id in sorted(targets):
         await lock_catalog_row(session, targets[ref_id], ref_id)
@@ -746,7 +748,8 @@ async def _add_line(
     reference: str,
 ) -> OrderItem:
     """The §3.9 dispatch: kit lines FAN OUT into kits rows immediately; catalog
-    lines INCREMENT stock — but only once the order is received.
+    lines INCREMENT stock — but only once the order is received; `other` lines
+    (#349) do neither, and are stored with their description and nothing else.
 
     `received_at` is the receipt instant kits landing in backlog are stamped with
     (#93) — the order's stored receipt for an edit, the entry-supplied or fresh
@@ -762,6 +765,8 @@ async def _add_line(
         currency_code=line.currency_code,
         converted_price_minor=converted_minor,
         converted_currency_code=converted_code,
+        # Null on every line but an `other` one: the schema refuses it elsewhere.
+        description=line.description,
     )
     session.add(item)
     await session.flush()
@@ -770,7 +775,7 @@ async def _add_line(
         await _spawn_from_details(
             session, item, line.kit, line.quantity, received, received_at, shipped_at
         )
-    else:
+    elif line.item_type in CATALOG_MODELS:
         if line.new_item is not None:
             row = await _build_catalog_row(
                 session, line.item_type, line.new_item, line.currency_code
@@ -807,7 +812,9 @@ async def _undo_line_dispatch(
     """
     if item.item_type is ItemType.KIT:
         await _delete_line_kits(session, item, count=None)
-    elif received and item.catalog_ref_id is not None:
+    elif received and item.item_type in CATALOG_MODELS and item.catalog_ref_id is not None:
+        # Catalog lines only: an `other` line (#349) dispatched nothing at entry,
+        # so it has nothing to undo.
         await _adjust_ref(
             session, item.item_type, item.catalog_ref_id, -item.quantity, missing_ok=missing_ok
         )
@@ -924,6 +931,10 @@ async def _update_line(
             )
         elif delta < 0:
             await _delete_line_kits(session, item, count=-delta)
+    elif item.item_type is ItemType.OTHER:
+        # Nothing was dispatched and nothing is now (#349): the description is the
+        # line, restated in full like every other field of it.
+        item.description = line.description
     else:
         old_ref = item.catalog_ref_id
         if line.new_item is not None:
@@ -1313,7 +1324,8 @@ async def receive_order(
                     # through the one derivation (#94) so an advance that one day
                     # lands elsewhere cannot silently skip the build stamps.
                     stamp_build_date(kit, KitStatus.BACKLOG, now)
-        elif item.catalog_ref_id is not None:
+        elif item.item_type in CATALOG_MODELS and item.catalog_ref_id is not None:
+            # Catalog lines only: an `other` line (#349) has no stock to apply.
             await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)
 
     await session.flush()

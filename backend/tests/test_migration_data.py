@@ -46,11 +46,12 @@ SESSION_AUTH_MODE = "4f3a9c1e7b2d"
 MCP_OAUTH_STATE = "d5e9362140ea"
 NON_NEGATIVE_CHECKS = "5cbec7813500"
 ORDER_NOTES = "8e41c7d2a9f6"
+UNTRACKED_LINES = "61442608b20e"
 
 # The current migration head, as a literal (this module keeps revision ids as
 # literals on purpose — see the header). The "recovered to head" / "nothing
 # moved" assertions compare against it, so a new migration bumps this one line.
-HEAD = ORDER_NOTES
+HEAD = UNTRACKED_LINES
 
 
 def db(sql: str, **params) -> list[tuple]:
@@ -649,6 +650,61 @@ def test_order_notes_arrive_empty_and_leave_the_order_behind(walk):
         "WHERE table_name = 'orders' AND column_name = 'notes'"
     )
     assert columns == []
+
+
+# --- 61442608b20e: the `other` item type and its description (#349) ----------------
+
+
+_OTHER_LINE = (
+    "INSERT INTO order_items (id, order_id, item_type, quantity, unit_price_minor, "
+    "currency_code, description, catalog_ref_id) "
+    "VALUES (:i, :o, 'other', 2, 350, 'AUD', :description, :ref)"
+)
+
+
+def test_untracked_lines_arrive_with_their_checks_and_block_the_way_back(walk):
+    """A line from before the column reads as having no description, which is what
+    its type requires. From there the database holds the two rules every writer
+    does: an `other` line has a description and no catalog reference, and no other
+    line has a description. The downgrade refuses while an `other` line exists and
+    leaves the stored line and its order alone once none does."""
+    walk.down(ORDER_NOTES)
+    _, order_id = seed_retailer_and_order("2026-10-27")
+    kit_line_id, other_line_id = uuid.uuid4(), uuid.uuid4()
+    db(
+        "INSERT INTO order_items (id, order_id, item_type, quantity, unit_price_minor, "
+        "currency_code) VALUES (:i, :o, 'kit', 1, 2475, 'AUD')",
+        i=kit_line_id,
+        o=order_id,
+    )
+    with pytest.raises(IntegrityError, match="ck_order_items_item_type"):
+        db(
+            "INSERT INTO order_items (id, order_id, item_type, quantity, unit_price_minor, "
+            "currency_code) VALUES (:i, :o, 'other', 1, 1, 'AUD')",
+            i=uuid.uuid4(),
+            o=order_id,
+        )
+
+    walk.up(UNTRACKED_LINES)
+    assert db("SELECT item_type, description FROM order_items") == [("kit", None)]
+    db(_OTHER_LINE, i=other_line_id, o=order_id, description="Carry bag", ref=None)
+
+    with pytest.raises(IntegrityError, match="ck_order_items_description_only_on_other"):
+        db(_OTHER_LINE, i=uuid.uuid4(), o=order_id, description=None, ref=None)
+    with pytest.raises(IntegrityError, match="ck_order_items_description_only_on_other"):
+        db("UPDATE order_items SET description = 'a kit' WHERE id = :i", i=kit_line_id)
+    with pytest.raises(IntegrityError, match="ck_order_items_other_has_no_catalog_ref"):
+        db(_OTHER_LINE, i=uuid.uuid4(), o=order_id, description="Bag", ref=uuid.uuid4())
+
+    with pytest.raises(RuntimeError, match=r"holds 1 order line\(s\) of that type"):
+        walk.down(ORDER_NOTES)
+    assert current_revision() == UNTRACKED_LINES
+    assert db("SELECT count(*) FROM order_items") == [(2,)]
+
+    db("DELETE FROM order_items WHERE id = :i", i=other_line_id)
+    walk.down(ORDER_NOTES)
+    assert db("SELECT item_type, quantity, unit_price_minor FROM order_items") == [("kit", 1, 2475)]
+    assert not column_exists("order_items", "description")
 
 
 def test_every_migration_renders_offline(capsys):

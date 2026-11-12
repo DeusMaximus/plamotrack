@@ -68,6 +68,7 @@ def check(
     already skips ERROR rows.
     """
     _check_immutable_line_columns(rows)
+    _check_line_descriptions(rows)
     _check_catalog_targets(rows, by_id=by_id, created_ids=created_ids, replace_all=replace_all)
     _check_lines_joining_received_orders(rows, by_id=by_id, replace_all=replace_all)
     _check_receipt_transitions(rows)
@@ -84,6 +85,15 @@ def _writes(row: "_Row") -> bool:
 
 def _change(row: "_Row", field: str):
     return next((change for change in row.changes if change.field == field), None)
+
+
+def _moves_stock(item_type: Any) -> bool:
+    """Whether a line of this type points at a catalog row, and so moves
+    `quantity_on_hand` when its order is received. Asked this way, never as "not a
+    kit line": an `other` line (#349) is neither, and reading it as a catalog line
+    would have every rule below guard stock it never had.
+    """
+    return str(item_type) in CATALOG_TABLE_BY_ITEM_TYPE
 
 
 # --- an existing line's identity is settled (cases 1 and 3) ----------------------
@@ -132,6 +142,63 @@ def _immutable_diagnostic(column: str, before: str, after: str) -> Diagnostic:
             "is, and add a new line to the other order if that is what you meant"
         ),
     )
+
+
+# --- an `other` line is its description (#349) ------------------------------------
+
+
+def _check_line_descriptions(rows: dict[str, list["_Row"]]) -> None:
+    """`description` is what an `other` line bought, and belongs to no other line.
+
+    The same two rules `schemas/orders.py::_validate_line_dispatch` holds REST and
+    MCP to (rule 1), and the two CHECKs on `order_items` would otherwise answer at
+    flush, as a 500 after a preview that called the import clean (rule 6).
+
+    Judged on what **lands**: a create has only the sheet, and an update that
+    leaves the column out keeps the stored value, so a partial sheet restating an
+    `other` line's price is silent. A blank cell in a column the sheet includes
+    empties it, which is the refusal.
+    """
+    for row in rows.get("order_items", []):
+        if not _writes(row):
+            continue
+        item_type = effective_item_type(row)
+        if item_type is None:
+            continue
+        stated = "description" in row.present
+        value = row.values.get("description")
+        if item_type is ItemType.OTHER:
+            if not stated and row.action is not RowAction.CREATE and row.target is not None:
+                value = row.target.description
+            if value is None:
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_LINE_DESCRIPTION_REQUIRED,
+                        params={},
+                        detail=(
+                            "description: an other line isn't tracked in the collection, "
+                            "so its description is all that says what it bought, and "
+                            "this one has none. Fill the column in"
+                        ),
+                    )
+                )
+        elif stated and value is not None:
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_LINE_DESCRIPTION_MISPLACED,
+                    params={"item_type": str(item_type)},
+                    detail=(
+                        f"description: only an other line carries one, and this line's "
+                        f"type is {item_type} — "
+                        + (
+                            "a kit line is named by its kit (kit_name)"
+                            if item_type is ItemType.KIT
+                            else "a catalog line is named by its catalog item (catalog_name)"
+                        )
+                        + ". Empty the cell, the same as the app requires"
+                    ),
+                )
+            )
 
 
 # --- a catalog line points at something (the third preview refusal) --------------
@@ -217,8 +284,9 @@ def _check_catalog_targets(
 
 
 def _catalog_types_on(row: "_Row", incoming: dict[uuid.UUID, list["_Row"]]) -> set[str]:
-    """Every non-kit item_type this order will hold once the import lands — the
-    lines already stored on it, plus the lines this upload puts on it.
+    """Every stock-moving item_type this order will hold once the import lands —
+    the lines already stored on it, plus the lines this upload puts on it. Kit
+    lines carry no stock and `other` lines (#349) track nothing, so neither counts.
 
     The union, not either half. A line the upload adds to an order it also receives
     is stock left just as unaccounted as one that was already there, and a stored
@@ -226,11 +294,11 @@ def _catalog_types_on(row: "_Row", incoming: dict[uuid.UUID, list["_Row"]]) -> s
     """
     types: set[str] = set()
     for item in row.target.items:
-        if item.item_type is not ItemType.KIT:
+        if _moves_stock(item.item_type):
             types.add(str(item.item_type))
     for line in incoming.get(row.matched_id, []):
         item_type = effective_item_type(line)
-        if item_type is not None and item_type is not ItemType.KIT:
+        if item_type is not None and _moves_stock(item_type):
             types.add(str(item_type))
     return types
 
@@ -267,7 +335,8 @@ def _check_lines_joining_received_orders(
     upload creates is an archive restoring a received order together with its
     post-receipt counts — the same create-is-a-restore reading as the transition
     check. Kit lines stay legal in every shape: kits carry no stock, and a kit
-    joining a received order is the ordinary backdated-line case (#93).
+    joining a received order is the ordinary backdated-line case (#93). `other`
+    lines (#349) are legal for the same reason: they move nothing.
 
     **The `replace_all` return is load-bearing, unlike the transition check's
     (whose docstring explains why it has none).** `by_id` is loaded from the
@@ -288,7 +357,7 @@ def _check_lines_joining_received_orders(
         if row.action is not RowAction.CREATE:
             continue
         item_type = effective_item_type(row)
-        if item_type is None or item_type is ItemType.KIT:
+        if item_type is None or not _moves_stock(item_type):
             continue
         parent = by_id["orders"].get(row.values.get("order_id"))
         if parent is None or parent.received_at is None:

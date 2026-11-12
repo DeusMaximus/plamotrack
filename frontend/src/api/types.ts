@@ -14,10 +14,12 @@ export type KitStatus = (typeof KIT_STATUSES)[number];
 /** Wire values; what the user reads comes from the catalogue via
  * `itemTypeLabel` in lib/labels.ts (the runtime list exists so tests can drive
  * every member through that lookup). */
-export const ITEM_TYPES = ["kit", "tool", "consumable", "upgrade", "display"] as const;
+export const ITEM_TYPES = ["kit", "tool", "consumable", "upgrade", "display", "other"] as const;
 
 export type ItemType = (typeof ITEM_TYPES)[number];
-export type CatalogItemType = Exclude<ItemType, "kit">;
+/** The types that name a catalog table. A kit line spawns kits and an `other`
+ *  line (#349) is tracked nowhere, so neither points at one. */
+export type CatalogItemType = Exclude<ItemType, "kit" | "other">;
 
 export interface Kit {
   id: string;
@@ -209,6 +211,10 @@ export interface OrderItem {
   id: string;
   item_type: ItemType;
   catalog_ref_id: string | null;
+  /** What an `other` line bought, in the buyer's words (#349). Set on those
+   *  lines and null on every other: a kit line is named by its kit, a catalog
+   *  line by its catalog item. */
+  description: string | null;
   quantity: number;
   unit_price_minor: number;
   currency_code: string;
@@ -293,6 +299,8 @@ export interface OrderItemCreate {
   kit?: OrderKitDetails | null;
   catalog_ref_id?: string | null;
   new_item?: NewCatalogItem | null;
+  /** `other` lines only, and required there (#349). */
+  description?: string | null;
 }
 
 export interface OrderCreate {

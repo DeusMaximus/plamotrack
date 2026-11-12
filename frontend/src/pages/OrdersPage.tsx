@@ -688,11 +688,22 @@ function dateWrap(iso: string | null | undefined): string {
 
 const hasTracking = (order: Order) => Boolean(order.tracking_number || order.tracking_url);
 
-/** A line's name: the spawned kit's or the catalog item's, else what it is. */
+/** A line's name: the spawned kit's, the catalog item's, or an `other` line's
+ *  own description (#349), else what it is. */
 function lineLabel(item: OrderItem, itemName: Map<string, string>): string {
-  return item.item_type === "kit"
-    ? (itemName.get(item.spawned_kit_ids[0] ?? "") ?? itemTypeLabel("kit"))
-    : (itemName.get(item.catalog_ref_id ?? "") ?? itemTypeLabel(item.item_type));
+  if (item.item_type === "kit") {
+    return itemName.get(item.spawned_kit_ids[0] ?? "") ?? itemTypeLabel("kit");
+  }
+  if (item.item_type === "other") return item.description ?? itemTypeLabel("other");
+  return itemName.get(item.catalog_ref_id ?? "") ?? itemTypeLabel(item.item_type);
+}
+
+/** What a line that spawned no kit says where a kit line shows its status: a
+ *  catalog line when its stock lands (§3.9), an `other` line that the collection
+ *  doesn't hold it (#349) — which is true before and after the order arrives. */
+function lineStanding(item: OrderItem, order: Order): string | null {
+  if (item.item_type === "other") return i18n.t("orders.notTracked");
+  return order.received_at ? null : i18n.t("orders.stockOnReceipt");
 }
 
 /** An order on a phone (§13.7): the retailer and the total; the stage chip with
@@ -834,7 +845,7 @@ function CardLines({ order, itemName }: { order: Order; itemName: Map<string, st
                     t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
                 </>
               ) : (
-                !order.received_at && t("orders.stockOnReceipt")
+                lineStanding(item, order)
               )}
             </div>
           </div>
@@ -895,7 +906,7 @@ function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, str
                     t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
                 </>
               ) : (
-                !order.received_at && t("orders.stockOnReceipt")
+                lineStanding(item, order)
               )}
             </span>
             <span className={`${cell} justify-end pe-3 ps-3.5 text-muted tabular-nums`}>

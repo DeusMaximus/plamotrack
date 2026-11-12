@@ -364,6 +364,14 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    order. Receiving also advances
    pipeline kits (pre_ordered/ordered/in_transit → backlog). One transaction per
    order — any bad line rolls back all of it.
+   - **`item_type=other` lines dispatch nothing (#349):** something on the order the
+     collection does not track. A `description` (required there, refused on every
+     other type), a quantity and a price; no kits, no catalog row, no stock, in any
+     order state. So **"catalog line" is never spelled "not a kit line"**: a stock
+     rule asks whether the type names a catalog table (`item_type in CATALOG_MODELS`
+     in the services, `_moves_stock` in `invariants.py`), or it guards stock an
+     `other` line never had. The type is immutable like any other, so there is no
+     conversion to a tracked line.
    - Order **edit** re-runs the dispatch diff (kit details propagate to spawned
      kits; quantity/target changes spawn/remove kits and adjust applied stock).
    - Order **delete = undo the entry**: kits removed, applied stock reversed.

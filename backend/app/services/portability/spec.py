@@ -705,7 +705,8 @@ ORDER_ITEMS = TableSpec(
     model=OrderItem,
     description=(
         "Order lines (§3.9). kit_* columns only matter when no kits row covers the line — "
-        "then they drive the fan-out."
+        "then they drive the fan-out. An other line is something on the order the "
+        "collection does not track: it takes a description and nothing else."
     ),
     depends_on=("orders", "tools", "consumables", "upgrades", "display_items"),
     special=True,
@@ -716,14 +717,14 @@ ORDER_ITEMS = TableSpec(
             "item_type",
             enum_parser(ItemType),
             required=True,
-            help="kit / tool / consumable / upgrade / display",
+            help="kit / tool / consumable / upgrade / display / other",
         ),
         col(
             "catalog_ref_id",
             parse_uuid,
             role=ColumnRole.REF,
             ref_table="catalog",
-            help="Blank for kit lines — kits are spawned fresh, not referenced.",
+            help="Blank for kit and other lines — neither references the catalog.",
         ),
         col(
             "catalog_name",
@@ -781,11 +782,21 @@ ORDER_ITEMS = TableSpec(
         ),
         col("kit_number", parse_text, get=lambda i: None, virtual=True),
         col("kit_status", _KIT_STATUS_PARSER, get=lambda i: None, virtual=True),
+        # Last, where an older archive's header simply stops short of it (#349).
+        col(
+            "description",
+            parse_text,
+            help=(
+                "other lines only, and required there: what the line bought. An other "
+                "line is not tracked in the collection — no kit, no catalog item, no stock."
+            ),
+        ),
     ),
     label=lambda row: (
         f"{render(row.get('item_type'))} × {render(row.get('quantity'))}"
         + (f" — {row['catalog_name']}" if row.get("catalog_name") else "")
         + (f" — {row['kit_name']}" if row.get("kit_name") else "")
+        + (f" — {row['description']}" if row.get("description") else "")
     ),
     money_pairs=(("converted_price_minor", "converted_currency_code"),),
 )

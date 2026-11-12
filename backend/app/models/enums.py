@@ -17,11 +17,19 @@ class KitStatus(enum.StrEnum):
 
 
 class ItemType(enum.StrEnum):
+    """What an order line bought, which decides its §3.9 dispatch. `kit` fans out
+    into `kits` rows; `tool`, `consumable`, `upgrade` and `display` point at a
+    catalog row and move its stock on receipt. `other` (#349) is a line the
+    collection does not track — a non-Gunpla item in a mixed basket, an add-on —
+    so it dispatches nothing: no kits, no catalog row, no stock, only a
+    description and a price that count toward the order's total."""
+
     KIT = "kit"
     TOOL = "tool"
     CONSUMABLE = "consumable"
     UPGRADE = "upgrade"
     DISPLAY = "display"
+    OTHER = "other"
 
 
 class PackingQuality(enum.StrEnum):

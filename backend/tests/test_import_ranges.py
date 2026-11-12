@@ -79,13 +79,18 @@ _RANGE = (
 
 #: CHECK forms that are not a numeric range, each answered elsewhere: an enum's
 #: value list (the enum parsers), a null-together pair (`_clear_orphan_money_currency`
-#: and the money-pair handling), a singleton's key. Anything matching neither these
-#: nor `_RANGE` fails the walk, so a new range written another way (`price <= 100`)
-#: cannot pass it unread.
+#: and the money-pair handling), a singleton's key, and the two that say what an
+#: `other` order line holds (#349: `invariants._check_line_descriptions`, and
+#: `_resolve_ref`, which empties the reference; `tests/test_untracked_lines.py`
+#: drives both as preview refusals). Anything matching neither these nor `_RANGE`
+#: fails the walk, so a new range written another way (`price <= 100`) cannot pass
+#: it unread.
 _NOT_A_RANGE = (
     re.compile(r"\w+\.\w+ IN \(.*\)"),
     re.compile(r"\(\w+ IS NULL\) = \(\w+ IS NULL\)"),
     re.compile(r"id = \d+"),
+    re.compile(r"\(item_type = 'other'\) = \(description IS NOT NULL\)"),
+    re.compile(r"item_type <> 'other' OR catalog_ref_id IS NULL"),
 )
 
 

@@ -91,6 +91,57 @@ class NewCatalogItem(RequestModel):
     notes: str | None = None
 
 
+def _stripped_text(value: str | None) -> str | None:
+    return None if value is None else stripped_or_none(value)
+
+
+#: Free text as the importer's `parse_text` reads the same cell: no surrounding
+#: whitespace, and blank is null. So text written here comes back from its own
+#: export as no change at all (rule 10).
+StrippedText = Annotated[str | None, AfterValidator(_stripped_text)]
+
+
+def _validate_line_dispatch(line: "OrderItemCreate", *, kit_required: bool) -> None:
+    """Which of a line's dispatch fields its `item_type` takes (§3.9): a kit line
+    its `kit` details, a catalog line exactly one of `catalog_ref_id` and
+    `new_item`, an `other` line (#349) a `description` and none of the rest.
+
+    `kit_required` is the one difference between entry and an edit (#67): a new
+    kit line spawns from its details and needs them, an id-bearing one may stay
+    silent about kits it is not changing.
+    """
+    if line.item_type is ItemType.OTHER:
+        if line.description is None:
+            raise ValueError(
+                "other lines require a 'description' — it is all that says what the line bought"
+            )
+        if line.kit is not None or line.catalog_ref_id is not None or line.new_item is not None:
+            raise ValueError(
+                "other lines are not tracked in the collection — they must not set "
+                "'kit' details, catalog_ref_id or new_item"
+            )
+        return
+    if line.description is not None:
+        raise ValueError(
+            f"{line.item_type} lines must not set 'description' — a kit line is named "
+            "by its kit and a catalog line by its catalog item; only other lines "
+            "carry one"
+        )
+    if line.item_type is ItemType.KIT:
+        if line.kit is None and kit_required:
+            raise ValueError("kit lines require 'kit' details (name, grade, ...)")
+        if line.catalog_ref_id is not None or line.new_item is not None:
+            raise ValueError("kit lines must not set catalog_ref_id or new_item")
+    else:
+        if line.kit is not None:
+            raise ValueError(f"{line.item_type} lines must not set 'kit' details")
+        if (line.catalog_ref_id is None) == (line.new_item is None):
+            raise ValueError(
+                f"{line.item_type} lines require exactly one of catalog_ref_id "
+                "(existing item) or new_item (create new)"
+            )
+
+
 class OrderItemCreate(RequestModel):
     item_type: ItemType
     quantity: PositiveInt4
@@ -121,6 +172,15 @@ class OrderItemCreate(RequestModel):
     kit: OrderKitDetails | None = None
     catalog_ref_id: uuid.UUID | None = None
     new_item: NewCatalogItem | None = None
+    description: StrippedText = Field(
+        default=None,
+        description=(
+            "`other` lines only, and required there: what the line bought, in your "
+            "own words. An `other` line is something on the order that the "
+            "collection does not track — it creates no kit, points at no catalog "
+            "item and never moves stock; it only counts toward the order's total."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_converted_snapshot(self) -> "OrderItemCreate":
@@ -134,27 +194,11 @@ class OrderItemCreate(RequestModel):
 
     @model_validator(mode="after")
     def _validate_dispatch_payload(self) -> "OrderItemCreate":
-        if self.item_type is ItemType.KIT:
-            if self.kit is None:
-                raise ValueError("kit lines require 'kit' details (name, grade, ...)")
-            if self.catalog_ref_id is not None or self.new_item is not None:
-                raise ValueError("kit lines must not set catalog_ref_id or new_item")
-        else:
-            if self.kit is not None:
-                raise ValueError(f"{self.item_type} lines must not set 'kit' details")
-            if (self.catalog_ref_id is None) == (self.new_item is None):
-                raise ValueError(
-                    f"{self.item_type} lines require exactly one of catalog_ref_id "
-                    "(existing item) or new_item (create new)"
-                )
+        _validate_line_dispatch(self, kit_required=True)
         return self
 
 
-#: What the importer's `parse_text` makes of the same cell, so a note written here
-#: comes back from its own export as no change at all (rule 10).
-OrderNotes = Annotated[
-    str | None, AfterValidator(lambda value: None if value is None else stripped_or_none(value))
-]
+OrderNotes = StrippedText
 
 
 class OrderCreate(RequestModel):
@@ -198,9 +242,10 @@ class OrderItemUpsert(OrderItemCreate):
     """A line in an order edit: with id = update that line, without = new line.
     Existing lines omitted from the edit payload are removed (dispatch undone).
 
-    A supplied line replaces the stored one field for field, with two deliberate
-    exceptions. The `converted_*` snapshot pair: omit those and the stored
-    snapshot survives the edit; send an explicit null to clear it (issue #3).
+    A supplied line replaces the stored one field for field (an `other` line's
+    `description` included: restate it), with two deliberate exceptions. The
+    `converted_*` snapshot pair: omit those and the stored snapshot survives the
+    edit; send an explicit null to clear it (issue #3).
     They are a recorded fact rather than a restatable value — an editor that
     never had the entry-time rate shouldn't destroy one by changing a quantity.
     And `kit` (#67): an id-bearing kit line may omit it entirely, meaning "this
@@ -217,19 +262,7 @@ class OrderItemUpsert(OrderItemCreate):
         # Replaces the create-shape check by name (pydantic collects validators
         # per name, so the subclass definition wins): a *new* line still spawns
         # from its details and requires them; an update may stay silent (#67).
-        if self.item_type is ItemType.KIT:
-            if self.kit is None and self.id is None:
-                raise ValueError("kit lines require 'kit' details (name, grade, ...)")
-            if self.catalog_ref_id is not None or self.new_item is not None:
-                raise ValueError("kit lines must not set catalog_ref_id or new_item")
-        else:
-            if self.kit is not None:
-                raise ValueError(f"{self.item_type} lines must not set 'kit' details")
-            if (self.catalog_ref_id is None) == (self.new_item is None):
-                raise ValueError(
-                    f"{self.item_type} lines require exactly one of catalog_ref_id "
-                    "(existing item) or new_item (create new)"
-                )
+        _validate_line_dispatch(self, kit_required=self.id is None)
         return self
 
 
@@ -283,6 +316,9 @@ class OrderItemRead(BaseModel):
     id: uuid.UUID
     item_type: ItemType
     catalog_ref_id: uuid.UUID | None
+    # Set on `other` lines and on no others (#349): the line has no kit and no
+    # catalog item to be named by.
+    description: str | None
     quantity: int
     unit_price_minor: int
     currency_code: str

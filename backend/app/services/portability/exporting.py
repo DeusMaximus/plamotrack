@@ -44,7 +44,13 @@ from app.services.portability.spec import (
 from app.services.read_snapshot import begin_read_snapshot
 
 #: Bumped when the CSV shape changes in a way an older importer couldn't read.
-EXPORT_VERSION = 1
+#:
+#: * **2** (#349): `order_items.item_type` gained `other`, with its `description`
+#:   column. A version-1 reader refuses the value cell by cell, naming a vocabulary
+#:   the row is outside of, which blocks the import without saying the instance is
+#:   simply older than the archive. The number says it instead. Version-1 archives
+#:   read unchanged: they hold no such line and no such column.
+EXPORT_VERSION = 2
 ARCHIVE_FORMAT = "plamotrack-archive"
 MANIFEST_NAME = "manifest.json"
 

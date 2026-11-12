@@ -75,6 +75,9 @@ interface LineValues {
    *  defaulting against it. */
   kit_status: "ordered" | "pre_ordered";
   catalog: CatalogSelection | null;
+  /** What an `other` line bought (#349) — the one thing such a line says besides
+   *  its quantity and price. "" on every other type of line. */
+  description: string;
 }
 
 interface OrderFormValues {
@@ -117,6 +120,7 @@ function emptyLine(currency: string, kitStatus: LineValues["kit_status"] = "orde
     kit_number: "",
     kit_status: kitStatus,
     catalog: null,
+    description: "",
   };
 }
 
@@ -183,6 +187,7 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
                 id: item.catalog_ref_id,
                 name: catalogName.get(item.catalog_ref_id) ?? i18n.t("orders.unknownItem"),
               },
+        description: item.description ?? "",
       };
     }),
   };
@@ -261,6 +266,11 @@ function toOrderItem(
         status: line.kit_status,
       },
     };
+  }
+  if (line.item_type === "other") {
+    // Tracked nowhere (#349): no kit details and no catalog item, only what it
+    // was. Restated on every save that sends the lines, like quantity and price.
+    return { ...base, item_type: "other", description: line.description.trim() };
   }
   if (line.catalog?.mode === "existing") {
     return { ...base, item_type: line.item_type, catalog_ref_id: line.catalog.id };
@@ -440,6 +450,24 @@ function LineEditor({
             <span className="col-span-full text-xs text-danger">
               {lineErrors?.kit_name?.message ?? lineErrors?.kit_grade?.message}
             </span>
+          )}
+        </div>
+      ) : itemType === "other" ? (
+        // Something on the order the collection doesn't track (#349): no kit
+        // fields and no catalog picker, because it makes neither. What it was,
+        // and the note that says saving it adds nothing to the collection.
+        <div>
+          <Input
+            aria-label={t("orders.otherDescription")}
+            placeholder={t("orders.otherDescriptionPlaceholder")}
+            {...register(`items.${index}.description`, {
+              validate: (value) => value.trim() !== "" || t("validation.otherDescriptionRequired"),
+            })}
+          />
+          {lineErrors?.description ? (
+            <span className="mt-1 block text-xs text-danger">{lineErrors.description.message}</span>
+          ) : (
+            <span className="mt-1 block text-xs text-muted">{t("orders.otherNote")}</span>
           )}
         </div>
       ) : (

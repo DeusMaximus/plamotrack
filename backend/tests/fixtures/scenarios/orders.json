@@ -353,6 +353,118 @@
           "consumables": [{ "id": "@consumables:marker", "quantity_on_hand": 1 }]
         }
       }
+    },
+    {
+      "id": "an-other-line-is-tracked-nowhere-and-a-receipt-applies-nothing-for-it",
+      "why": "rule 2, #349: an `other` line is something on the order the collection does not track. It is stored with its description and nothing else: no kit, no catalog row, no catalog reference. The receipt applies the catalog line's 3 units and none of the other line's 7",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 1 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "create_order",
+          "args": {
+            "retailer_id": "@retailers:hlj",
+            "order_date": "2026-03-14",
+            "currency_code": "JPY",
+            "items": [
+              {
+                "item_type": "consumable",
+                "quantity": 3,
+                "unit_price_minor": 330,
+                "currency_code": "JPY",
+                "catalog_ref_id": "@consumables:marker"
+              },
+              {
+                "item_type": "other",
+                "quantity": 7,
+                "unit_price_minor": 350,
+                "currency_code": "JPY",
+                "description": "Carry bag"
+              }
+            ]
+          },
+          "as": "@orders:new"
+        },
+        { "op": "receive_order", "args": { "order_id": "@orders:new" }, "result": { "received_at": "@now" } }
+      ],
+      "then": {
+        "tables": {
+          "orders": [{ "id": "@orders:new", "received_at": "@now" }],
+          "order_items": [
+            { "order_id": "@orders:new", "item_type": "consumable", "quantity": 3, "catalog_ref_id": "@consumables:marker", "description": null },
+            { "order_id": "@orders:new", "item_type": "other", "quantity": 7, "unit_price_minor": 350, "currency_code": "JPY", "description": "Carry bag", "catalog_ref_id": null }
+          ],
+          "consumables": [{ "id": "@consumables:marker", "quantity_on_hand": 4 }]
+        }
+      }
+    },
+    {
+      "id": "an-other-line-cannot-become-a-tracked-one",
+      "why": "rule 2, #349: a line's item_type is settled at entry, and `other` is no exception. What was bought untracked is tracked later by removing the line and adding a kit or catalog line, never by retyping it",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY" }
+        ],
+        "order_items": [
+          { "id": "@order_items:bag", "order_id": "@orders:hlj", "item_type": "other", "quantity": 7, "unit_price_minor": 350, "currency_code": "JPY", "description": "Carry bag" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "update_order",
+          "args": {
+            "order_id": "@orders:hlj",
+            "items": [
+              {
+                "id": "@order_items:bag",
+                "item_type": "kit",
+                "quantity": 7,
+                "unit_price_minor": 350,
+                "currency_code": "JPY",
+                "kit": { "name": "Zaku II", "grade": "HG" }
+              }
+            ]
+          },
+          "expect": {
+            "refused": {
+              "kind": "invalid_input",
+              "code": "order_line.item_type_immutable",
+              "params": { "before": "other", "after": "kit" }
+            }
+          }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "deleting-a-received-order-undoes-nothing-for-its-other-line",
+      "why": "rule 2, #349: deleting an order undoes its entry, which for an `other` line was nothing. The catalog line's 3 applied units come back off the shelf; the other line's 7 were never on it",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 4 }
+        ],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" },
+          { "id": "@order_items:bag", "order_id": "@orders:hlj", "item_type": "other", "quantity": 7, "unit_price_minor": 350, "currency_code": "JPY", "description": "Carry bag" }
+        ]
+      },
+      "steps": [{ "op": "delete_order", "args": { "order_id": "@orders:hlj" } }],
+      "then": {
+        "tables": {
+          "orders": [],
+          "order_items": [],
+          "consumables": [{ "id": "@consumables:marker", "quantity_on_hand": 1 }]
+        }
+      }
     }
   ]
 }

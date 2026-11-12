@@ -276,6 +276,14 @@
         "count"
       ]
     },
+    "import.line_description_misplaced": {
+      "params": [
+        "item_type"
+      ]
+    },
+    "import.line_description_required": {
+      "params": []
+    },
     "import.line_joins_received": {
       "params": [
         "item_type"
@@ -397,6 +405,11 @@
       ]
     },
     "import.ref_ignored_kit_line": {
+      "params": [
+        "field"
+      ]
+    },
+    "import.ref_ignored_other_line": {
       "params": [
         "field"
       ]

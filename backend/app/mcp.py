@@ -147,10 +147,15 @@ def _parse_item_type(value: str) -> ItemType:
             "create_kit (or a kit line on create_order for a purchase)"
         )
     try:
-        return ItemType(normalized)
+        parsed = ItemType(normalized)
     except ValueError:
+        parsed = None
+    # A catalog table, not merely an order-line type: `other` (#349) is a line the
+    # collection does not track, so it names no table to list.
+    if parsed not in _CATALOG_READ_MODELS:
         valid = ", ".join(t.value for t in _CATALOG_READ_MODELS)
-        raise ToolError(f"invalid item_type {value!r} — valid types: {valid}") from None
+        raise ToolError(f"invalid item_type {value!r} — valid types: {valid}")
+    return parsed
 
 
 def _parse_instant(value: str, field: str = "received_at") -> datetime:
@@ -519,6 +524,11 @@ async def create_order(
     and the whole order with it. A new tool, consumable or display item needs a
     `category` — check list_catalog_categories for that type and reuse a value
     that fits; a new upgrade needs a `manufacturer` (optional on display items).
+    An `other` line is for something on the order the collection does not track —
+    a non-model item in a mixed basket, an add-on: it takes a `description` and
+    its quantity and price, creates no kit and no catalog item, never moves
+    stock, and counts toward the order's total. Use it so the order matches the
+    receipt, never for a kit, tool, consumable, upgrade or display item.
     Catalog stock does NOT increase until the order is received: pass
     received=true for store purchases already in hand, or call
     mark_order_received when a shipment arrives. When logging a purchase that
@@ -637,7 +647,9 @@ async def update_order(
     touch nothing, and a quantity increase then clones the line's current kit.
     Kits that are building/complete, rated, or have
     photos, and stock already consumed, block destructive edits with a conflict.
-    A line's item_type cannot change. Omit converted_price_minor /
+    A line's item_type cannot change — an `other` line cannot become a tracked
+    one, so remove it and add the kit or catalog line instead — and restating an
+    `other` line restates its `description`. Omit converted_price_minor /
     converted_currency_code to keep a line's stored entry-time conversion
     snapshot — never restate that pair from guesswork; an explicit null clears
     it. `received_at` (offset-aware ISO 8601) corrects a receipt date already

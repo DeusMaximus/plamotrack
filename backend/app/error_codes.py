@@ -134,6 +134,9 @@ IMPORT_REF_NOT_IN_UPLOAD = "import.ref_not_in_upload"
 IMPORT_REF_UNMATCHED = "import.ref_unmatched"
 IMPORT_REF_DANGLING = "import.ref_dangling"
 IMPORT_REF_IGNORED_KIT_LINE = "import.ref_ignored_kit_line"
+#: The same discard on an `other` line (#349), which is tracked nowhere and so
+#: references no catalog item either. Its own code because the reason differs.
+IMPORT_REF_IGNORED_OTHER_LINE = "import.ref_ignored_other_line"
 IMPORT_STUB_CREATED = "import.stub_created"
 IMPORT_STUB_CREATED_UNSTOCKED = "import.stub_created_unstocked"
 
@@ -165,6 +168,11 @@ IMPORT_CATALOG_REF_UNRESOLVED = "import.catalog_ref_unresolved"
 IMPORT_LINE_JOINS_RECEIVED = "import.line_joins_received"
 IMPORT_RECEIPT_UNACCOUNTED = "import.receipt_unaccounted"
 IMPORT_UNRECEIVE_UNACCOUNTED = "import.unreceive_unaccounted"
+#: #349: an `other` line with no description, and a description on any other line —
+#: the two halves of the rule REST and MCP hold in the request schema. (No code may
+#: end in `_other` or `_one`: the browser's catalogue reads those as plural forms.)
+IMPORT_LINE_DESCRIPTION_REQUIRED = "import.line_description_required"
+IMPORT_LINE_DESCRIPTION_MISPLACED = "import.line_description_misplaced"
 
 # plan-level
 IMPORT_ROWS_UNREADABLE = "import.rows_unreadable"

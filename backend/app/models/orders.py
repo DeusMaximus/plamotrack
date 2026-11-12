@@ -78,8 +78,8 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
     """Dispatch point between orders and the catalog tables (§3.9).
 
     Quantity semantics differ by item_type — kit lines fan out into new `kits`
-    rows, catalog lines increment `quantity_on_hand`. The dispatch lives in
-    app/services/orders.py.
+    rows, catalog lines increment `quantity_on_hand`, and `other` lines (#349) do
+    neither. The dispatch lives in app/services/orders.py.
     """
 
     __tablename__ = "order_items"
@@ -89,8 +89,14 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
     )
     item_type: Mapped[ItemType] = mapped_column(text_enum(ItemType, "item_type"))
     # Points into one of the catalog tables depending on item_type; null for kit
-    # lines (kits are spawned fresh). No DB-level FK is possible across four tables.
+    # lines (kits are spawned fresh) and for `other` lines, which point at nothing
+    # (#349). No DB-level FK is possible across four tables.
     catalog_ref_id: Mapped[uuid.UUID | None]
+    # What an `other` line bought, in the buyer's words (#349). The line has no kit
+    # and no catalog row to be named by, so this is all that says what it was.
+    # Set on `other` lines and on no others, never blank
+    # (`services/text.stripped_or_none`).
+    description: Mapped[str | None]
     quantity: Mapped[int]
     unit_price_minor: Mapped[int]
     currency_code: Mapped[str] = mapped_column(String(3))
@@ -121,6 +127,17 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
         CheckConstraint(
             "(converted_price_minor IS NULL) = (converted_currency_code IS NULL)",
             name="converted_price_currency_paired",
+        ),
+        # An `other` line is its description and nothing else (#349): every writer
+        # requires one there and refuses one anywhere else, and refuses a catalog
+        # reference on a line that tracks nothing.
+        CheckConstraint(
+            "(item_type = 'other') = (description IS NOT NULL)",
+            name="description_only_on_other",
+        ),
+        CheckConstraint(
+            "item_type <> 'other' OR catalog_ref_id IS NULL",
+            name="other_has_no_catalog_ref",
         ),
     )
 
