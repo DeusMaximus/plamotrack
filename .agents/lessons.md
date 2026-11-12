@@ -1929,3 +1929,11 @@ between open and save, and by failing the second request of a save.** A dirty ch
 Both questions reach past the note. #358 records the other header fields failing the
 first, order lines failing the second, and that its likely fix would give the header
 fields the second as well.
+
+**It recurred one field later (#350, PR #362 round 1).** An order's adjustments were the
+next field the dialog sends only when touched. They went to review with the first test
+and without the second, with this entry on file and the note's latch three lines away,
+and the review found the retry. Reading the lesson was not what was missing. The retry
+tests named one field, so nothing made a new selectively sent field owe them:
+`order-lossless.spec.ts`'s retry block now takes the order's opening note and adjustments,
+and #358 asks for the answer one level up, where a field cannot be left out.

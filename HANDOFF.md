@@ -41,6 +41,31 @@ Template:
 
 ---
 
+## 2026-11-12 — Claude Code (Fable 5.2) — #349 MERGED as `6c70787` (PR #360); #350 MERGED as `0c8478b` (PR #362); #359, #361 filed
+
+- **Done:**
+  - **[PR #360](https://github.com/DeusMaximus/plamotrack/pull/360) merged** at reviewed head `b3cbae0`, closing #349: a sixth order-line type, `other`, with a `description`. It dispatches nothing in any order state. Migration `61442608b20e`. `EXPORT_VERSION` 1 → 2. One Codex gpt-6.1-sol round: GO, no findings.
+  - **[PR #362](https://github.com/DeusMaximus/plamotrack/pull/362) merged** at head `acb7704`, closing #350: `order_adjustments` (a label and a positive amount in the order's currency), `adjustments` and per-currency `totals` on every order read, `order_adjustments.csv`, the editor's section and the Paid row. Migration `b7d4f0a3c915`. One Codex round at `a5e2fa1`: GO with two P3s, both fixed at `acb7704` and not re-reviewed (owner's call).
+  - **The two P3s:** a retry after a half-failed save kept the intermediate adjustments (a second latch, `applied.current.adjustments`); and on a narrow phone at an enlarged font the Paid row ran past its card. The test for the second also found a card's line amounts cut at 40 px on any order, older than the PR, and fixed with it. Lesson appended: `lessons.md` → "A dialog's opening value stops being what's stored".
+  - **Filed:** [#359](https://github.com/DeusMaximus/plamotrack/issues/359), twelve mutation cases whose anchors are stale on `main`. [#361](https://github.com/DeusMaximus/plamotrack/issues/361), a line break in a single-line field is dropped when the browser edits it (found by Greptile on #360; now also an adjustment's label). #363 was a duplicate of #358's retry section and is closed; #358 has the new measurement as a comment.
+- **Decisions (owner):**
+  - **#349:** untracked lines stay out of `get_summary` spend, and there is no conversion to a tracked line.
+  - **#350:** spend summaries keep the shelf price; adjustments that exceed items plus shipping are refused, not clamped; adjustments are a list.
+  - **#350, the author's calls, accepted by the review and merged:** the ceiling counts only lines in the order's own currency, plus shipping. The Orders list's Total is what was paid. The browser renders the server's `totals` and has no live Paid figure. An id-less CSV row matches on order and label, not amount. `EXPORT_VERSION` stays 2, since no release shipped between the two PRs.
+- **State:**
+  - PR checks at `acb7704`: Backend, Frontend and Integration passed. CI on `main` at `0c8478b` was still running when this was written.
+  - Measured locally for #362: backend 4023 passed, 1 xfailed (at `65b84ee`; no backend change after). Frontend 683. Playwright 300 passed, 99 skipped (at `acb7704`, Chromium, one worker). 35 backend mutants and 10 frontend mutants killed. Not run: the fixes under WebKit, a real MCP client over HTTP, the table's Paid row under an enlarged font, two writers racing on one order's adjustments.
+  - **`mutation_test.py`:** #362 re-anchored the two cases it moved (`stg-4`, `348-4`). The twelve from #359 are still stale. A change can stale an older case without touching it, and the harness only says so when that case is run: count every anchor against `main` before a review round (#359 has the script as a comment).
+  - **The dev database was not touched.** The last entry had it behind `8e41c7d2a9f6`; if so it is now three migrations behind. Run `alembic upgrade head` before running `main` against it.
+  - **The owner's LXC is on v0.6.0-alpha.** **Unreleased on `main`:** #333, #341/#343, #346/#352, #348, #349, #350, with #351's docs drift pending (`.agents/next-release.md`). The next release has two migrations that refuse a downgrade once used, and a version-2 archive that v0.6.0-alpha refuses.
+  - **Owed to plamotrack-ios, unmeasured:** #348's field and column. #349: the type, the column, three diagnostic codes, three scenarios, export version 2. #350: the table, two read fields, one code (`order.adjustments_exceed_total`), three scenarios. Also still owed: two diagnostics for an unreadable required cell, a NUL, and `request.text_unstorable` in its `api-error-codes.json`.
+  - **#358 is larger than when filed.** The dialog still restates `currency_code` and `shipping_cost_minor` on every save, and #350's ceiling now reads both. There are two per-field retry latches where the issue said eight would be the wrong shape.
+  - **Left behind:** two T3 Code reviewer worktrees (`t3/review-349-brief`, `t3/review-order-adjustments`), T3's to remove. Merged branches are left on origin as before.
+  - **Carried, not reverified:** #344 (image pins, before or with the next release; bump mechanism undecided). testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
+- **Next:**
+  - #358 (the general answer for the order dialog, now with a server rule behind it), #354, #355, #356, #359, #361.
+  - **The next release:** #351, #344. **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
+
 ## 2026-11-04 — Claude Code (Opus 5.5) — #348 MERGED as `ff50f94` (PR #357); reviews now start through T3 Code; #358 filed
 
 - **Done:**
@@ -146,35 +171,3 @@ Template:
   check it lists. Other sequencing remains #279's edge probes, then #281's
   packaging and #282's VPS path; M7 waits on #28. plamotrack-ios can re-sync
   #342's scenarios once its #15 adds `update_order` and `delete_order`.
-
-## 2026-10-18 — Claude Code (Opus 5.5) — #342 MERGED as `e536064` (PR #345); #341 + #343 MERGED as `8a8c31c` (PR #347); #346 filed; #344 answered
-
-- **Done:**
-  - **[PR #345](https://github.com/DeusMaximus/plamotrack/pull/345)** (#342): four shared scenarios in `scenarios/imports.json`. Each imports a received order (a consumable line of 2) with its catalog sheet into an empty collection, then edits it up or down, deletes it, or deletes it below its line (refused `stock.insufficient` `{name, on_hand: 1, requested: 2}`). Two mutants in `orders.py` each kill exactly their pair. Reviews clean: Codex 👍, Greptile 5/5.
-  - **[PR #347](https://github.com/DeusMaximus/plamotrack/pull/347)** (#341, #343), all in `services/portability/importing.py`:
-    - Zip: `_ExpansionBudget.read` catches `ValueError` (a negative seek, or a per-file name flagged UTF-8 that isn't). `ZipFile()` catches `ValueError` and `NotImplementedError` beside `BadZipFile`.
-    - CSV: `csv.field_size_limit` raised to the import's own size limits, so a long `build_notes` from our own export imports again. `StringIO(newline="")`, which also fixes CR-only line endings (found by the probe). The new code `import.csv_unreadable` `{source, line}` is registered in all three code files. `line` is the inner reader's, because `DictReader.line_num` lags one line on a failed row.
-    - Tests: 18 in `test_portability.py`, two of them byte-flip sweeps (archive, CSV) through `read_upload`. On the unfixed code the archive sweep finds 13 escapes. Mutants `341-1`…`341-8` are in `mutation_test.py`. Backend 3134 passed. Reviews: Codex no findings, Greptile 5/5, CodeRabbit skips (fewer than 10 stars).
-  - **#346 filed:** a NUL character in any text value is a 500, from `POST /retailers` and from import apply. The preview plans the row as a create. Postgres refuses U+0000 in `text`, and no writer checks first. It crosses all three writers, so it was left out of #347.
-  - **#344 answered** ([comment](https://github.com/DeusMaximus/plamotrack/issues/344#issuecomment-6247492937)): plamotrack-ios should start its compat servers from the tag's release bundle (digest-pinned images plus `SHA256SUMS`) instead of building the source. Pins here help only tags cut after them.
-- **Decisions (owner, 18/10):**
-  - **A manifest that can't be unpacked refuses the import.** One that unpacks but isn't readable JSON is still the warning. Recorded on [#341](https://github.com/DeusMaximus/plamotrack/issues/341#issuecomment-6247038717) for plamotrack-ios.
-  - **#344 is low priority**, before or with the next release. The owner is taking the plamotrack-ios side.
-- **State:**
-  - **Unreleased on `main`:** #333 and #341/#343 (`.agents/next-release.md`). #342 is tests only. README and docs site: nothing.
-  - `main` is clean. Merged branches are left on origin: `test/342-imported-order-stock-scenarios`, `fix/341-343-upload-500s`.
-  - **#344 when it's picked up:**
-    - Five images, not four: `backend/Dockerfile:8` copies `ghcr.io/astral-sh/uv:0.5`.
-    - Postgres is in three places: the compose default, the `ci.yml` service, and `release-candidate.yml:57`. Line 57 re-resolves `postgres:16` on release day, so it must read the pin instead.
-    - The bump mechanism isn't chosen. Dependabot's handling of `COPY --from`, `${VAR:-image}` and workflow service images is unverified. The comment suggests a script plus a weekly check plus a runbook step.
-  - **Carried from 13/10:**
-    - The owner's LXC is on 0.5.2; refresh the Gunpla skill at upgrade (#289 changed `create_order`).
-    - testhost is in the tunnel configuration from the 0.6.0 gate (`.env.before-claude-check`); don't recreate its Keycloak container.
-    - Owner: allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access, and delete Claude.ai's "Testing" connector. #278 is open for the skill-zip check.
-    - Known gaps: #238, #324 (local e2e needs `--workers=1`), #320.
-- **Next:** the owner's pick.
-  - #346 (one predicate shared by the schemas and `parse_text`; refuse, don't strip), or #344.
-  - **M6.7:** #279's edge probes, then #281's packaging; #282's VPS path. **M7** waits on #28.
-
-  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
-- **Also next:** plamotrack-ios can re-sync the scenarios (#342's four). Its runner picks them up once plamotrack-ios#15 adds `update_order` and `delete_order`.
