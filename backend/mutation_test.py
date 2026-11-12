@@ -1837,8 +1837,8 @@ CASES = [
     (
         "stg-4. replace_all truncates the settings row",
         IMP,
-        '    "upgrade_applications, retailers, orders, order_items"\n)',
-        '    "upgrade_applications, retailers, orders, order_items, instance_settings"\n)',
+        '    "upgrade_applications, retailers, orders, order_items, order_adjustments"\n)',
+        '    "upgrade_applications, retailers, orders, order_items, order_adjustments, instance_settings"\n)',
         "replace_all_without_the_sheet_leaves_settings_alone or replace_all_updates_the_settings",
     ),
     (
@@ -6907,8 +6907,8 @@ CASES += [
     (
         "348-4. an update that omits it clears it",
         ORDERS_SERVICE,
-        '    header = data.model_dump(exclude_unset=True, exclude={"items"})\n    if "retailer_id" in header:',
-        '    header = data.model_dump(exclude_unset=True, exclude={"items"})\n    header.setdefault("notes", None)\n    if "retailer_id" in header:',
+        '    header = data.model_dump(exclude_unset=True, exclude={"items", "adjustments"})\n    if "retailer_id" in header:',
+        '    header = data.model_dump(exclude_unset=True, exclude={"items", "adjustments"})\n    header.setdefault("notes", None)\n    if "retailer_id" in header:',
         "omits_it_leaves_it",
     ),
     (
