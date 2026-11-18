@@ -152,3 +152,12 @@ Shape:
   dialog now waits for the new currency, showing Loading for that moment.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #361 — a line break in a name shows as a space in the editor, and an edit keeps the two words apart (PR #PRNUM)
+- **Release note:** A name, number or other one-line field that was given a line break
+  through the REST API, an MCP tool or a CSV import showed in the web app's editor with
+  the two lines run together, and saving after typing in that field stored them joined.
+  The editor now shows the break as a space, and an edit saves what was on screen. A
+  field you don't type in keeps its line break, and nothing already stored changes.
+- **README:** nothing.
+- **Docs site:** nothing.

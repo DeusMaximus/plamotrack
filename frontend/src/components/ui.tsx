@@ -6,11 +6,12 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 import { Star, type LucideIcon } from "lucide-react";
-import { forwardRef, useEffect, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { formatNumber } from "../lib/format";
 import { pageWindow, type Paged } from "../lib/listState";
+import { oneLine } from "../lib/oneLine";
 import { useShell } from "../lib/shell";
 import { BrandMark } from "./BrandMark";
 import { Measured } from "./Measured";
@@ -102,10 +103,58 @@ const CONTROL_CLASSES =
  *  what they were. */
 const PHONE_DATE_CLASSES = "max-md:min-w-0 max-md:appearance-none";
 
+/** Inputs whose `value` setter already shows a line break as a space. */
+const BREAKS_SHOWN_AS_SPACES = new WeakSet<HTMLInputElement>();
+
+/** A one-line box shows a stored line break as a space (#361).
+ *
+ *  REST, MCP and the importer can store a break in a field the dialogs edit in
+ *  an `<input>`, and an input cannot hold one: the browser strips CR and LF from
+ *  whatever value it is given, so `Kit\nsecond line` showed as `Kitsecond line`
+ *  and one keystroke saved it that way. The form libraries set the box through
+ *  its `value` property — react-hook-form assigns `ref.value` from the loaded
+ *  values, React assigns it for a controlled box — so that setter is where the
+ *  break becomes a space, whoever sets it. What the *form* holds is untouched:
+ *  a field nobody types into still sends the value it loaded, break and all,
+ *  and one typed into sends what was on screen. The writers are unchanged, by
+ *  the owner's decision on #361.
+ *
+ *  The setter wraps whatever `value` the node has by then — React's own
+ *  change tracker defines one on the node before any ref runs — so React still
+ *  sees every assignment, now with the value the box really holds. */
+function showBreaksAsSpaces(node: HTMLInputElement): void {
+  if (BREAKS_SHOWN_AS_SPACES.has(node)) return;
+  const inner =
+    Object.getOwnPropertyDescriptor(node, "value") ??
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  if (!inner?.get || !inner.set) return;
+  const { get, set } = inner;
+  Object.defineProperty(node, "value", {
+    configurable: true,
+    enumerable: inner.enumerable,
+    get() {
+      return get.call(this);
+    },
+    set(value: unknown) {
+      set.call(this, typeof value === "string" ? oneLine(value) : value);
+    },
+  });
+  BREAKS_SHOWN_AS_SPACES.add(node);
+}
+
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className = "", ...props }, ref) {
     const date = props.type === "date" ? PHONE_DATE_CLASSES : "";
-    return <input ref={ref} className={`${CONTROL_CLASSES} ${date} ${className}`} {...props} />;
+    // Before the caller's ref: react-hook-form sets the loaded value in it.
+    const setRef = useCallback(
+      (node: HTMLInputElement | null) => {
+        if (node) showBreaksAsSpaces(node);
+        if (typeof ref === "function") ref(node);
+        else if (ref) ref.current = node;
+      },
+      [ref],
+    );
+    return <input ref={setRef} className={`${CONTROL_CLASSES} ${date} ${className}`} {...props} />;
   },
 );
 
