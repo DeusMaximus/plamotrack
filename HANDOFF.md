@@ -42,6 +42,40 @@ Template:
 
 ---
 
+## 2026-11-19 — Claude Code (Fable 5.2) — orchestration set up: #364 MERGED as `69ba794`, #365 as `ca5eb75`; #366 filed; wave 1 triaged, nothing launched
+
+- **Done:**
+  - **[PR #364](https://github.com/DeusMaximus/plamotrack/pull/364)** squash-merged as **`69ba794`**; #144 is closed. `DEV_API_PORT` and `DEV_WEB_PORT` (`frontend/devPorts.ts`) move the dev servers Vite, Playwright and the e2e helpers use, so two checkouts can run e2e at once. `.agents/testing-and-review.md` → "More than one session at a time" is the setup for a second session: its own worktree, `TEST_DATABASE_URL` and port pair.
+  - **[PR #365](https://github.com/DeusMaximus/plamotrack/pull/365)** squash-merged as **`ca5eb75`**. `.agents/orchestration.md` is new: the loop, what makes an issue ready, lanes, the roster by seat, the worker brief, the checklist before a PR is called ready, refusals, where to stop for the owner. The review docs and the brief template follow it, and this file's template gained "Waiting on the owner".
+    - Both had the Codex connector and Greptile on their final heads. The connector's one finding on #365 (a P2: the lane setup it points at was missing) was the unmerged #364; answered on its thread by merging `main` in, and clean at `cd630bf`.
+  - The labels `briefed-review` and `owner` exist on the repository.
+  - **#366 filed:** a new-order dialog opened just after a currency change keeps the old reference currency. Found by the two-suite run below, reproduced every time by holding `/api/meta` for 1.5 s.
+  - **Triage, with the owner's agreement:** readiness comments posted on #366, #359, #354 and #356. #356 is labelled `briefed-review` and its comment names the first option (compare as the parser reads).
+- **Decisions (the owner's, 2026-11-18):**
+  - A briefed round is owed by the `briefed-review` label, set at triage or when the work turns out bigger than it looked. The orchestrator starts it.
+  - The Codex connector has to cover the final head of a PR that owes no round. Greptile's first pass is a bonus.
+  - Two lanes for now. Claude Opus 5.5 implements every issue; Sonnet has no seat here. GPT-6.1 Sol reviews until the owner has tried 6.2.
+  - A refusal is a stop: the owner pastes the work into the Codex app with Daybreak Blue, which T3 Code cannot reach.
+  - The goal is a PR the owner can sign off. Stop and change tracks when review rounds loop.
+- **State:**
+  - `main` is at `ca5eb75` plus this entry; CI passed on `ca5eb75`. No PR of this session is open, no worker or reviewer is running. PR #184 (Japanese, draft) still waits on a native reviewer.
+  - **The loop has not run in this repository.** Wave 1 is its first test; edit `.agents/orchestration.md` in place where a step turns out wrong.
+  - Measured for #364: two full e2e suites at once, each on a database migrated from empty. On 8001/5174 from a second worktree: 300 passed, 99 skipped. On the defaults: 291 passed, 1 failed (`settings.spec.ts:129`, which is #366; 3 of 3 alone), 8 not run. Two backend sessions on separate databases: `tests/test_orders.py`, 42 passed in each.
+  - **Until #366 is fixed, `settings.spec.ts:129` can fail in a local e2e run when two lanes are busy.** Put it in the other lane's "already known" list.
+  - A worktree whose `frontend/node_modules` is a symlink fails six `lists.spec.ts` font tests. Anything that runs e2e needs its own `npm ci` (the docs say so now).
+  - Not run: the mutation harness with a non-default `TEST_DATABASE_URL`. #359's readiness comment asks its worker to report on it.
+  - The reviewer table in `testing-and-review.md` → "Which reviewer" still describes Cursor and GLM access as of September. The roster in `orchestration.md` holds the seats and wins.
+  - The readiness drafts are also in `.dev/wave-1/` in the main checkout (gitignored). The merged branches `144-dev-ports` and `orchestration-docs` are still on the remote.
+  - **Carried, unchanged:** the owner's LXC is on v0.6.0-alpha. Unreleased on `main`: #333, #341/#343, #346/#352, #348, #349, #350, plus #351's docs drift (`.agents/next-release.md`); #364 and #365 change nothing a user sees. Owed to plamotrack-ios: #348–#350's fields, codes and scenarios. The dev DB may be three migrations behind (`alembic upgrade head`). Two T3 reviewer worktrees from 2026-11-12 are T3's to remove.
+- **Waiting on the owner:**
+  - #361: which fields are single-line, and which of its three options.
+  - #358: a general answer to the retry trap before it is worker work. It shares `OrderFormModal.tsx` with #366, so it waits for wave 1 either way.
+  - The Cursor and GLM rows above, when the plans are settled.
+- **Next:** a new session as orchestrator, starting from `.agents/orchestration.md`.
+  - **Wave 1:** lane 1 #366 (frontend; a briefed round only if a wrong snapshot turns out to be stored), lane 2 #359 (`backend/mutation_test.py` and an anchor check in CI; nothing under `backend/app/`). No file in common.
+  - **Wave 2:** #354 (`backend/app/mcp.py`) and #356 (the importer's comparison, briefed). Both may add mutation cases, so tell each which the other owns.
+  - Then #358 and #355 (OAuth and token territory: briefed, and the likeliest to meet a refusal). The next release: #351, #344. M6.7: #279's edge probes, then #281, #282. M7 waits on #28.
+
 ## 2026-11-12 — Claude Code (Opus 5.5) — #184 (Japanese catalogue) brought up to `main` at `034df59`; still disabled, waiting on a native reviewer
 
 - **Done:**
@@ -123,30 +157,3 @@ Template:
   - **PR #357:** the review round, then the owner's merge call (`gh pr merge --squash --auto --match-head-commit <reviewed sha>`, never `--admin`).
   - Then #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price); #354, #355, #356.
   - **The next release:** #351, #344. **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
-
-## 2026-11-02 — Claude Code (Opus 5.5) — #346 + #352 MERGED as `1188a67` (PR #353); #354, #355 filed; the owner's LXC is on 0.6.0
-
-- **Done:**
-  - **[PR #353](https://github.com/DeusMaximus/plamotrack/pull/353)** squash-merged as **`1188a67`**, pinned to head `eb94002`. #346 and #352 are closed. Text a column or a response can't carry is a refusal, never a 500:
-    - `services/text.py` is the one predicate (NUL, unpaired surrogate). `schemas/base.py`'s `RequestModel` covers every request body; `parse_text` covers a CSV cell, so the preview now errors the row; `refuse_unstorable_text` covers filters and MCP's flat arguments (new code `request.text_unstorable`); `OAuthStateStore` reads a NUL key as absent. Sign-in's three models stay on `BaseModel`, so a NUL in a password stays a wrong answer.
-    - `has_utf8_form` judges JSON read and shown rather than stored, where it enters: a manifest (the warning, and the rows import) and a fetched CIMD document (an unknown client). `_is_usable_endpoint` does the same for OIDC discovery.
-    - `_EchoResponse`: a 422 that can't echo a surrogate or `1e999` leaves without `input`.
-    - `_ExpansionBudget.read` catches every `Exception` but `DomainError` and `MemoryError`, after three misses in its list (#341, #352, Zstandard).
-    - OIDC: an unstorable `sub` is refused by the claim validator, a bad label is skipped, and the setup token is spent after the commit.
-    - An unreadable required import cell reports one diagnostic, for every column type.
-    - `tests/test_unstorable_text.py` names every body, text query parameter and flat MCP argument, and fails on a new one. Mutants `352-*` and `346-*` (32) are in `mutation_test.py`. Rule 6 in `AGENTS.md` carries the rule.
-  - **Review:** Codex (gpt-6.1-sol, high) NO-GO twice, every finding P3, all reproduced and fixed. GLM 5.3 (Mistral-hosted) GO on a narrower brief, which I wrote and which said P3s alone aren't a NO-GO, so it is less independent than an open round. Greptile 5/5 at `df5ef1a`. All on the PR body's coverage record. The reviewers' findings came back to the session, not the thread.
-  - **Filed:** [#354](https://github.com/DeusMaximus/plamotrack/issues/354) (`create_order`'s flat arguments that fail `OrderCreate` answer a generic error naming no field) and [#355](https://github.com/DeusMaximus/plamotrack/issues/355) (external JSON nobody has driven with these values: token responses, JWKS, other CIMD fields).
-  - `.agents/lessons.md`: "A phrase the next refusal quotes (#353)". `.gitignore` ignores `.cursor/` (8e8b4c7, with the 29/10 entry below).
-- **Decisions (owner, 02/11):** merge on GLM's GO without a third Codex round. `.cursor/` is ignored.
-- **State:**
-  - **The owner's LXC is on v0.6.0-alpha** (owner, 02/11). Older entries saying 0.5.2 were behind.
-  - **Unreleased on `main`:** #333, #341/#343, #346/#352 (`.agents/next-release.md`). #351's docs drift is pending there too, as work to do in the next release cycle.
-  - Backend 3675 tests collected. The last full local run was at `beb544f` (3606 passed, 1 xfailed); CI's Backend and Frontend passed on `eb94002`, and its required checks gated the merge. Packaged stack beyond CI, Playwright and a local 3.12 run: not run for this.
-  - **Owed to plamotrack-ios, unmeasured:** its planner still reports two diagnostics for an unreadable required cell, its handling of a NUL hasn't been run, and it hasn't re-synced `api-error-codes.json` for `request.text_unstorable`. No behaviour scenario was added for NUL.
-  - `main` is clean. Reviewer worktrees and branches are removed; `fix/346-352-nul-and-archive-500s` is left on origin as usual.
-  - **Carried from 29/10, not reverified:** #344 (image pins, low priority, before or with the next release): five images including uv, Postgres in Compose, CI and release-candidate, bump mechanism undecided. testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
-- **Next:** the owner's pick.
-  - **#348** (order notes, a problem the owner actually hit; `RequestModel` and `parse_text` now cover a new text field), then #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price).
-  - **The next release:** #351, #344.
-  - **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
