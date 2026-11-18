@@ -36,6 +36,7 @@ import {
   Select,
   TABLE_HEAD_ROW_CLASS,
 } from "../components/ui";
+import { useFormMeta } from "../lib/formMeta";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
 import { useEnumParam, usePaging, useTextParam, useWriteParams } from "../lib/listState";
@@ -134,7 +135,9 @@ function editedOnly<T extends object>(
  * currency and keep it — on a JPY instance, a new tool's cost quietly filed as AUD.
  * Not rendering isn't the same as not mounting, which is the same trap OrderFormModal
  * documents. InventoryPage warms the query, so this loading state is rarely seen —
- * "rarely" being exactly why the bug would survive. */
+ * "rarely" being exactly why the bug would survive. And "in flight" includes the
+ * refetch after a currency save, which serves the old copy meanwhile: hence
+ * `useFormMeta`, not `useQuery(metaQuery)` (#366). */
 function ItemFormModal({
   tab,
   item,
@@ -147,7 +150,8 @@ function ItemFormModal({
   onDelete?: (item: InventoryItem) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const { data: meta } = useQuery(metaQuery);
+  // A copy from before a currency save is not one to default from (#366).
+  const meta = useFormMeta();
 
   if (!meta) {
     return (

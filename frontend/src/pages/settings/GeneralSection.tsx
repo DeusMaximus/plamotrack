@@ -58,7 +58,9 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
       // The PATCH response is the fresh row — no need to refetch it. But /meta
       // serves the same reference_currency with staleTime Infinity, and the
       // order/inventory forms default from that copy, so it must not survive
-      // the save.
+      // the save. This only marks it stale — nothing here reads /meta, so the
+      // refetch starts on the next page — and the forms' gate (`useFormMeta`)
+      // is what keeps a dialog opened meanwhile off the old copy (#366).
       queryClient.setQueryData(settingsQuery.queryKey, updated);
       await queryClient.invalidateQueries({ queryKey: metaQuery.queryKey });
       reset({ reference_currency: updated.reference_currency });
