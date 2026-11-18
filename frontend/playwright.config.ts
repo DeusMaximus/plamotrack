@@ -1,9 +1,11 @@
 import { defineConfig } from "@playwright/test";
 
+import { API_PORT, WEB_PORT } from "./devPorts";
 import { STORAGE_STATE } from "./e2e/api";
 
-// E2E runs against the dev stack (backend :8000 + Vite :5173), reusing servers
-// that are already up. The spec creates uniquely-named records and cleans up
+// E2E runs against the dev stack (backend :8000 + Vite :5173, or the pair
+// DEV_API_PORT and DEV_WEB_PORT name — devPorts.ts), reusing servers that are
+// already up on those ports. The spec creates uniquely-named records and cleans up
 // after itself via the API, so the dev database is left as it was found.
 const CI = !!process.env.CI;
 
@@ -25,7 +27,7 @@ export default defineConfig({
   // report is what makes an upload worth doing: it embeds the trace below.
   reporter: CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: `http://localhost:${WEB_PORT}`,
     // Only on the retry, so the ordinary green run pays nothing. A trace carries
     // the DOM, the network and a screenshot at every step, which is the
     // difference between reading that a button stayed visible and seeing why.
@@ -98,15 +100,16 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers",
+      command: `uv run uvicorn app.main:app --host 127.0.0.1 --port ${API_PORT} --no-proxy-headers`,
       cwd: "../backend",
-      url: "http://127.0.0.1:8000/healthz",
+      url: `http://127.0.0.1:${API_PORT}/healthz`,
       reuseExistingServer: true,
       timeout: 30_000,
     },
     {
+      // Vite reads the same variable from the environment this process hands it.
       command: "npm run dev",
-      url: "http://localhost:5173",
+      url: `http://localhost:${WEB_PORT}`,
       reuseExistingServer: true,
       timeout: 30_000,
     },

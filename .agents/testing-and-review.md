@@ -31,18 +31,19 @@ last edited, so a large jump either way is worth a look.
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint, then `scripts/check-palette.mjs` — refuses any stock Tailwind palette utility under `src/` (design §13.1: tokens only; `@theme` already emits no CSS for one, so the guard is what makes the regression loud). |
 | Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
-| E2E (~124) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts`, `lists.spec.ts` (#258; it seeds its own rows), `dialogs.spec.ts` and `dialog-keyboard.spec.ts` (#259) and `pages.spec.ts` (#260), which `app` runs too, and `phone.spec.ts`, the happy path by thumb, which is `phone`'s alone (it signs in with the password in a browser of its own, as `auth.spec.ts` does). The `settings` project runs last, after all three: `settings.spec.ts` and `lists.settings.spec.ts` flip the instance-settings singleton, which every date on every page is written with. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
+| E2E (~124) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them (`DEV_API_PORT` and `DEV_WEB_PORT` move the pair, see "More than one session at a time"). The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts`, `lists.spec.ts` (#258; it seeds its own rows), `dialogs.spec.ts` and `dialog-keyboard.spec.ts` (#259) and `pages.spec.ts` (#260), which `app` runs too, and `phone.spec.ts`, the happy path by thumb, which is `phone`'s alone (it signs in with the password in a browser of its own, as `auth.spec.ts` does). The `settings` project runs last, after all three: `settings.spec.ts` and `lists.settings.spec.ts` flip the instance-settings singleton, which every date on every page is written with. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
-**One pytest session at a time.** Two runs against `plamotrack_test` interfere —
+**One pytest session per database.** Two runs against `plamotrack_test` interfere —
 the conftest truncates between tests and migrates at session start; the failure mode
 is a deadlock on `TRUNCATE` and phantom failures. Under the write gate a hung run
-parked on `wait_event='advisory'` in `pg_stat_activity` is the tell.
+parked on `wait_event='advisory'` in `pg_stat_activity` is the tell. A second session
+gets a database of its own: "More than one session at a time", at the end of this section.
 
 **Verify e2e against a database migrated from empty before trusting a green run.**
 CI starts empty; the dev database does not. A test that reads "whichever order is on
 the page" passes locally and has nothing to find in CI. Playwright's `webServer`
-starts uvicorn itself when nothing is on :8000, and the app reads `DATABASE_URL`, so
+starts uvicorn itself when nothing is on its API port, and the app reads `DATABASE_URL`, so
 the whole thing is one script (run from the repo root, with the dev `db` up):
 
 ```bash
@@ -363,6 +364,43 @@ was — it is one size, not a device pass.
 
 **Do not use `--repeat-each` to measure flakiness.** It reuses one module load, so
 every repeat shares the fixture name and stacks duplicates. Fresh processes only.
+
+### More than one session at a time
+
+Two sessions on one machine (an orchestrator's workers, a reviewer beside an author)
+share three things unless told otherwise, and each has collided (#144): the checkout,
+the test database, and the dev servers' ports. Every session gets its own of each.
+
+- **Its own checkout:** a git worktree. Two sessions in one checkout race branch
+  switches and uncommitted edits, and the mutation harness restores its targets from
+  backups, which silently reverts what another session wrote to them meanwhile.
+- **Its own test database:** `TEST_DATABASE_URL` names it and the conftest creates it.
+  It also keeps a branch with a migration from leaving the shared database past
+  another branch's Alembic head.
+- **Its own ports:** `DEV_API_PORT` and `DEV_WEB_PORT`, read by Vite, Playwright and
+  the e2e helpers from `frontend/devPorts.ts`. Playwright reuses whatever answers on
+  the ports it expects, so two checkouts on one pair means one tests the other's code.
+
+From the worktree's root, with its `.env` symlinked from the main checkout:
+
+```bash
+N=358      # anything unique to the session: the issue number
+LANE=1     # 1, 2, …: the main checkout keeps 8000 and 5173
+eval "$(grep -E '^POSTGRES_(USER|PASSWORD|PORT)=' .env | sed 's/^/export /')"
+export TEST_DATABASE_URL="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:${POSTGRES_PORT:-5432}/plamotrack_test_$N"
+export DEV_API_PORT=$((8000 + LANE)) DEV_WEB_PORT=$((5173 + LANE))
+```
+
+Export them in every shell that runs a suite, the mutation harness or a dev server.
+The from-empty e2e recipe above takes the same treatment: name its database
+`plamotrack_e2e_$N`. A session that writes code installs its own dependencies
+(`uv sync --frozen` in `backend/`, `npm ci` in `frontend/`), since its branch may
+change a lockfile. A reviewer that changes nothing can symlink `backend/.venv` from
+the main checkout (with `UV_NO_SYNC=1`), but **anything that runs e2e needs its own
+`npm ci`**: Vite will not serve the web font from a `node_modules` symlinked in from
+outside the checkout, and the `lists.spec.ts` tests that measure with that font fail
+(six of them, measured on this change). When the session ends, drop its databases and
+remove its worktree.
 
 ---
 
