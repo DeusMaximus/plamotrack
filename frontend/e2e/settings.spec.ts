@@ -331,6 +331,50 @@ test("a new order opened while /meta is refetched after an import changed the cu
   }
 });
 
+test("an import that finishes while a dialog is open leaves the draft in it alone (#366, Greptile on #368)", async ({
+  page,
+}) => {
+  // An import outlives the Data section (lib/importRun.ts), and its answer
+  // refreshes every query, /meta included: a form already open must keep what
+  // was typed into it, not drop back to Loading and remount empty.
+  await restoreCurrency();
+  const suffix = Date.now().toString(36);
+  const shop = `E2E 366 Late Import ${suffix}`;
+  const draft = `E2E-366-DRAFT-${suffix}`;
+  try {
+    await gotoWithMetaCached(page, "/orders");
+    await page.getByRole("link", { name: "Settings" }).click();
+    await page.getByRole("link", { name: "Data management" }).click();
+    let releaseApply!: () => void;
+    const applyHeld = new Promise<void>((resolve) => (releaseApply = resolve));
+    await page.route("**/import/apply", async (route) => {
+      await applyHeld;
+      await route.continue();
+    });
+    const main = page.getByRole("main");
+    await main.locator('input[type="file"]').setInputFiles({
+      name: "retailers.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(`name\n${shop}\n`),
+    });
+    await main.getByRole("button", { name: "Preview changes" }).click();
+    await page.getByRole("button", { name: "Apply import" }).click();
+
+    await page.getByRole("link", { name: "Orders" }).click();
+    await page.getByRole("button", { name: "New order" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Order number").fill(draft);
+
+    const refetched = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/meta");
+    releaseApply();
+    await refetched; // the import's refresh reached /meta while the dialog was open
+    await expect(dialog.getByLabel("Order number"), "the draft survives the refresh").toHaveValue(draft);
+    await page.unroute("**/import/apply");
+  } finally {
+    await removeShop(shop);
+  }
+});
+
 test("a new tool opened while /meta is refetched after a currency save costs in the new currency (#366)", async ({
   page,
 }) => {
