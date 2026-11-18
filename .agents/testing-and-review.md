@@ -923,7 +923,7 @@ gets a briefed round as well** (owner's calls, 2026-10-03 on #314 and 2026-11-18
 - **A briefed round** is the review this repo relies on: Codex GPT 6.1 Sol on high (owner's call, 2026-10-31), started through T3 Code. See "Starting a round" below. Browser and Docker legs run there, so the route doesn't depend on the kind of change. Quota is ample: when unsure whether a PR owes one, run one.
   - **Outside T3 Code,** the owner pastes the same one line into the Codex desktop app. #314's rounds 2–4 ran that way: NO-GO, NO-GO, GO, each finding replayed with a control.
   - The Claude Code plugin's task route remains for a round with no browser or Docker leg when neither of those is available.
-- **Which model holds which seat** is `orchestration.md` → "Roster", and it wins where the table below differs. The table is each reviewer's measured history.
+- **Which model holds which seat** is `orchestration.md` → "Roster", and it wins where the table below differs. Codex GPT 6.1 Sol is the only reviewer for now (owner's call, 2026-11-19). The table is each reviewer's measured history: its GLM and Cursor rows are not options.
 
 | Reviewer | Fits | Notes |
 | --- | --- | --- |

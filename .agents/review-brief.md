@@ -154,6 +154,8 @@ findings only in this chat.
 ## Reviewer footers
 
 Pick one; it supplies the two `‹reviewer …›` slots and adds its own last paragraph.
+Codex GPT 6.1 Sol is the only reviewer for now (owner's call, 2026-11-19), so that is
+the Codex footer; the GLM and Cursor footers are kept for the record.
 
 The reviewer names itself and its version — the lines below are what previous rounds
 wrote, given so the slots in the template read as one house style.

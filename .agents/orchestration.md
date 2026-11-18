@@ -98,7 +98,7 @@ with a merge commit, and its suites are run again on the result.
 
 ## Roster
 
-The owner's working experience, as of 2026-11-18. Edit in place when a seat changes or
+The owner's working experience, as of 2026-11-19. Edit in place when a seat changes or
 a model surprises you in either direction. The measured history of each reviewer is in
 `.agents/testing-and-review.md` → "Which reviewer".
 
@@ -107,11 +107,11 @@ a model surprises you in either direction. The measured history of each reviewer
 | Orchestrator | Claude Fable 5.2, high | This loop, triage, and questions about the shape of the work |
 | Implementer | Claude Opus 5.5, high | Every issue, the mechanical ones included. Sonnet has no seat in this repo (the owner's call, from an earlier Sonnet's work here) |
 | Briefed reviewer | GPT-6.1 Sol through Codex, high | Every briefed round. Quota is ample: when unsure whether a PR owes a round, run one. It keeps the seat until the owner has tried GPT-6.2 Sol and says to change it |
-| Second opinion | GLM 5.3 on Mistral Vibe, high | A narrow should-this-merge read when a NO-GO is in question. Mistral Large 4 finds as much, but re-rate its P-levels |
 | Manual fallback | Daybreak Blue, run by the owner in the Codex app | Work or a review a model here has refused. It is Sol for defensive security work, and T3 Code cannot reach it, so no session here can start it. See "When a model refuses" |
 
-Implementers are Claude models and the reviewers are not, so every PR gets a read from
-outside the author's model family. Keep that true when a seat changes.
+Implementers are Claude models and the reviewer is not, so every PR gets a read from
+outside the author's model family. Keep that true when a seat changes. GPT-6.1 Sol is
+the only reviewer for now (the owner's call, 2026-11-19): GLM and Cursor hold no seat.
 
 ## The worker brief
 
@@ -200,8 +200,8 @@ template, starting the round with `delegate_task`, answering it. What the loop a
    second NO-GO, or when a round's finding lands in the function or invariant the last
    round's fix touched. More patching there buys another round. Bring the options with
    your recommendation: ship the PR as scoped with its contract stated honestly and
-   file the structural fix; make the structural fix here when it is small and in the
-   PR's own files; or take the second-opinion seat's read on whether it should merge.
+   file the structural fix; or make the structural fix here when it is small and in the
+   PR's own files.
 
 ## When a model refuses
 

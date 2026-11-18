@@ -42,7 +42,7 @@ Template:
 
 ---
 
-## 2026-11-19 — Claude Code (Fable 5.2) — orchestration set up: #364 MERGED as `69ba794`, #365 as `ca5eb75`; #366 filed; wave 1 triaged, nothing launched
+## 2026-11-19 — Claude Code (Fable 5.2) — orchestration set up: #364 MERGED as `69ba794`, #365 as `ca5eb75`; #366 filed; three waves triaged, nothing launched
 
 - **Done:**
   - **[PR #364](https://github.com/DeusMaximus/plamotrack/pull/364)** squash-merged as **`69ba794`**; #144 is closed. `DEV_API_PORT` and `DEV_WEB_PORT` (`frontend/devPorts.ts`) move the dev servers Vite, Playwright and the e2e helpers use, so two checkouts can run e2e at once. `.agents/testing-and-review.md` → "More than one session at a time" is the setup for a second session: its own worktree, `TEST_DATABASE_URL` and port pair.
@@ -50,13 +50,15 @@ Template:
     - Both had the Codex connector and Greptile on their final heads. The connector's one finding on #365 (a P2: the lane setup it points at was missing) was the unmerged #364; answered on its thread by merging `main` in, and clean at `cd630bf`.
   - The labels `briefed-review` and `owner` exist on the repository.
   - **#366 filed:** a new-order dialog opened just after a currency change keeps the old reference currency. Found by the two-suite run below, reproduced every time by holding `/api/meta` for 1.5 s.
-  - **Triage, with the owner's agreement:** readiness comments posted on #366, #359, #354 and #356. #356 is labelled `briefed-review` and its comment names the first option (compare as the parser reads).
+  - **Triage, with the owner's agreement:** readiness comments posted on #366, #359, #354, #356, #361 and #358. #356 and #358 are labelled `briefed-review`. Each comment carries the owner's decisions for its issue.
 - **Decisions (the owner's, 2026-11-18):**
   - A briefed round is owed by the `briefed-review` label, set at triage or when the work turns out bigger than it looked. The orchestrator starts it.
   - The Codex connector has to cover the final head of a PR that owes no round. Greptile's first pass is a bonus.
   - Two lanes for now. Claude Opus 5.5 implements every issue; Sonnet has no seat here. GPT-6.1 Sol reviews until the owner has tried 6.2.
   - A refusal is a stop: the owner pastes the work into the Codex app with Daybreak Blue, which T3 Code cannot reach.
   - The goal is a PR the owner can sign off. Stop and change tracks when review rounds loop.
+  - **2026-11-19:** GPT-6.1 Sol is the only reviewer for now; GLM and Cursor hold no seat (the roster's second-opinion row is gone).
+  - **#356:** the importer compares as the parser reads. **#361:** fix the editor only (a stored line break shows as a space); the Other line's description stays one line. **#358:** re-base the form after each stored step, and the person's save wins when both wrote a field.
 - **State:**
   - `main` is at `ca5eb75` plus this entry; CI passed on `ca5eb75`. No PR of this session is open, no worker or reviewer is running. PR #184 (Japanese, draft) still waits on a native reviewer.
   - **The loop has not run in this repository.** Wave 1 is its first test; edit `.agents/orchestration.md` in place where a step turns out wrong.
@@ -64,17 +66,15 @@ Template:
   - **Until #366 is fixed, `settings.spec.ts:129` can fail in a local e2e run when two lanes are busy.** Put it in the other lane's "already known" list.
   - A worktree whose `frontend/node_modules` is a symlink fails six `lists.spec.ts` font tests. Anything that runs e2e needs its own `npm ci` (the docs say so now).
   - Not run: the mutation harness with a non-default `TEST_DATABASE_URL`. #359's readiness comment asks its worker to report on it.
-  - The reviewer table in `testing-and-review.md` → "Which reviewer" still describes Cursor and GLM access as of September. The roster in `orchestration.md` holds the seats and wins.
+  - The reviewer table in `testing-and-review.md` → "Which reviewer" keeps its GLM and Cursor rows as history. The roster in `orchestration.md` holds the seats and wins.
   - The readiness drafts are also in `.dev/wave-1/` in the main checkout (gitignored). The merged branches `144-dev-ports` and `orchestration-docs` are still on the remote.
   - **Carried, unchanged:** the owner's LXC is on v0.6.0-alpha. Unreleased on `main`: #333, #341/#343, #346/#352, #348, #349, #350, plus #351's docs drift (`.agents/next-release.md`); #364 and #365 change nothing a user sees. Owed to plamotrack-ios: #348–#350's fields, codes and scenarios. The dev DB may be three migrations behind (`alembic upgrade head`). Two T3 reviewer worktrees from 2026-11-12 are T3's to remove.
-- **Waiting on the owner:**
-  - #361: which fields are single-line, and which of its three options.
-  - #358: a general answer to the retry trap before it is worker work. It shares `OrderFormModal.tsx` with #366, so it waits for wave 1 either way.
-  - The Cursor and GLM rows above, when the plans are settled.
-- **Next:** a new session as orchestrator, starting from `.agents/orchestration.md`.
-  - **Wave 1:** lane 1 #366 (frontend; a briefed round only if a wrong snapshot turns out to be stored), lane 2 #359 (`backend/mutation_test.py` and an anchor check in CI; nothing under `backend/app/`). No file in common.
-  - **Wave 2:** #354 (`backend/app/mcp.py`) and #356 (the importer's comparison, briefed). Both may add mutation cases, so tell each which the other owns.
-  - Then #358 and #355 (OAuth and token territory: briefed, and the likeliest to meet a refusal). The next release: #351, #344. M6.7: #279's edge probes, then #281, #282. M7 waits on #28.
+- **Waiting on the owner:** nothing from this session. #184 still needs a native Japanese reviewer.
+- **Next:** a new session as orchestrator, starting from `.agents/orchestration.md`. #366, #361 and #358 all touch the dialogs, so each is in a different wave.
+  - **Wave 1:** lane 1 #366 (frontend; a briefed round only if a wrong snapshot turns out to be stored), lane 2 #359 (`backend/mutation_test.py` and an anchor check in CI; nothing under `backend/app/`).
+  - **Wave 2:** #354 (`backend/app/mcp.py`) and #361 (the dialogs' one-line inputs).
+  - **Wave 3:** #356 (the importer's comparison) and #358 (the order dialog), both briefed. #354 and #356 may add mutation cases, so tell each worker which the other owns.
+  - Then #355 (OAuth and token territory: briefed, and the likeliest to meet a refusal; no readiness comment yet). The next release: #351, #344. M6.7: #279's edge probes, then #281, #282. M7 waits on #28.
 
 ## 2026-11-12 — Claude Code (Opus 5.5) — #184 (Japanese catalogue) brought up to `main` at `034df59`; still disabled, waiting on a native reviewer
 
