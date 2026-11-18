@@ -108,7 +108,7 @@ a model surprises you in either direction. The measured history of each reviewer
 | Implementer | Claude Opus 5.5, high | Every issue, the mechanical ones included. Sonnet has no seat in this repo (the owner's call, from an earlier Sonnet's work here) |
 | Briefed reviewer | GPT-6.1 Sol through Codex, high | Every briefed round. Quota is ample: when unsure whether a PR owes a round, run one. It keeps the seat until the owner has tried GPT-6.2 Sol and says to change it |
 | Second opinion | GLM 5.3 on Mistral Vibe, high | A narrow should-this-merge read when a NO-GO is in question. Mistral Large 4 finds as much, but re-rate its P-levels |
-| Manual fallback | The owner, in the Codex app | Work a model here has refused. No session here can start it. See "When a model refuses" |
+| Manual fallback | Daybreak Blue, run by the owner in the Codex app | Work or a review a model here has refused. It is Sol for defensive security work, and T3 Code cannot reach it, so no session here can start it. See "When a model refuses" |
 
 Implementers are Claude models and the reviewers are not, so every PR gets a read from
 outside the author's model family. Keep that true when a seat changes.
@@ -208,9 +208,18 @@ template, starting the round with `delegate_task`, answering it. What the loop a
 Some of this repo's work looks like offensive tooling to a safety filter although it
 is the owner's own instance: OAuth and token handling, ingress and rate-limit tests
 that send hostile input, the security scan's follow-ups. A worker, a reviewer, or you
-may be refused or cut off partway through.
+may be refused or cut off partway through. It is rare now, and likeliest in a review
+round.
 
-A refusal is a hand-over to the owner, who continues by hand in the Codex app.
+A refusal is a hand-over to the owner, who pastes it into the Codex app with Daybreak
+Blue enabled.
+
+**A refused review round** needs no new file. Give the owner the one line naming the
+brief, as `.agents/testing-and-review.md` → "Which reviewer" has it for a round
+outside T3 Code, and say which step was refused. The reviewer is still from outside the
+author's model family, so the round counts as any other.
+
+**Refused work on an issue:**
 
 1. Leave the branch as it is, with everything committed and pushed.
 2. Write `.dev/<issue>/manual-handover.md` in the main checkout. The session that picks
