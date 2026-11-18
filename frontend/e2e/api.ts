@@ -20,10 +20,12 @@ import { fileURLToPath } from "node:url";
 
 import { request, type APIRequestContext } from "@playwright/test";
 
+import { API_PORT, WEB_PORT } from "../devPorts";
+
 /** The API, spoken to directly (the dev server proxies `/api/*` here). */
-export const API = "http://127.0.0.1:8000";
+export const API = `http://127.0.0.1:${API_PORT}`;
 /** The SPA — the origin whose cookie jar the browser contexts reuse. */
-export const APP = "http://localhost:5173";
+export const APP = `http://localhost:${WEB_PORT}`;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const AUTH_DIR = path.join(HERE, ".auth");
