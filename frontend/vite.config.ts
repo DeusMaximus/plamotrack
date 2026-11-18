@@ -2,6 +2,8 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+import { API_PORT, WEB_PORT } from "./devPorts.ts";
+
 // The app calls the API under /api; in dev Vite proxies that to the backend
 // (stripping the prefix — the API serves at root). The production nginx will
 // do the same (Milestone 5).
@@ -19,9 +21,14 @@ export default defineConfig({
     chunkSizeWarningLimit: 600,
   },
   server: {
+    // The port asked for or none: Vite's default is to take the next free one,
+    // and a dev server on a port nobody named is one Playwright cannot find and
+    // another checkout's run can (devPorts.ts, #144).
+    port: WEB_PORT,
+    strictPort: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: `http://127.0.0.1:${API_PORT}`,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
