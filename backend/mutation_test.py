@@ -2538,8 +2538,8 @@ CASES = [
     (
         "auth-22. the profile middleware added last (outermost)",
         MAIN,
-        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n        # principal resolved once, before Starlette routes and FastAPI parses,\n        # so an anonymous caller is refused ahead of the router's 404/405 and\n        # the parser's 422 — none of which the dependency can reach. It renders\n        # through the same envelope handler the dependency's errors take.\n        app.add_middleware(\n            PreRoutingAuthMiddleware,\n            index=route_index,\n            table=DispatchTable.from_app(app),\n            render=domain_error_handler,\n        )\n\n        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n            # Lazy import keeps the ingress policy independent of persistence;\n            # the service owns the audit transaction (rule 1).\n            from app.services.audit import record_ingress_rejection as record\n\n            await record(event_type, scope, policy=policy, setting=setting)\n\n    app.add_exception_handler(DomainError, domain_error_handler)\n    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n    app.add_exception_handler(RequestValidationError, request_validation_handler)\n    app.add_exception_handler(Exception, unhandled_error_envelope)\n\n    # Outermost last: the guard answers a hostile Host before anything else\n    # runs, and the forwarded-client resolver sees only requests that passed it.\n    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n    app.add_middleware(\n        HostOriginGuardMiddleware,\n        policy=policy,\n        rejection_recorder=record_ingress_rejection if authorization else None,\n    )\n    return app",
-        "        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n        # principal resolved once, before Starlette routes and FastAPI parses,\n        # so an anonymous caller is refused ahead of the router's 404/405 and\n        # the parser's 422 — none of which the dependency can reach. It renders\n        # through the same envelope handler the dependency's errors take.\n        app.add_middleware(\n            PreRoutingAuthMiddleware,\n            index=route_index,\n            table=DispatchTable.from_app(app),\n            render=domain_error_handler,\n        )\n\n        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n            # Lazy import keeps the ingress policy independent of persistence;\n            # the service owns the audit transaction (rule 1).\n            from app.services.audit import record_ingress_rejection as record\n\n            await record(event_type, scope, policy=policy, setting=setting)\n\n    app.add_exception_handler(DomainError, domain_error_handler)\n    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n    app.add_exception_handler(RequestValidationError, request_validation_handler)\n    app.add_exception_handler(Exception, unhandled_error_envelope)\n\n    # Outermost last: the guard answers a hostile Host before anything else\n    # runs, and the forwarded-client resolver sees only requests that passed it.\n    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n    app.add_middleware(\n        HostOriginGuardMiddleware,\n        policy=policy,\n        rejection_recorder=record_ingress_rejection if authorization else None,\n    )\n    if authorization:\n        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n    return app",
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n        # principal resolved once, before Starlette routes and FastAPI parses,\n        # so an anonymous caller is refused ahead of the router's 404/405 and\n        # the parser's 422 — none of which the dependency can reach. It renders\n        # through the same envelope handler the dependency's errors take.\n        app.add_middleware(\n            PreRoutingAuthMiddleware,\n            index=route_index,\n            table=DispatchTable.from_app(app),\n            render=domain_error_handler,\n        )\n\n        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n            # Lazy import keeps the ingress policy independent of persistence;\n            # the service owns the audit transaction (rule 1).\n            from app.services.audit import record_ingress_rejection as record\n\n            await record(\n                event_type,\n                scope,\n                policy=policy,\n                setting=setting,\n                budget=getattr(app.state, REFUSAL_BUDGET_ATTR),\n            )\n\n    app.add_exception_handler(DomainError, domain_error_handler)\n    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n    app.add_exception_handler(RequestValidationError, request_validation_handler)\n    app.add_exception_handler(Exception, unhandled_error_envelope)\n\n    # Outermost last: the guard answers a hostile Host before anything else\n    # runs, and the forwarded-client resolver sees only requests that passed it.\n    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n    app.add_middleware(\n        HostOriginGuardMiddleware,\n        policy=policy,\n        rejection_recorder=record_ingress_rejection if authorization else None,\n    )\n    return app",
+        "        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n        # principal resolved once, before Starlette routes and FastAPI parses,\n        # so an anonymous caller is refused ahead of the router's 404/405 and\n        # the parser's 422 — none of which the dependency can reach. It renders\n        # through the same envelope handler the dependency's errors take.\n        app.add_middleware(\n            PreRoutingAuthMiddleware,\n            index=route_index,\n            table=DispatchTable.from_app(app),\n            render=domain_error_handler,\n        )\n\n        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n            # Lazy import keeps the ingress policy independent of persistence;\n            # the service owns the audit transaction (rule 1).\n            from app.services.audit import record_ingress_rejection as record\n\n            await record(\n                event_type,\n                scope,\n                policy=policy,\n                setting=setting,\n                budget=getattr(app.state, REFUSAL_BUDGET_ATTR),\n            )\n\n    app.add_exception_handler(DomainError, domain_error_handler)\n    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n    app.add_exception_handler(RequestValidationError, request_validation_handler)\n    app.add_exception_handler(Exception, unhandled_error_envelope)\n\n    # Outermost last: the guard answers a hostile Host before anything else\n    # runs, and the forwarded-client resolver sees only requests that passed it.\n    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n    app.add_middleware(\n        HostOriginGuardMiddleware,\n        policy=policy,\n        rejection_recorder=record_ingress_rejection if authorization else None,\n    )\n    if authorization:\n        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n    return app",
         "middleware_is_innermost",
     ),
     (
@@ -2757,7 +2757,7 @@ CASES = [
     (
         "m63-10. a login success does not reset the budget",
         AUTH_SVC,
-        "    budget.reset()\n    if credentials.password_needs_rehash",
+        "    ladder.reset()\n    if credentials.password_needs_rehash",
         "    if credentials.password_needs_rehash",
         "throttle_then_a_success_resets",
     ),
@@ -3168,8 +3168,8 @@ CASES = [
     (
         "oidc-20. setup token consumed at start, not at the bind",
         OIDC_SVC,
-        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
-        "        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "        setup_state.consume()\n        return raw\n",
+        "        return raw\n",
         "first_login_with_the_setup_token_binds_the_owner",
     ),
     (
@@ -3273,8 +3273,8 @@ CASES = [
     (
         "oidc-35. the OIDC bind mints a local-mode session",
         OIDC_SVC,
-        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
-        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.LOCAL)\n",
+        "            owner.claimed_at = now\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "            owner.claimed_at = now\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.LOCAL)\n",
         "first_login_with_the_setup_token_binds_the_owner",
     ),
     (
@@ -3454,7 +3454,7 @@ CASES = [
     ),
     (
         "moa-22. the storage key is the signing key",
-        MCP_OAUTH,
+        MCP_OAUTH_STATE,
         "    return base64.urlsafe_b64encode(derived)",
         "    return base64.urlsafe_b64encode(signing_key)",
         "storage_key_differs_from_the_signing_key",
@@ -3476,8 +3476,8 @@ CASES = [
     (
         "moa-25. the authorization endpoint declared with PUT",
         REG,
-        '        f"{MCP_MOUNT}/authorize", ("GET", "POST"), ProtocolRole.AUTHORIZATION',
-        '        f"{MCP_MOUNT}/authorize", ("GET", "POST", "PUT"), ProtocolRole.AUTHORIZATION',
+        '        f"{MCP_MOUNT}/authorize",\n        ("GET", "POST"),\n        ProtocolRole.AUTHORIZATION,',
+        '        f"{MCP_MOUNT}/authorize",\n        ("GET", "POST", "PUT"),\n        ProtocolRole.AUTHORIZATION,',
         "each_protocol_route_accepts_exactly_its_declared_verbs",
     ),
     (
@@ -3617,8 +3617,8 @@ CASES = [
     (
         "moa-45. the registration body guard not installed",
         MAIN,
-        "        prune_child_well_known(mcp_app)\n        guard_registration_body(mcp_app)",
-        "        prune_child_well_known(mcp_app)",
+        "        prune_child_well_known(mcp_app)\n        guard_registration_body(mcp_app, oauth.proxy)\n",
+        "        prune_child_well_known(mcp_app)\n",
         "registration_body_that_is_not_client_metadata_is_the_dcr_400",
     ),
     (
@@ -3846,8 +3846,8 @@ CASES = [
         # closing parentheses by binding the two arguments to a name instead.
         "moa-76. the stored client not the admitted contract (FastMCP's record left standing)",
         MCP_OAUTH,
-        "        await self._client_store.put(\n            key=client_info.client_id,\n            value=ProxyDCRClient(",
-        "        _unwritten = (\n            client_info.client_id,\n            ProxyDCRClient(",
+        "            await self._client_store.put(\n                key=client_info.client_id,\n                value=ProxyDCRClient(",
+        "            _unwritten = (\n                client_info.client_id,\n                ProxyDCRClient(",
         "registration_response_describes_the_stored_client and display",
     ),
     (
@@ -4217,8 +4217,8 @@ CASES = [
     (
         "aud-6. ingress audit address is the raw peer",
         AUDIT_SVC,
-        "            client_address=client_address_from_scope(scope, policy),\n",
-        '            client_address=scope["client"][0],\n',
+        "    address = client_address_from_scope(scope, policy)\n",
+        '    address = scope["client"][0]\n',
         "host_and_origin_rejections_are_audited",
     ),
     (
@@ -6590,8 +6590,8 @@ CASES += [
     (
         "341-1. a member's open() ValueError escapes the budget",
         IMP,
-        "            NotImplementedError,\n            ValueError,\n        ) as exc:",
-        "            NotImplementedError,\n        ) as exc:",
+        "        except (DomainError, MemoryError):",
+        "        except (DomainError, MemoryError, ValueError):",
         "zipfile_raises_besides or manifest_that_cannot_be_unpacked",
     ),
     (
@@ -6611,8 +6611,8 @@ CASES += [
     (
         "341-4. a manifest that unpacks but isn't UTF-8 refuses the import",
         IMP,
-        "except (json.JSONDecodeError, ValueError) as exc:\n                warnings.append(",
-        "except json.JSONDecodeError as exc:\n                warnings.append(",
+        "except (json.JSONDecodeError, ValueError, RecursionError) as exc:",
+        "except (json.JSONDecodeError, RecursionError) as exc:",
         "manifest_that_unpacks_but_isnt_utf8",
     ),
     (
@@ -6714,8 +6714,8 @@ CASES += [
     (
         "346-6. the importer's text cell takes anything",
         SPEC_FILE,
-        "    return require_storable_text(value) or None",
-        "    return value or None",
+        "    return stripped_or_none(require_storable_text(raw))",
+        "    return stripped_or_none(raw)",
         "a_preview_refuses_the_row or every_text_column",
     ),
     (

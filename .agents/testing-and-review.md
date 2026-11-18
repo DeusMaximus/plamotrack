@@ -618,7 +618,12 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
 - **An anchor matching zero or two places is a failure**, not a skip — a mutant that
   never applied is not a mutant that was killed. Anchors are exact source strings
   and rot when the code moves; a refactor that touches an anchored line owes a
-  harness run.
+  harness run. The count alone is checked in CI: `tests/test_mutation_anchors.py`
+  fails the Backend check when any case's anchor matches other than once, so the PR
+  that moves an anchored line is the one that goes red (#359, after twelve went stale
+  unnoticed). Re-anchor the case on where its rule went and run it with `-k`; retire
+  it only when the rule is gone. A matching anchor still says nothing about whether
+  the named test kills the mutant: that is the harness run.
 - **A `-k` expression that selects no test is a failure too** (`NONE`, on #86's
   harness from `fd8d195`). pytest exits 5 there, and "any non-zero exit is a kill"
   read it as RED: after a merge united two case sets under one target-file list, 13
