@@ -21,7 +21,12 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   lines, state not lessons — then **rotate**: if the file now holds more than five
   entries, move the oldest to the top of `.agents/handoff/YYYY-MM.md`, verbatim,
   in the same commit. The header there spells out the rules; the next agent may be
-  a different model with zero shared context and a small context window.
+  a different model with zero shared context and a small context window. A session
+  working in a worktree for an orchestrator ends its final message with its entry
+  instead, and the orchestrator commits it.
+- **Orchestrating** (handing issues to worker sessions and checking their results):
+  read `.agents/orchestration.md` first. It holds the loop, the model for each seat,
+  the worker brief, and where to stop for the owner.
 - **`.agents/testing-and-review.md`** is the procedure — suites, harnesses, the
   release gate, which reviewer for what, how to answer a review. Read it before
   writing a regression test for a filed defect, before opening a PR for review,
@@ -230,6 +235,8 @@ docs/translating.md     # contributor how-to for proposing/reviewing a language 
 HANDOFF.md              # session hand-off log — the five most recent entries only
 .agents/                # process material for agents, NOT user docs (README inside)
   handoff/YYYY-MM.md    #   archived HANDOFF.md entries, verbatim; grep it, don't read it
+  orchestration.md      #   the orchestrator's loop: triage, lanes, the roster by seat, the
+                        #   worker brief, what to verify, where to stop for the owner
   lessons.md            #   case histories behind the rules — append-only, stable headings
   testing-and-review.md #   procedure: suites, harness, CI, release gate, reviewer routing
   review-brief.md       #   fill-in template for briefing a reviewer; the PR-body shape it assumes

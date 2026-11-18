@@ -908,19 +908,22 @@ so the loop is part of the process, not a formality.
 
 The owner's criterion, from #40: **buy a review for a shared mechanism everything
 flows through**; a small, local change whose worst failure is a false refusal rides
-the release gate instead. State the call and the reason in the hand-off entry.
+the automatic reviews and the release gate instead. The call is the `briefed-review`
+label on the issue, set at triage or once the work turns out bigger than it looked
+(`orchestration.md` → "A ready issue", and step 6 of its loop). State the call and the
+reason in the hand-off entry.
 
 ### Which reviewer
 
-**Routing by size (owner's call, 2026-10-03, on #314):**
-- **Small changes** ride the automatic GitHub reviews.
-  - **Greptile** reviews a PR's first push on its own. Re-runs are the owner's to trigger, and it is capped at 50 a month.
-  - **The Codex connector** reviews when a PR opens. Re-run it with a PR comment, `@codex review`, optionally followed by what to look at.
-  - Both read the diff; neither runs this repo's suites, so a clean pass is not a measured GO. On #314 they were still worth it: the connector found a real defect nothing else had (picking the same file again fires no `change`).
-- **Big changes** get a briefed round of Codex GPT 6.1 Sol on high (owner's call, 2026-10-31), which the authoring agent starts itself through T3 Code. See "Starting a round" below. Browser and Docker legs run there, so the route doesn't depend on the kind of change.
+**Every PR gets the automatic GitHub reviews; a PR whose issue carries `briefed-review`
+gets a briefed round as well** (owner's calls, 2026-10-03 on #314 and 2026-11-18).
+- **The automatic reviews** read the diff; neither runs this repo's suites, so a clean pass is not a measured GO. On #314 they were still worth it: the connector found a real defect nothing else had (picking the same file again fires no `change`).
+  - **The Codex connector** reviews when a PR opens. Re-run it with a PR comment, `@codex review`, optionally followed by what to look at. On a PR that owes no briefed round it has to cover the final head: it is then the PR's one read from outside the author's model family.
+  - **Greptile** reviews a PR's first push on its own, and that pass is a bonus: answer what it finds, and don't wait on or ask for another. Re-runs are the owner's to trigger, and it is capped at 50 a month.
+- **A briefed round** is the review this repo relies on: Codex GPT 6.1 Sol on high (owner's call, 2026-10-31), started through T3 Code. See "Starting a round" below. Browser and Docker legs run there, so the route doesn't depend on the kind of change. Quota is ample: when unsure whether a PR owes one, run one.
   - **Outside T3 Code,** the owner pastes the same one line into the Codex desktop app. #314's rounds 2–4 ran that way: NO-GO, NO-GO, GO, each finding replayed with a control.
   - The Claude Code plugin's task route remains for a round with no browser or Docker leg when neither of those is available.
-- GLM 5.3 / 5.3 Flash in T3 Code stays an option for a big round. Capacity is not the constraint.
+- **Which model holds which seat** is `orchestration.md` → "Roster", and it wins where the table below differs. The table is each reviewer's measured history.
 
 | Reviewer | Fits | Notes |
 | --- | --- | --- |
@@ -935,8 +938,9 @@ queue. Both external tools output to chat unless told otherwise.
 
 ### Starting a round
 
-The owner says when a round runs; the agent then starts it (owner's call, 2026-11-04,
-retiring the paste as the normal route):
+A round runs when the PR's issue carries `briefed-review`, or when the owner asks for
+one. The orchestrator starts it, or the authoring agent in a session that has none
+(owner's calls: 2026-11-04, retiring the paste as the normal route, and 2026-11-18):
 
 1. Write the brief, as below.
 2. Call `delegate_task`: `target` provider `codex`, model `gpt-6.1-sol`, option
@@ -972,13 +976,13 @@ findings come from. The template also names the PR-body sections it points at
 so write the PR body to that shape. The bullets below are why the fixed parts say
 what they say:
 
-- **One line, not a wall of text:** the line above. Free **:8000 and :5173** before a frontend round: the e2e config reuses
-  whatever is listening, and the dev database's owner password is not the suite's.
+- **One line, not a wall of text:** the line above.
 - **Prepare the environment first:** deps installed (`uv sync`, `npm install`),
   db up, everything offline-resolvable. Otherwise every install is an approval
-  prompt inside the review. **A worktree has no `.env` and no dependencies**, so the
-  brief says to symlink them from the main checkout, and that HTTP reproductions never
-  touch the dev database.
+  prompt inside the review. **A worktree has no `.env` and no dependencies, and shares
+  the main checkout's database and ports unless told otherwise**, so the brief gives
+  the reviewer a lane ("More than one session at a time"), says what to symlink and
+  when to run `npm ci`, and that HTTP reproductions never touch the dev database.
 - **Tell it where to post:** `gh pr comment N --body-file <path>` — `--body-file`,
   not `--body`, because a shell string mangles backticks and `$`. A review that can't
   run a leg says so and lists what wasn't re-measured; that isn't a NO-GO (#265 put one

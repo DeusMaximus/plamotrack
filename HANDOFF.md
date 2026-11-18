@@ -36,6 +36,7 @@ Template:
 - **Done:**
 - **Decisions:**
 - **State:** (tests? migrations? anything half-finished?)
+- **Waiting on the owner:**
 - **Next:**
 ```
 

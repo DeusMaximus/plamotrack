@@ -4,6 +4,10 @@ Not user documentation — that is `docs/`. This directory holds what agents (an
 humans working alongside them) need *between* sessions, kept out of the always-loaded
 `AGENTS.md` so that it costs context only when it is actually read.
 
+- `orchestration.md` — the loop for the session that hands issues to worker sessions:
+  what makes an issue ready, which run together, which model for which seat, the
+  worker brief, what to verify before a PR is called ready, and where to stop for the
+  owner. Read it when you are orchestrating.
 - `handoff/YYYY-MM.md` — archived `HANDOFF.md` entries, verbatim, newest first, one
   file per month. `HANDOFF.md` in the repo root keeps only the five most recent;
   its header carries the rotation rule and the grep recipe. Never read one whole.
@@ -24,5 +28,5 @@ humans working alongside them) need *between* sessions, kept out of the always-l
   the change's own PR, worked through by the release and trimmed once it is published
   (`releases.md` step 7).
 - `review-brief.md` — the fill-in template for briefing an external reviewer
-  (Codex by default, started through T3 Code), the PR-body shape it points at, and the checklist
+  (started through T3 Code), the PR-body shape it points at, and the checklist
   that produces the per-PR "where I'd push" section. Edited in place.

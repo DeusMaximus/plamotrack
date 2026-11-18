@@ -5,9 +5,9 @@ every time. The parts that recur are the parts that have cost time when forgotte
 `--body-file` not `--body`, the phrase *mutation testing*, a worktree rather than `git
 checkout --` for the negative control, the attribution line. This file holds them once.
 The agent
-opening the PR fills the `‹slots›`, **saves the finished brief as
+opening the PR, or its orchestrator, fills the `‹slots›`, **saves the finished brief as
 `.dev/<issue>/review-brief-<round>.md`** (gitignored, in the main checkout) and, when
-the owner asks for a round, starts it through T3 Code with **one line** as the task —
+the PR owes a round, starts it through T3 Code with **one line** as the task —
 *"Follow the review brief at `<absolute path>`"* (`testing-and-review.md` → "Starting a
 round"). Outside T3 Code the owner pastes that line into the Codex app. Either way, a few
 lines in chat say what it asks. **The whole brief is not printed in chat** (owner's call,
@@ -58,15 +58,21 @@ and what this branch does about it — file names, not adjectives.› No migrati
 ‹one migration, additive›. Inventory counts and purchase records, not access control.
 
 **Environment is ready.** You're in a worktree at this head; the main checkout is
-`/Users/tlgja/Code/plamotrack`. Symlink its `.env`, `backend/.venv` (with
-`UV_NO_SYNC=1`) and `frontend/node_modules`, and don't stage them. The dev Postgres is up
+`‹absolute path of the main checkout›`. Symlink its `.env` and `backend/.venv` (with
+`UV_NO_SYNC=1`), and don't stage them. You are lane ‹L›: before you run any suite or
+server, set `TEST_DATABASE_URL`, `DEV_API_PORT` and `DEV_WEB_PORT` as
+`.agents/testing-and-review.md` → "More than one session at a time" says, with
+`N=‹issue›r‹round›` and `LANE=‹L›`; other sessions are running beside you on the
+defaults. The dev Postgres is up
 (`docker compose -f docker-compose.yml -f docker-compose.dev.yml ps db`), but don't
 migrate the dev database or run reproductions against it: HTTP reproductions go through
 the test suite's fixtures. Keep scratch files in a temp directory of your own and delete
-it before you finish; the one thing to leave in `.dev/‹issue›/` is your review, as
-`review-‹round›.md`. Run the suite from `backend/` with `uv run pytest`; **one pytest
-session at a time** — two overlapping runs deadlock on `TRUNCATE`. ‹Frontend: "untouched; don't start Vite" /
-"`npm install` done; `npm run build`, `npm test`, e2e needs chromium installed".›
+it before you finish, and drop the databases you made; the one thing to leave in
+`.dev/‹issue›/` is your review, as `review-‹round›.md`. Run the suite from `backend/`
+with `uv run pytest`; **one pytest session at a time in your database** — two
+overlapping runs deadlock on `TRUNCATE`. ‹Frontend: "untouched; don't start Vite" /
+"run `npm ci` in `frontend/` (a symlinked `node_modules` fails the font tests), then
+`npm run build`, `npm test`; e2e needs chromium installed".›
 
 **Two jobs, in this order.** *First,* examine the complete feature contract on your
 own: before you read the author's test plan or the "where I'd push" list below, write
