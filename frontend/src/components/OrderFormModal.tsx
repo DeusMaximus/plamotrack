@@ -11,7 +11,7 @@ import type {
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
-import { api, ApiError, metaQuery } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { ItemType, Order, OrderItemUpsert, OrderUpdate } from "../api/types";
 import { ITEM_TYPES } from "../api/types";
 import i18n from "../i18n";
@@ -25,6 +25,7 @@ import {
   stepFor,
   todayISO,
 } from "../lib/format";
+import { useFormMeta } from "../lib/formMeta";
 import { invalidateOrderViews } from "../lib/invalidate";
 import { itemTypeTitle } from "../lib/labels";
 import type { CatalogSelection } from "./CatalogItemPicker";
@@ -636,7 +637,8 @@ function AdjustmentEditor({
  * defaultValues, and react-hook-form does not revisit defaults when a query later
  * resolves. Not rendering isn't the same as not mounting.
  *
- * `meta` supplies the reference currency. The other four are what an *edit* rebuilds
+ * `meta` supplies the reference currency, and it is the one input here that waits
+ * for a *current* answer rather than any cached one: `useFormMeta` (#366). The other four are what an *edit* rebuilds
  * a line from — a kit line's name, grade, scale and number live on the spawned kits,
  * and a catalog line's label on the catalog row. Mounting before they arrive filled
  * the form with blanks and then wrote those blanks back, so a cold edit silently
@@ -654,7 +656,8 @@ export function OrderFormModal({
   onDelete?: (order: Order) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const { data: meta } = useQuery(metaQuery);
+  // Not merely present: a copy an invalidation has overtaken is not one (#366).
+  const meta = useFormMeta();
   // The order the caller has is the list's cached copy, stale for as long as
   // the page has been open (#67). Refetch it on every open and hydrate from
   // the answer — this shrinks the stale window from "page age" to "during this

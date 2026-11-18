@@ -342,7 +342,8 @@ export const tokensQuery = {
 /** The instance-settings singleton (§6.1). Same shape and reasoning as
  * `metaQuery`: one shared key, fetched once, fresh until a save invalidates it.
  * A save must also invalidate `metaQuery` — `/meta` serves the same
- * `reference_currency`, and the order/inventory forms default from *that*. */
+ * `reference_currency`, and the order/inventory forms default from *that*,
+ * through `useFormMeta`, which waits out the refetch (#366). */
 export const settingsQuery = {
   queryKey: ["settings"],
   queryFn: api.getSettings,

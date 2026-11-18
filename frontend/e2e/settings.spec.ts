@@ -152,6 +152,270 @@ test("saving the currency persists it and refreshes the order form's default", a
   await expect(page.getByLabel("Currency").first()).toHaveValue(target);
 });
 
+// --------------------------------------------- a form opened while /meta is in flight (#366)
+//
+// The order and inventory forms take the reference currency from /meta when they
+// mount, and a save that changes it only *invalidates* that cache: nothing is on
+// the Settings page to refetch it, so the next page asks again while the cached
+// copy from before the save is still there to be read. A dialog opened inside
+// that window started on the old currency and kept it. Each test below holds the
+// refetch until the dialog is open, so the window is certain rather than a race.
+
+/** Hold every `/api/meta` answer until `release()`. `asked()` counts the requests
+ *  that reached the hold, so a test can see the window really was open. */
+async function holdMeta(page: Page): Promise<{ release: () => void; asked: () => number }> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let asked = 0;
+  await page.route("**/api/meta", async (route) => {
+    asked += 1;
+    await gate;
+    await route.continue();
+  });
+  return { release, asked: () => asked };
+}
+
+/** Open `path` and wait until its read of /meta has been answered and cached:
+ *  the copy from before the save that the window under test can serve. */
+async function gotoWithMetaCached(page: Page, path: string): Promise<void> {
+  const answered = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/meta");
+  await page.goto(path);
+  await answered;
+}
+
+/** Save `code` as the reference currency from the General section. */
+async function saveCurrency(page: Page, code: string): Promise<void> {
+  await page.getByRole("link", { name: "Settings" }).click();
+  const input = page.getByLabel("Currency code");
+  await expect(input).toHaveValue(original.reference_currency);
+  await input.fill(code);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+}
+
+/** Start from the original currency whatever the test before this one saved. */
+async function restoreCurrency(): Promise<void> {
+  const api = await apiContext();
+  await api.patch("/settings", { data: { reference_currency: original.reference_currency } });
+  await api.dispose();
+}
+
+type StoredLine = {
+  currency_code: string;
+  converted_price_minor: number | null;
+  converted_currency_code: string | null;
+};
+
+/** Open New order while /meta is held, then record a one-kit order through it
+ *  without touching a currency field, and return the line as stored. */
+async function recordOrderWhileMetaIsHeld(
+  page: Page,
+  hold: { release: () => void; asked: () => number },
+  shop: string,
+  orderNumber: string,
+): Promise<StoredLine> {
+  await page.getByRole("link", { name: "Orders" }).click();
+  // The Orders page's own read of /meta is what is held: the window is open.
+  await expect.poll(hold.asked, { message: "the refetch of /meta is in flight" }).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "New order" }).click();
+  const dialog = page.getByRole("dialog");
+  // The form is not mounted on the copy from before the save…
+  await expect.soft(dialog.getByText("Loading…"), "the form waits for /meta").toBeVisible();
+  // Nothing to fill in or save while it waits, so no order can be recorded on it.
+  await expect.soft(dialog.getByLabel("Currency"), "no form before /meta answers").toHaveCount(0);
+  hold.release();
+  // …and once the answer is in, it starts from it.
+  const currency = dialog.getByLabel("Currency").first();
+  await expect.soft(currency, "the order's currency is the new one").toHaveValue(target);
+
+  await dialog.getByRole("combobox", { name: /^Retailer/ }).selectOption({ label: shop });
+  await dialog.getByLabel("Order number").fill(orderNumber);
+  await dialog.getByLabel("Unit price").first().fill("25");
+  await dialog.getByPlaceholder("Kit name *").first().fill(`${orderNumber} kit`);
+  await dialog.getByPlaceholder("Grade *").first().fill("HG");
+  await page.getByRole("button", { name: "Record order" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  const api = await apiContext();
+  const orders = (await (await api.get("/orders")).json()) as {
+    order_number: string | null;
+    items: StoredLine[];
+  }[];
+  await api.dispose();
+  const order = orders.find((row) => row.order_number === orderNumber);
+  expect(order, "the order reached the API").toBeTruthy();
+  return order!.items[0];
+}
+
+/** Every order the shop has, then the shop. Deleting an order undoes its kits. */
+async function removeShop(shop: string): Promise<void> {
+  const api = await apiContext();
+  const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
+  const row = retailers.find((r) => r.name === shop);
+  if (row) {
+    const orders = (await (await api.get("/orders")).json()) as { id: string; retailer_id: string }[];
+    for (const order of orders.filter((o) => o.retailer_id === row.id)) {
+      await api.delete(`/orders/${order.id}`);
+    }
+    await api.delete(`/retailers/${row.id}`);
+  }
+  await api.dispose();
+}
+
+test("a new order opened while /meta is refetched after a currency save starts on the new currency (#366)", async ({
+  page,
+}) => {
+  await restoreCurrency();
+  const suffix = Date.now().toString(36);
+  const shop = `E2E 366 Shop ${suffix}`;
+  const api = await apiContext();
+  await api.post("/retailers", { data: { name: shop } });
+  await api.dispose();
+  try {
+    await gotoWithMetaCached(page, "/orders");
+    const hold = await holdMeta(page);
+    await saveCurrency(page, target);
+    const line = await recordOrderWhileMetaIsHeld(page, hold, shop, `E2E-366-A-${suffix}`);
+    // What the dialog stored: a new line in the instance's currency carries its
+    // snapshot in that currency (§6). On the copy from before the save it was the
+    // old one, a currency the instance no longer uses.
+    expect(line).toMatchObject({ currency_code: target, converted_currency_code: target });
+    expect(line.converted_price_minor).not.toBeNull();
+  } finally {
+    await removeShop(shop);
+  }
+});
+
+test("a new order opened while /meta is refetched after an import changed the currency starts on the new currency (#366)", async ({
+  page,
+}) => {
+  await restoreCurrency();
+  const suffix = Date.now().toString(36);
+  const shop = `E2E 366 Import Shop ${suffix}`;
+  const api = await apiContext();
+  await api.post("/retailers", { data: { name: shop } });
+  await api.dispose();
+  // The settings sheet as an export writes it, with only the currency changed.
+  const header = "interface_language,formatting_locale,time_zone,date_style,hour_cycle,reference_currency";
+  const row = [
+    original.interface_language,
+    original.formatting_locale,
+    original.time_zone,
+    original.date_style,
+    original.hour_cycle,
+    target,
+  ].join(",");
+  try {
+    await gotoWithMetaCached(page, "/orders");
+    await page.getByRole("link", { name: "Settings" }).click();
+    await page.getByRole("link", { name: "Data management" }).click();
+    const hold = await holdMeta(page);
+    const main = page.getByRole("main");
+    await main.locator('input[type="file"]').setInputFiles({
+      name: "instance_settings.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(`${header}\n${row}\n`),
+    });
+    await main.getByRole("button", { name: "Preview changes" }).click();
+    await page.getByRole("button", { name: "Apply import" }).click();
+    await expect(main.getByText("Import complete")).toBeVisible();
+    const check = await apiContext();
+    const stored = (await (await check.get("/settings")).json()) as { reference_currency: string };
+    await check.dispose();
+    expect(stored.reference_currency, "the import changed the currency").toBe(target);
+
+    const line = await recordOrderWhileMetaIsHeld(page, hold, shop, `E2E-366-B-${suffix}`);
+    expect(line).toMatchObject({ currency_code: target, converted_currency_code: target });
+  } finally {
+    await removeShop(shop);
+  }
+});
+
+test("an import that finishes while a dialog is open leaves the draft in it alone (#366, Greptile on #368)", async ({
+  page,
+}) => {
+  // An import outlives the Data section (lib/importRun.ts), and its answer
+  // refreshes every query, /meta included: a form already open must keep what
+  // was typed into it, not drop back to Loading and remount empty.
+  await restoreCurrency();
+  const suffix = Date.now().toString(36);
+  const shop = `E2E 366 Late Import ${suffix}`;
+  const draft = `E2E-366-DRAFT-${suffix}`;
+  try {
+    await gotoWithMetaCached(page, "/orders");
+    await page.getByRole("link", { name: "Settings" }).click();
+    await page.getByRole("link", { name: "Data management" }).click();
+    let releaseApply!: () => void;
+    const applyHeld = new Promise<void>((resolve) => (releaseApply = resolve));
+    await page.route("**/import/apply", async (route) => {
+      await applyHeld;
+      await route.continue();
+    });
+    const main = page.getByRole("main");
+    await main.locator('input[type="file"]').setInputFiles({
+      name: "retailers.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(`name\n${shop}\n`),
+    });
+    await main.getByRole("button", { name: "Preview changes" }).click();
+    await page.getByRole("button", { name: "Apply import" }).click();
+
+    await page.getByRole("link", { name: "Orders" }).click();
+    await page.getByRole("button", { name: "New order" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Order number").fill(draft);
+
+    const refetched = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/meta");
+    releaseApply();
+    await refetched; // the import's refresh reached /meta while the dialog was open
+    await expect(dialog.getByLabel("Order number"), "the draft survives the refresh").toHaveValue(draft);
+    await page.unroute("**/import/apply");
+  } finally {
+    await removeShop(shop);
+  }
+});
+
+test("a new tool opened while /meta is refetched after a currency save costs in the new currency (#366)", async ({
+  page,
+}) => {
+  await restoreCurrency();
+  const name = `E2E 366 Nippers ${Date.now().toString(36)}`;
+  try {
+    await gotoWithMetaCached(page, "/inventory");
+    const hold = await holdMeta(page);
+    await saveCurrency(page, target);
+    await page.getByRole("link", { name: "Inventory" }).click();
+    await expect.poll(hold.asked, { message: "the refetch of /meta is in flight" }).toBeGreaterThan(0);
+    await page.getByRole("button", { name: "Add tool" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect.soft(dialog.getByText("Loading…"), "the form waits for /meta").toBeVisible();
+    await expect.soft(dialog.getByLabel("Cost currency"), "no form before /meta answers").toHaveCount(0);
+    hold.release();
+    await expect.soft(dialog.getByLabel("Cost currency"), "the cost's currency is the new one").toHaveValue(target);
+
+    await dialog.getByLabel("Name").fill(name);
+    await dialog.getByLabel("Category").fill("cutting");
+    await dialog.getByLabel("Reference cost").fill("40");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    const api = await apiContext();
+    const tools = (await (await api.get("/tools")).json()) as {
+      name: string;
+      unit_cost_reference_currency: string | null;
+    }[];
+    await api.dispose();
+    const tool = tools.find((row) => row.name === name);
+    expect(tool, "the tool reached the API").toBeTruthy();
+    expect(tool!.unit_cost_reference_currency).toBe(target);
+  } finally {
+    const api = await apiContext();
+    const tools = (await (await api.get("/tools")).json()) as { id: string; name: string }[];
+    for (const tool of tools.filter((row) => row.name === name)) await api.delete(`/tools/${tool.id}`);
+    await api.dispose();
+  }
+});
+
 test("the language form hydrates from the row and the document carries its metadata (#27)", async ({
   page,
 }) => {

@@ -143,3 +143,12 @@ Shape:
   saying it is missing.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #366 — a new order or tool opened just after a currency change starts on the new currency (PR #368)
+- **Release note:** Right after the reference currency was changed (in Settings, or by
+  importing an instance-settings sheet), a New order or Add tool dialog opened before the
+  app had re-read the instance's details could start on the old currency and keep it,
+  and an order saved from it could record its converted price in the old currency. The
+  dialog now waits for the new currency, showing Loading for that moment.
+- **README:** nothing.
+- **Docs site:** nothing.
