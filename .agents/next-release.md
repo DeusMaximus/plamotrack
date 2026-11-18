@@ -153,7 +153,7 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
-## #354 — an MCP `create_order` refusal names the argument to correct (PR #NNN)
+## #354 — an MCP `create_order` refusal names the argument to correct (PR #373)
 - **Release note:** When `create_order` over MCP was given a value its order schema
   refuses (a currency code that is not three capital letters, an empty `items` list, a
   NUL in `order_number`, `tracking_url` or another text field), the agent got only
