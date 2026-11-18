@@ -3614,12 +3614,16 @@ CASES = [
         "        return UNRESOLVED_ENDPOINT",
         "upstream_authorization_request_is_built_from_configuration",
     ),
+    # moa-45 re-pointed at #359's re-anchoring: the f4 test it named stays green with
+    # the guard gone, because the SDK under FastMCP 4 answers a body that is not a JSON
+    # document with the same RFC 7591 400 and the binding stamps it. The guard still
+    # owns the budget, the quota and the cap (#221), and those tests see it go.
     (
         "moa-45. the registration body guard not installed",
         MAIN,
         "        prune_child_well_known(mcp_app)\n        guard_registration_body(mcp_app, oauth.proxy)\n",
         "        prune_child_well_known(mcp_app)\n",
-        "registration_body_that_is_not_client_metadata_is_the_dcr_400",
+        "an_address_has_a_registration_quota or the_collection_is_capped_and_the_guard_answers_503_first",
     ),
     (
         "moa-46. a protocol route's failure not stamped with the profile",
