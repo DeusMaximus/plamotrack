@@ -57,7 +57,10 @@ owner's own instance is public behind a Cloudflare Tunnel. ‹Two or three sente
 and what this branch does about it — file names, not adjectives.› No migration /
 ‹one migration, additive›. Inventory counts and purchase records, not access control.
 
-**Environment is ready.** You're in a worktree at this head; the main checkout is
+**Environment is ready.** You're in a worktree of your own, cut from the commit the
+session that briefed you is on, which is not the PR's head: run `git fetch origin` and
+`git checkout --detach ‹sha›` before anything else, and confirm `git rev-parse --short
+HEAD` prints `‹sha›`. The main checkout is
 `‹absolute path of the main checkout›`. Symlink its `.env` and `backend/.venv` (with
 `UV_NO_SYNC=1`), and don't stage them. You are lane ‹L›: before you run any suite or
 server, set `TEST_DATABASE_URL`, `DEV_API_PORT` and `DEV_WEB_PORT` as

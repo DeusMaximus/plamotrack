@@ -609,6 +609,22 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   A worktree that borrows the main checkout's `.venv` through a symlink needs
   `UV_NO_SYNC=1`: without it the harness's `uv run` re-synced the shared venv, and the
   next `uv run` in the main checkout uninstalled and reinstalled a package (#289).
+- **At 813 cases a serial run is hours, so run it in shards.** Measured on `main` at
+  `b515041` (19/11/2026, the primary dev Mac): about 12 s a case serially over the
+  first eight, so roughly 2.7 hours for the set, which was not run to the end. Six
+  shards finished in 28 minutes. Each shard is a detached worktree of its own with
+  its own `TEST_DATABASE_URL` ("More than one session at a time"), since the harness
+  rewrites source files and each pytest session truncates its database. The harness
+  has no shard flag: run it through a wrapper that slices the list, from `backend/`:
+
+  ```python
+  import sys; sys.path.insert(0, ".")
+  import mutation_test as m
+  i, n = int(sys.argv[1]), int(sys.argv[2])     # shard i of n
+  m.CASES = list(m.CASES)[i::n]
+  sys.argv = sys.argv[:1]
+  raise SystemExit(m.main())
+  ```
 - **A burst of failures that vanish on re-probe is a concurrent pytest session,
   not a finding.** A parallel session running the suite against `plamotrack_test`
   mid-harness reads as SICK/ERROR/GREEN for exactly the window it overlaps, and

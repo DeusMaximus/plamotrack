@@ -196,7 +196,10 @@ template, starting the round with `delegate_task`, answering it. What the loop a
    how.
 4. P3s on a GO become follow-up issues you propose to the owner. Folding one into the
    PR moves the head, so the round repeats.
-5. **Change tracks when the rounds loop.** Stop and go to the owner when a PR gets a
+5. The worker answers the review on the PR, a GO included, and brings the PR body's
+   coverage record up to it. It has usually handed back before the round posts, so send
+   the review's link to its thread and say whether a push is wanted.
+6. **Change tracks when the rounds loop.** Stop and go to the owner when a PR gets a
    second NO-GO, or when a round's finding lands in the function or invariant the last
    round's fix touched. More patching there buys another round. Bring the options with
    your recommendation: ship the PR as scoped with its contract stated honestly and
@@ -264,6 +267,6 @@ Ask before any of these. Everything else in the loop is yours.
 - Anything `AGENTS.md` → Git conventions calls outward-facing: a tag, a release, a
   registry write, a repository setting. The docs site is the same.
 - A change that reverses a call `AGENTS.md` or `docs/design.md` records as the owner's.
-- A review loop, as "Briefed rounds" step 5 describes.
+- A review loop, as "Briefed rounds" step 6 describes.
 - A refusal or safety block on legitimate work.
 - Changing a seat in the roster, or the number of lanes.

@@ -42,6 +42,31 @@ Template:
 
 ---
 
+## 2026-11-19 — Claude Code (Fable 5.2) — orchestrator: wave 1 MERGED (#367 as `95adab3`, #368 as `b515041`); #369, #370 filed; five mutants survive on `main`; wave 2 not launched
+
+- **Done:**
+  - **Wave 1, the loop's first run.** [PR #367](https://github.com/DeusMaximus/plamotrack/pull/367) (#359) merged as **`95adab3`** and [PR #368](https://github.com/DeusMaximus/plamotrack/pull/368) (#366) as **`b515041`**, each at its reviewed head with the owner's sign-off. The two entries below are the workers', with what was re-measured.
+  - **Filed, at the owner's word:** [#369](https://github.com/DeusMaximus/plamotrack/issues/369), an order dialog open while the reference currency changes records a new line's snapshot in the old currency (Sol's P3 on #368; `bug`, `briefed-review`). [#370](https://github.com/DeusMaximus/plamotrack/issues/370), the registration guard's JSON check has no test of its own. A [comment on #238](https://github.com/DeusMaximus/plamotrack/issues/238#issuecomment-6992455678) adds a failed `/meta` refetch to its scope.
+  - **Full mutation harness run on `main` at `b515041`:** 813 cases, 808 RED. Four GREEN: `inv-17b`, `inv-20`, `inv-21` (the three whose tests live in `mutation_test.py`) and `moa-61` (`register_client`'s public-client normalisation). One NONE: `scan-20`, whose test #248 removed. `inv-20` was confirmed alone through the unmodified harness. None is diagnosed.
+  - **Docs, from what the first run got wrong:** `review-brief.md` tells the reviewer to check the PR head out (a delegated worktree is cut from the briefing session's commit). `orchestration.md` → "Briefed rounds" has a step for sending the posted review to the worker's thread. `testing-and-review.md` → "Mutation testing" has the measured timing and a shard wrapper.
+- **Decisions (the owner's, 2026-11-19):** merge both; file #369 and #370; the failed `/meta` refetch is a comment on #238, not an issue; the orchestrator runs the full harness. The compile check of each mutant (#367's third proposal) was not taken up.
+- **State:**
+  - `main` is at `97cf68a` plus this entry. CI passed on `97cf68a`, which holds both merges. On merged `main` the anchor test passes and Alembic has one head, `b7d4f0a3c915`.
+  - No PR of this session is open, no worker or reviewer is running, both lanes are free. Worker worktrees, scratch worktrees and every `plamotrack_test_*` and `plamotrack_e2e_*` database of the session are gone. The local and remote branches `359-mutation-anchors` and `366-stale-meta-order-dialog` remain.
+  - `settings.spec.ts:129` should no longer fail when two lanes run e2e (#366 is fixed). Not re-measured under two lanes.
+  - **A serial harness run is now hours:** about 12 s a case over the first eight, so roughly 2.7 hours at 813 cases. Six shards took 28 minutes.
+  - **What the loop's first run showed, beyond the doc edits:** a worker hands back before the briefed round posts, and it had stopped watching its PR by then. Greptile's first pass found the one P1 of the wave (#368: a late import wiped an open draft).
+  - **Unreleased on `main`:** #333, #341/#343, #346/#352, #348, #349, #350, #366, plus #351's docs drift (`.agents/next-release.md` has #366's entry). #359 changes nothing a user sees.
+  - **Carried, unchanged:** the owner's LXC is on v0.6.0-alpha. Owed to plamotrack-ios: #348–#350's fields, codes and scenarios. The dev DB may be three migrations behind (`alembic upgrade head`). PR #184 (Japanese, draft) waits on a native reviewer. Three T3 reviewer worktrees are T3's to remove: two from 2026-11-12 and this session's Sol round (detached at `047328d`).
+- **Waiting on the owner:**
+  - Whether to file the five survivors as one issue. The draft is `.dev/wave-1/issue-harness-survivors.md` in the main checkout (gitignored). `moa-61` and `scan-20` are in `app/auth/mcp_oauth.py`, so keep that issue out of #355's wave.
+  - Readiness comments for #369 and #370: neither is triaged.
+  - #184 still needs a native Japanese reviewer.
+- **Next:** a new session as orchestrator, from `.agents/orchestration.md`.
+  - **Wave 2:** #354 (`backend/app/mcp.py`) and #361 (the dialogs' one-line inputs). Both have readiness comments. #361 touches `OrderFormModal.tsx`, which #368 changed, so cut it from `main` now.
+  - **Wave 3:** #356 (the importer's comparison) and #358 (the order dialog), both briefed. #354 and #356 may add mutation cases: tell each worker which the other owns, and the anchor test fails a PR that stales one.
+  - **Later:** #369 (briefed; it is `OrderFormModal.tsx` again, so after #358), #370, then #355 (OAuth and token territory: briefed, the likeliest to meet a refusal, no readiness comment yet). The next release: #351, #344. M6.7: #279's edge probes, then #281, #282. M7 waits on #28.
+
 ## 2026-11-19 — Claude Code (Opus 5.5) — #366: PR #368 at `047328d`, briefed round 1 GO with one P3, answered; ready for the owner
 - **Done:**
   - [PR #368](https://github.com/DeusMaximus/plamotrack/pull/368) (closes #366), branch `366-stale-meta-order-dialog`, head `047328d`. `frontend/src/lib/formMeta.ts`: `useFormMeta()` ignores a stale `/meta` (invalidated and not answered since, under `staleTime: Infinity`) and latches its first current copy while the gate is mounted. `OrderFormModal` and the inventory `ItemFormModal` gate on it. Release note in `.agents/next-release.md`.
@@ -111,28 +136,3 @@ Template:
   - **Not for merging yet (owner):** enabling `ja` needs a named human Japanese reviewer plus the visual pass in `docs/translating.md`. The owner has no reviewer yet. Until then, keep the branch current: merge `main` in (never rebase), translate new `en-AU` keys, and compare changed `en-AU` values by hand, since coverage can't see them.
   - **Carried from the entry below, unchanged:** CI on `main` at `341119d` passed. The owner's LXC is on v0.6.0-alpha. Unreleased on `main`: #333, #341/#343, #346/#352, #348, #349, #350, plus #351's docs drift (`.agents/next-release.md`). Owed to plamotrack-ios: #348–#350's fields, codes and scenarios. The dev DB may be three migrations behind (`alembic upgrade head`). Two T3 reviewer worktrees are T3's to remove.
 - **Next:** unchanged from the entry below: #358, #354, #355, #356, #359, #361; the next release (#351, #344); M6.7 (#279's edge probes, then #281, #282); M7 waits on #28. #184 waits on a reviewer.
-
-## 2026-11-12 — Claude Code (Fable 5.2) — #349 MERGED as `6c70787` (PR #360); #350 MERGED as `0c8478b` (PR #362); #359, #361 filed
-
-- **Done:**
-  - **[PR #360](https://github.com/DeusMaximus/plamotrack/pull/360) merged** at reviewed head `b3cbae0`, closing #349: a sixth order-line type, `other`, with a `description`. It dispatches nothing in any order state. Migration `61442608b20e`. `EXPORT_VERSION` 1 → 2. One Codex gpt-6.1-sol round: GO, no findings.
-  - **[PR #362](https://github.com/DeusMaximus/plamotrack/pull/362) merged** at head `acb7704`, closing #350: `order_adjustments` (a label and a positive amount in the order's currency), `adjustments` and per-currency `totals` on every order read, `order_adjustments.csv`, the editor's section and the Paid row. Migration `b7d4f0a3c915`. One Codex round at `a5e2fa1`: GO with two P3s, both fixed at `acb7704` and not re-reviewed (owner's call).
-  - **The two P3s:** a retry after a half-failed save kept the intermediate adjustments (a second latch, `applied.current.adjustments`); and on a narrow phone at an enlarged font the Paid row ran past its card. The test for the second also found a card's line amounts cut at 40 px on any order, older than the PR, and fixed with it. Lesson appended: `lessons.md` → "A dialog's opening value stops being what's stored".
-  - **Filed:** [#359](https://github.com/DeusMaximus/plamotrack/issues/359), twelve mutation cases whose anchors are stale on `main`. [#361](https://github.com/DeusMaximus/plamotrack/issues/361), a line break in a single-line field is dropped when the browser edits it (found by Greptile on #360; now also an adjustment's label). #363 was a duplicate of #358's retry section and is closed; #358 has the new measurement as a comment.
-- **Decisions (owner):**
-  - **#349:** untracked lines stay out of `get_summary` spend, and there is no conversion to a tracked line.
-  - **#350:** spend summaries keep the shelf price; adjustments that exceed items plus shipping are refused, not clamped; adjustments are a list.
-  - **#350, the author's calls, accepted by the review and merged:** the ceiling counts only lines in the order's own currency, plus shipping. The Orders list's Total is what was paid. The browser renders the server's `totals` and has no live Paid figure. An id-less CSV row matches on order and label, not amount. `EXPORT_VERSION` stays 2, since no release shipped between the two PRs.
-- **State:**
-  - PR checks at `acb7704`: Backend, Frontend and Integration passed. CI on `main` at `0c8478b` was still running when this was written.
-  - Measured locally for #362: backend 4023 passed, 1 xfailed (at `65b84ee`; no backend change after). Frontend 683. Playwright 300 passed, 99 skipped (at `acb7704`, Chromium, one worker). 35 backend mutants and 10 frontend mutants killed. Not run: the fixes under WebKit, a real MCP client over HTTP, the table's Paid row under an enlarged font, two writers racing on one order's adjustments.
-  - **`mutation_test.py`:** #362 re-anchored the two cases it moved (`stg-4`, `348-4`). The twelve from #359 are still stale. A change can stale an older case without touching it, and the harness only says so when that case is run: count every anchor against `main` before a review round (#359 has the script as a comment).
-  - **The dev database was not touched.** The last entry had it behind `8e41c7d2a9f6`; if so it is now three migrations behind. Run `alembic upgrade head` before running `main` against it.
-  - **The owner's LXC is on v0.6.0-alpha.** **Unreleased on `main`:** #333, #341/#343, #346/#352, #348, #349, #350, with #351's docs drift pending (`.agents/next-release.md`). The next release has two migrations that refuse a downgrade once used, and a version-2 archive that v0.6.0-alpha refuses.
-  - **Owed to plamotrack-ios, unmeasured:** #348's field and column. #349: the type, the column, three diagnostic codes, three scenarios, export version 2. #350: the table, two read fields, one code (`order.adjustments_exceed_total`), three scenarios. Also still owed: two diagnostics for an unreadable required cell, a NUL, and `request.text_unstorable` in its `api-error-codes.json`.
-  - **#358 is larger than when filed.** The dialog still restates `currency_code` and `shipping_cost_minor` on every save, and #350's ceiling now reads both. There are two per-field retry latches where the issue said eight would be the wrong shape.
-  - **Left behind:** two T3 Code reviewer worktrees (`t3/review-349-brief`, `t3/review-order-adjustments`), T3's to remove. Merged branches are left on origin as before.
-  - **Carried, not reverified:** #344 (image pins, before or with the next release; bump mechanism undecided). testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
-- **Next:**
-  - #358 (the general answer for the order dialog, now with a server rule behind it), #354, #355, #356, #359, #361.
-  - **The next release:** #351, #344. **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
