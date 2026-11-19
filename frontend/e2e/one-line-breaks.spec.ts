@@ -5,8 +5,11 @@
  *  the value, so the box showed the two words joined, and typing anything into
  *  it saved them joined. The editor is made honest instead of the writers
  *  changing (the owner's call on #361): a stored break shows as a space, so an
- *  edit stores what was on screen — and a field nobody touched keeps its break,
- *  because the form sends the value it loaded, not the box's.
+ *  edit stores what was on screen. A field that never had focus keeps its
+ *  break, because the form sends the value it loaded, not the box's. A field
+ *  that had focus can be saved as the box showed it, typed into or not:
+ *  react-hook-form copies the box's value into the form on blur. The fields
+ *  this file calls untouched are never focused.
  *
  *  Each break is driven as `\n` and as `\r\n`, one dialog of each kind: the
  *  order dialog (a kit line's name, an Other line's description, the order

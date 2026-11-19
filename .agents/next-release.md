@@ -157,7 +157,9 @@ Shape:
 - **Release note:** A name, number or other one-line field that was given a line break
   through the REST API, an MCP tool or a CSV import showed in the web app's editor with
   the two lines run together, and saving after typing in that field stored them joined.
-  The editor now shows the break as a space, and an edit saves what was on screen. A
-  field you don't type in keeps its line break, and nothing already stored changes.
+  The editor now shows the break as a space, and saving stores what was on screen. A
+  field you never click or tab into keeps its line break. One you click or tab into
+  can be saved with the space, even if you typed nothing. Nothing already stored
+  changes until it is saved from the editor.
 - **README:** nothing.
 - **Docs site:** nothing.

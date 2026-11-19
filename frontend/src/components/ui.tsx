@@ -111,13 +111,18 @@ const BREAKS_SHOWN_AS_SPACES = new WeakSet<HTMLInputElement>();
  *  REST, MCP and the importer can store a break in a field the dialogs edit in
  *  an `<input>`, and an input cannot hold one: the browser strips CR and LF from
  *  whatever value it is given, so `Kit\nsecond line` showed as `Kitsecond line`
- *  and one keystroke saved it that way. The form libraries set the box through
- *  its `value` property — react-hook-form assigns `ref.value` from the loaded
- *  values, React assigns it for a controlled box — so that setter is where the
- *  break becomes a space, whoever sets it. What the *form* holds is untouched:
- *  a field nobody types into still sends the value it loaded, break and all,
- *  and one typed into sends what was on screen. The writers are unchanged, by
- *  the owner's decision on #361.
+ *  and one keystroke saved it that way. react-hook-form sets a registered box
+ *  through its `value` property, from the loaded values, after this ref has
+ *  run, so that setter is where the break becomes a space. It only catches
+ *  assignments made once the wrapper exists: React writes a `value` or
+ *  `defaultValue` prop into the node before any ref runs, so a box whose first
+ *  render carries a break still shows it joined until the next assignment (a
+ *  search box mounted from `?q=`, #372 round 1). What the *form* holds is not
+ *  rewritten here. A field that never had focus sends the value it loaded,
+ *  break included. A field that had focus can be saved as the box showed it,
+ *  typed into or not, because react-hook-form copies the box's value into the
+ *  form on blur; whether it is sent then depends on the dialog's payload. The
+ *  writers are unchanged, by the owner's decision on #361.
  *
  *  The setter wraps whatever `value` the node has by then — React's own
  *  change tracker defines one on the node before any ref runs — so React still
