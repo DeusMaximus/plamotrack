@@ -293,6 +293,24 @@ class ColumnSpec:
         """Backed by a real column on the model — safe to read from and write to it."""
         return not self.is_alternate and not self.virtual
 
+    def as_read(self, stored: Any) -> Any:
+        """A stored value as this column's parser reads it back from its own cell.
+
+        What the importer compares a cell against (#356, rule 10). Most writers keep
+        free text as they were sent it, a notes box's trailing newline included, and
+        the export carries it that way; `parse_text` then trims it off the cell. So
+        a stored value is unchanged when it differs from the cell only by what
+        `parse_text` trims: no surrounding whitespace, and blank is no value. Only
+        the comparison reads this; the stored value itself never moves.
+
+        `stripped_or_none`, not `parse_text`: a stored value has nothing for
+        `require_storable_text` to refuse, since the database holds neither a NUL
+        nor an unpaired surrogate.
+        """
+        if self.parse is parse_text and isinstance(stored, str):
+            return stripped_or_none(stored)
+        return stored
+
 
 def setting_parser(validate: Callable[[str], str]) -> Callable[[str], str | None]:
     """Blank stays None (the generic keep-stored path answers it); anything else

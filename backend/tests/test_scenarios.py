@@ -152,6 +152,11 @@ def model_values(table: str, row: dict, handles: Handles) -> dict[str, Any]:
         if isinstance(value, str) and HANDLE.match(value):
             values[name] = handles[value]
             continue
+        if column.parse is spec.parse_text and isinstance(value, str):
+            # As written: a writer may store surrounding whitespace, and `parse_text`
+            # would trim it off before the row #356 is about was ever stored.
+            values[name] = value
+            continue
         parsed = column.parse(cell(value))
         if isinstance(parsed, datetime) and parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
@@ -405,6 +410,13 @@ async def test_scenario(scenario):
     handles = Handles(scenario["id"])
     await seed(scenario["given"], handles)
     before = await state()
+    # The seed stored what `given` says, so `"unchanged"` compares against the
+    # scenario's collection and not a reading of it (#356).
+    for table, rows in scenario["given"].items():
+        for row in rows:
+            stored = before[table][str(handles[row["id"]]) if "id" in row else "singleton"]
+            for name, value in row.items():
+                assert matches(value, stored[name], handles, Window()), (table, name, value)
 
     window = Window()
     for number, step in enumerate(scenario["steps"], start=1):

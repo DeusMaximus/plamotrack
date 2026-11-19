@@ -1740,7 +1740,10 @@ class _Planner:
                 continue
             new_value = row.values.get(column.name)
             old_value = column.get(row.target)
-            if render(old_value) != render(new_value):
+            # The stored side as the cell's own parser would read it (#356): a
+            # notes box's trailing newline is not a change. `before` stays the
+            # stored value, so a real change shows what the apply replaces.
+            if render(column.as_read(old_value)) != render(new_value):
                 changes.append(
                     FieldChange(
                         field=column.name, before=render(old_value), after=render(new_value)
