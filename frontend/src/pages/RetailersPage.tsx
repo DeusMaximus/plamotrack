@@ -77,7 +77,7 @@ function RetailerFormModal({
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<RetailerFormValues>({
     defaultValues: {
       name: retailer?.name ?? "",
@@ -101,7 +101,20 @@ function RetailerFormModal({
       notes: values.notes || null,
     };
     try {
-      await (retailer ? api.updateRetailer(retailer.id, payload) : api.createRetailer(payload));
+      await (retailer
+        ? // Only what this edit changed (#358): the dialog holds a copy of the shop
+          // from when the page loaded it, and an agent may have written the shop
+          // since. Restating the copy would overwrite what it wrote. One request,
+          // so a save that fails stored nothing and there is no retry to re-base.
+          api.updateRetailer(
+            retailer.id,
+            Object.fromEntries(
+              Object.entries(payload).filter(
+                ([key]) => dirtyFields[key as keyof RetailerFormValues],
+              ),
+            ),
+          )
+        : api.createRetailer(payload));
       await queryClient.invalidateQueries({ queryKey: ["retailers"] });
       onClose();
     } catch (err) {

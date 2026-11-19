@@ -27,6 +27,7 @@ import {
 } from "../lib/format";
 import { useFormMeta } from "../lib/formMeta";
 import { invalidateOrderViews } from "../lib/invalidate";
+import { sameValue } from "../lib/sameValue";
 import { itemTypeTitle } from "../lib/labels";
 import type { CatalogSelection } from "./CatalogItemPicker";
 import { CatalogItemPicker } from "./CatalogItemPicker";
@@ -49,7 +50,10 @@ const CODE_CLASS =
 interface LineValues {
   id?: string;
   item_type: ItemType;
-  quantity: number;
+  /** As its box holds it, a string (round 1, finding 1): a field counts as
+   *  changed when it differs from what is stored, and a number here against the
+   *  box's "1" after a blur was a change nobody made. Number()ed on the way out. */
+  quantity: string;
   /** The currency this line was purchased in. Held per line, not read off the
    *  order header: the schema stores one code per line and REST, MCP and CSV can
    *  all write an order whose lines disagree. Reading the header instead meant a
@@ -118,7 +122,7 @@ interface AdjustmentValues {
 function emptyLine(currency: string, kitStatus: LineValues["kit_status"] = "ordered"): LineValues {
   return {
     item_type: "kit",
-    quantity: 1,
+    quantity: "1",
     currency_code: currency,
     unit_price: "",
     converted_price: "",
@@ -133,14 +137,9 @@ function emptyLine(currency: string, kitStatus: LineValues["kit_status"] = "orde
   };
 }
 
-/** Any `true` anywhere inside react-hook-form's nested dirty-field tree.
- *
- * Checking the object's own truthiness isn't enough: an untouched line can still be
- * present as `{}`, and a nested `catalog` shows up as an object rather than a flag. */
-function anyDirty(value: unknown): boolean {
-  if (value === null || typeof value !== "object") return value === true;
-  return Object.values(value).some(anyDirty);
-}
+/** The kit details a line shows — the part of a stored line an edit may leave
+ *  unsaid (#67). */
+const KIT_FIELDS = ["kit_name", "kit_grade", "kit_scale", "kit_number", "kit_status"] as const;
 
 function orderToFormValues(order: Order, catalogName: Map<string, string>): OrderFormValues {
   return {
@@ -177,7 +176,7 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
       return {
         id: item.id,
         item_type: item.item_type,
-        quantity: item.quantity,
+        quantity: String(item.quantity),
         currency_code: item.currency_code,
         unit_price: minorToMajor(item.unit_price_minor, item.currency_code),
         // In the snapshot's own currency, not the line's — a JPY purchase with an
@@ -780,17 +779,6 @@ function OrderForm({
   const [retailerPending, setRetailerPending] = useState(false);
   // The submit stands outside the <form>, in the dialog's frame (§13.7, #259).
   const formId = useId();
-  // One-way latches for the transition dispatch below (#120): if the PATCH lands
-  // but a following ship/receive call fails, the resubmit must not replay the
-  // call that succeeded — the server 409s the repeat, which would turn a fixable
-  // date typo into a dead end. Refs, not state: nothing renders from them, and
-  // the form unmounts on close so a fresh open starts clean. `note` and
-  // `adjustments` are the other way round: once a PATCH has stored this dialog's
-  // note, or its list of what came off, the opening value is no longer what is
-  // stored, so a retry owes it even when the field isn't dirty (Codex #362,
-  // finding 1). Set only by a PATCH that carried it, so a retry that never
-  // touched it still leaves what someone else wrote meanwhile.
-  const applied = useRef({ shipped: false, received: false, note: false, adjustments: false });
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
 
   // Snapshotted once per open, deliberately: react-hook-form owns these values
@@ -829,10 +817,31 @@ function OrderForm({
     handleSubmit,
     watch,
     setValue,
-    formState: { errors, isSubmitting, dirtyFields },
+    formState: { errors, isSubmitting },
   } = useForm<OrderFormValues>({ defaultValues: defaults });
   const { fields, append, remove } = useFieldArray({ control, name: "items" });
   const adjustmentRows = useFieldArray({ control, name: "adjustments" });
+
+  // What this dialog knows to be stored, as form values (#358): a field is sent
+  // on an edit only when it differs from this. It opens as the order the dialog
+  // read, and every step of a save that succeeds moves it to what that step
+  // stored — so after a save that failed halfway (the PATCH stored, the ship or
+  // receive after it refused), putting a field back to how the dialog opened is
+  // a change, and the retry sends it. It is not react-hook-form's `dirtyFields`,
+  // which only ever compares with the values the form opened with; and it is one
+  // rule for every field, where there were four latches (note, what came off,
+  // shipped and received) for the four the retry had already caught out.
+  // A ref: nothing renders from it, and the form unmounts on close, so a fresh
+  // open starts from a fresh read.
+  const base = useRef(defaults);
+  // Whether the order holds each instant, which decides what a date field does
+  // on save: on an order that holds it, a correction in the PATCH; on one that
+  // doesn't, the ship or receive call. State, because the help under each field
+  // says which, and a step that succeeded changes the answer for the retry.
+  const [holds, setHolds] = useState({
+    shipped: Boolean(order?.shipped_at),
+    received: Boolean(order?.received_at),
+  });
 
   const addRetailer = async () => {
     const name = newRetailerName?.trim();
@@ -854,120 +863,152 @@ function OrderForm({
 
   const onSubmit = handleSubmit(async (values) => {
     setError(null);
-    // A length change covers add and remove, which `dirtyFields` cannot describe —
-    // it tracks fields, and a deleted line has none.
-    const lineDirty =
-      !order || values.items.length !== order.items.length || anyDirty(dirtyFields.items);
-    // The same rule for what came off (#350): restated only when this edit touched
-    // them, since the rows hold a copy from when the dialog opened. A changed
-    // order currency counts as touching them — the amounts on screen are in the
-    // currency now chosen, and a yen figure left standing as cents would be
-    // a hundredth of what the form shows.
-    const adjustmentsDirty =
-      !order ||
-      values.adjustments.length !== order.adjustments.length ||
-      anyDirty(dirtyFields.adjustments) ||
-      (Boolean(dirtyFields.currency_code) && values.adjustments.length > 0) ||
-      applied.current.adjustments;
+    const stored = base.current;
+    // On an edit, a field goes out only when it differs from what is stored (#358,
+    // and #65, #67, #120, #348 before it, one field at a time): the dialog holds a
+    // copy from when it opened, and an agent may have written the order since.
+    // Restating the copy would overwrite what it wrote, and nothing would tell
+    // either writer. A field the person changed goes out whatever was written
+    // meanwhile — their save wins, with no warning. A create states everything.
+    const changed = (field: keyof OrderFormValues) =>
+      !order || !sameValue(values[field], stored[field]);
+    // Which form fields this save sends, so that what it stores can become the
+    // new `base` (above) once the PATCH succeeds.
+    const sent = new Set<keyof OrderFormValues>();
+    const send = <K extends keyof OrderUpdate>(
+      field: keyof OrderFormValues,
+      key: K,
+      value: OrderUpdate[K],
+      goes = changed(field),
+    ): Pick<OrderUpdate, K> | Record<string, never> => {
+      if (!goes) return {};
+      sent.add(field);
+      return { [key]: value } as Pick<OrderUpdate, K>;
+    };
+    // Two amounts are stored in minor units of the order's currency: the shipping
+    // cost and what came off (#350). Each travels with the currency, never with the
+    // other amount (owner's decision on round 1, 2026-11-19):
+    // - an amount changed sends the currency with it, so it is stored in the
+    //   currency the person saw, not in one an agent chose meanwhile (Codex #378,
+    //   P2: a discount changed alone was stored as yen);
+    // - an amount changed does not send the other amount, so a shipping-only edit
+    //   leaves a discount an agent added meanwhile (round 1, finding 2);
+    // - a currency changed sends both amounts on screen in it, the discounts only
+    //   when the list on screen is non-empty or changed: an empty list the edit
+    //   left empty says nothing, and sending it would delete a discount an agent
+    //   added meanwhile.
+    // Two cases stay wrong, as they are on `main`: an agent changes the currency
+    // while the person edits one amount, and the other amount, stored by the
+    // agent, is then read in the person's currency; and a discount an agent added
+    // under a currency the person changes. Noticing either needs the dialog to
+    // see that its money changed under it, which is a follow-up.
+    const currencyChanged = changed("currency_code");
+    const shippingGoes = currencyChanged || changed("shipping_cost");
+    const adjustmentsGo =
+      changed("adjustments") || (currencyChanged && values.adjustments.length > 0);
+    const currencyGoes = currencyChanged || shippingGoes || adjustmentsGo;
+    // A line keeps its id, so it is compared with the stored line it names, not
+    // with whichever line stood at its index before one above it was removed.
+    const storedLine = new Map(stored.items.map((line) => [line.id, line]));
     const payload: OrderUpdate = {
-      retailer_id: values.retailer_id,
-      order_date: values.order_date,
-      order_number: values.order_number || null,
-      currency_code: values.currency_code,
+      ...send("retailer_id", "retailer_id", values.retailer_id),
+      ...send("order_date", "order_date", values.order_date),
+      ...send("order_number", "order_number", values.order_number || null),
+      ...send("currency_code", "currency_code", values.currency_code, currencyGoes),
       // Only an empty field means "no shipping cost". A typed 0 is free postage,
       // which is a different fact and has to survive the round trip.
-      shipping_cost_minor:
+      ...send(
+        "shipping_cost",
+        "shipping_cost_minor",
         values.shipping_cost.trim() === ""
           ? null
           : majorToMinor(values.shipping_cost, values.currency_code),
-      delivery_service: values.delivery_service || null,
-      tracking_number: values.tracking_number || null,
-      tracking_url: values.tracking_url || null,
-      // Omitted from an edit that never touched it: the field holds a copy from when
-      // the dialog opened, and an agent may have written the note since. Null is a
-      // clear, so restating the copy would erase what it wrote.
-      ...(!order || dirtyFields.notes || applied.current.note
-        ? { notes: values.notes || null }
-        : {}),
-      // Omitted entirely when the edit never touched a line. `items: undefined`
-      // means "leave the lines alone" to the API, and sending them anyway is how a
-      // tracking-number change reached the kits at all (#65) — every save re-ran
-      // the whole dispatch diff. A new order still sends its lines below; only an
-      // edit can decline to.
-      items: lineDirty
-        ? values.items.map((line, index) => {
-            // Per-line: were any of the KIT fields on this row actually edited?
-            // The other line fields (quantity, price) travel regardless — only
-            // the kit details are omit-able, because only they propagate (#67).
-            const lineDirtyFields = dirtyFields.items?.[index];
-            const kitRestated = anyDirty([
-              lineDirtyFields?.kit_name,
-              lineDirtyFields?.kit_grade,
-              lineDirtyFields?.kit_scale,
-              lineDirtyFields?.kit_number,
-              lineDirtyFields?.kit_status,
-            ]);
-            return toOrderItem(line, referenceCurrency, kitRestated);
-          })
-        : undefined,
-      adjustments: adjustmentsDirty
-        ? values.adjustments.map((adjustment) => ({
-            label: adjustment.label.trim(),
-            amount_minor: majorToMinor(adjustment.amount, values.currency_code),
-          }))
-        : undefined,
+        shippingGoes,
+      ),
+      ...send("delivery_service", "delivery_service", values.delivery_service || null),
+      ...send("tracking_number", "tracking_number", values.tracking_number || null),
+      ...send("tracking_url", "tracking_url", values.tracking_url || null),
+      // Null is a clear, so a note restated from the copy would erase what an
+      // agent wrote (#348).
+      ...send("notes", "notes", values.notes || null),
+      // The lines go out only when a line changed. `items: undefined` means "leave
+      // the lines alone" to the API, and sending them anyway is how a tracking
+      // number change reached the kits at all (#65) — every save re-ran the whole
+      // dispatch diff. A new order always sends its lines (below).
+      ...send(
+        "items",
+        "items",
+        values.items.map((line) => {
+          // Per line: did this edit change the KIT fields? Quantity and price
+          // travel with every line that goes; only the kit details are
+          // omit-able, because only they propagate to the spawned kits (#67).
+          const was = line.id === undefined ? undefined : storedLine.get(line.id);
+          const kitRestated =
+            !was || KIT_FIELDS.some((field) => !sameValue(line[field], was[field]));
+          return toOrderItem(line, referenceCurrency, kitRestated);
+        }),
+      ),
     };
+    if (adjustmentsGo) {
+      sent.add("adjustments");
+      payload.adjustments = values.adjustments.map((adjustment) => ({
+        label: adjustment.label.trim(),
+        amount_minor: majorToMinor(adjustment.amount, values.currency_code),
+      }));
+    }
     // The same two date fields do two jobs (#120). On an order that already
-    // holds the instant they PATCH a *correction* — only when actually touched,
-    // because a date field can't restate the stored instant losslessly, so an
-    // edit that never opened it must not send it back (round-tripping would
-    // flatten a real arrival time to midnight). On an order that doesn't, they
-    // become the ship/receive *transition* below, after the PATCH: those stay
-    // separate service calls, because receiving applies stock and advances kits
-    // under a row lock (rule 2) — nothing a plain field edit may trigger
-    // implicitly. Dates go out as local midnight in the browser's offset (#93).
-    if (order?.received_at && dirtyFields.received_date && values.received_date) {
+    // holds the instant they PATCH a *correction* — only when changed, because a
+    // date field can't restate the stored instant losslessly, so an edit that
+    // never opened it must not send it back (round-tripping would flatten a real
+    // arrival time to midnight). On an order that doesn't, they become the
+    // ship/receive *transition* below, after the PATCH: those stay separate
+    // service calls, because receiving applies stock and advances kits under a
+    // row lock (rule 2) — nothing a plain field edit may trigger implicitly.
+    // Dates go out as local midnight in the browser's offset (#93).
+    if (order && holds.received && changed("received_date") && values.received_date) {
+      sent.add("received_date");
       payload.received_at = localMidnightISO(values.received_date);
     }
-    if (order?.shipped_at && dirtyFields.shipped_date && values.shipped_date) {
+    if (order && holds.shipped && changed("shipped_date") && values.shipped_date) {
+      sent.add("shipped_date");
       payload.shipped_at = localMidnightISO(values.shipped_date);
     }
+    /** What a step that succeeded stored becomes what counts as unchanged. */
+    const rebase = (fields: Iterable<keyof OrderFormValues>) => {
+      const next = { ...base.current };
+      for (const field of fields) Object.assign(next, { [field]: values[field] });
+      base.current = next;
+    };
     try {
       if (order) {
         await api.updateOrder(order.id, payload);
-        if ("notes" in payload) applied.current.note = true;
-        if (payload.adjustments !== undefined) applied.current.adjustments = true;
+        rebase(sent);
         // Ship before receive: an order may take both in one save, and shipping
         // is the earlier fact — receive advances the just-shipped kits onward.
         // Today = "it happened now": no body, so the server stamps the actual
-        // moment rather than midnight, exactly as the old dialogs did.
-        if (
-          !order.shipped_at &&
-          !applied.current.shipped &&
-          dirtyFields.shipped_date &&
-          values.shipped_date
-        ) {
+        // moment rather than midnight, exactly as the old dialogs did. Once a
+        // transition has succeeded the order holds the instant, so a retry
+        // never repeats it (the server refuses a second ship or receive) and a
+        // date changed after it is a correction.
+        if (!holds.shipped && changed("shipped_date") && values.shipped_date) {
           await api.shipOrder(
             order.id,
             values.shipped_date !== todayISO()
               ? { shipped_at: localMidnightISO(values.shipped_date) }
               : undefined,
           );
-          applied.current.shipped = true;
+          rebase(["shipped_date"]);
+          setHolds((now) => ({ ...now, shipped: true }));
         }
-        if (
-          !order.received_at &&
-          !applied.current.received &&
-          dirtyFields.received_date &&
-          values.received_date
-        ) {
+        if (!holds.received && changed("received_date") && values.received_date) {
           await api.receiveOrder(
             order.id,
             values.received_date !== todayISO()
               ? { received_at: localMidnightISO(values.received_date) }
               : undefined,
           );
-          applied.current.received = true;
+          rebase(["received_date"]);
+          setHolds((now) => ({ ...now, received: true }));
         }
       } else {
         // The order-wide flag applied to every kit line (#120). In hand wins:
@@ -1240,7 +1281,7 @@ function OrderForm({
                 <Input type="date" max={todayISO()} {...register("shipped_date")} />
               </Field>
               <p className="mt-1 text-xs text-muted">
-                {order.shipped_at ? t("orders.shippedCorrectHelp") : t("orders.shippedSetHelp")}
+                {holds.shipped ? t("orders.shippedCorrectHelp") : t("orders.shippedSetHelp")}
               </p>
             </div>
             <div>
@@ -1248,7 +1289,7 @@ function OrderForm({
                 <Input type="date" max={todayISO()} {...register("received_date")} />
               </Field>
               <p className="mt-1 text-xs text-muted">
-                {order.received_at ? t("orders.receivedCorrectHelp") : t("orders.receivedSetHelp")}
+                {holds.received ? t("orders.receivedCorrectHelp") : t("orders.receivedSetHelp")}
               </p>
             </div>
           </div>

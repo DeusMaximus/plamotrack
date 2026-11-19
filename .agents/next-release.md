@@ -187,3 +187,25 @@ Shape:
   whitespace, as before.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #358 — saving an order, kit or shop no longer overwrites what an agent wrote while the dialog was open (PR #378)
+- **Release note:** The order, kit and shop dialogs sent every field back on each save,
+  so anything an assistant, a script or another tab wrote to the same record while the
+  dialog was open (a tracking number added to an order, say) was silently replaced with
+  what the dialog had shown when it opened. A save now sends only the fields you
+  changed, and leaves the rest as they are stored. Where you and an agent changed the
+  same field, your save wins.
+  On an order, the shipping cost and the discounts are amounts in the order's
+  currency, so each one you change is saved together with the currency you saw, and a
+  currency you change is saved with the shipping cost and any discounts on screen. A
+  change to one of the two amounts leaves the other as stored. One case is not yet
+  handled: if something changes the order's currency while the dialog is open and you
+  then change only one amount, the other amount, as that change stored it, is read in
+  your currency.
+  An order save that stored its changes but then failed to mark the order shipped or
+  received can be corrected and saved again: a field you put back to how it opened is
+  now stored that way, a ship date changed after the ship went through is saved as a
+  correction, and a field the first try already stored is not sent again unless you
+  change it again, so something written to it in between is kept.
+- **README:** nothing.
+- **Docs site:** nothing.
