@@ -181,7 +181,9 @@ Shape:
   and applying it quietly removed the whitespace. Import reads every text cell without
   its surrounding whitespace, and now compares the stored value the same way, so the
   row is unchanged and nothing stored moves. A cell that says something different is
-  still an update. A Replace everything import still recreates every row from its
-  cells, so there the text comes back without the whitespace, as before.
+  still an update. A blank cell over a stored value that is only whitespace now leaves
+  that value in place, where a merge used to clear it. A Replace everything import
+  still recreates every row from its cells, so there the text comes back without the
+  whitespace, as before.
 - **README:** nothing.
 - **Docs site:** nothing.
