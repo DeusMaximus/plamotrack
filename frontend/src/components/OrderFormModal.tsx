@@ -50,7 +50,10 @@ const CODE_CLASS =
 interface LineValues {
   id?: string;
   item_type: ItemType;
-  quantity: number;
+  /** As its box holds it, a string (round 1, finding 1): a field counts as
+   *  changed when it differs from what is stored, and a number here against the
+   *  box's "1" after a blur was a change nobody made. Number()ed on the way out. */
+  quantity: string;
   /** The currency this line was purchased in. Held per line, not read off the
    *  order header: the schema stores one code per line and REST, MCP and CSV can
    *  all write an order whose lines disagree. Reading the header instead meant a
@@ -119,7 +122,7 @@ interface AdjustmentValues {
 function emptyLine(currency: string, kitStatus: LineValues["kit_status"] = "ordered"): LineValues {
   return {
     item_type: "kit",
-    quantity: 1,
+    quantity: "1",
     currency_code: currency,
     unit_price: "",
     converted_price: "",
@@ -173,7 +176,7 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
       return {
         id: item.id,
         item_type: item.item_type,
-        quantity: item.quantity,
+        quantity: String(item.quantity),
         currency_code: item.currency_code,
         unit_price: minorToMajor(item.unit_price_minor, item.currency_code),
         // In the snapshot's own currency, not the line's — a JPY purchase with an
@@ -873,56 +876,67 @@ function OrderForm({
     // new `base` (above) once the PATCH succeeds.
     const sent = new Set<keyof OrderFormValues>();
     const send = <K extends keyof OrderUpdate>(
-      fields: (keyof OrderFormValues)[],
+      field: keyof OrderFormValues,
       key: K,
       value: OrderUpdate[K],
+      goes = changed(field),
     ): Pick<OrderUpdate, K> | Record<string, never> => {
-      if (!fields.some(changed)) return {};
-      fields.forEach((field) => sent.add(field));
+      if (!goes) return {};
+      sent.add(field);
       return { [key]: value } as Pick<OrderUpdate, K>;
     };
-    // The order's money is one unit: its currency, and the two amounts stored in
-    // minor units of it, the shipping cost and what came off (#350). A save that
-    // sends any of the three sends all three, so every amount it stores is read in
-    // the currency the person was looking at, never in one an agent chose
-    // meanwhile (Codex #378, P2): a currency changed alone stores the amounts on
-    // screen in it, and an amount changed alone takes the currency with it — and
-    // the other amount, which the currency it goes with would otherwise
-    // reinterpret (a yen figure read as cents is a hundredth of itself).
-    const MONEY: (keyof OrderFormValues)[] = ["currency_code", "shipping_cost", "adjustments"];
-    // An empty list that this edit left empty says nothing in any currency, so it
-    // stays out: sending it would delete a discount an agent added meanwhile.
+    // Two amounts are stored in minor units of the order's currency: the shipping
+    // cost and what came off (#350). Each travels with the currency, never with the
+    // other amount (owner's decision on round 1, 2026-11-19):
+    // - an amount changed sends the currency with it, so it is stored in the
+    //   currency the person saw, not in one an agent chose meanwhile (Codex #378,
+    //   P2: a discount changed alone was stored as yen);
+    // - an amount changed does not send the other amount, so a shipping-only edit
+    //   leaves a discount an agent added meanwhile (round 1, finding 2);
+    // - a currency changed sends both amounts on screen in it, the discounts only
+    //   when the list on screen is non-empty or changed: an empty list the edit
+    //   left empty says nothing, and sending it would delete a discount an agent
+    //   added meanwhile.
+    // Two cases stay wrong, as they are on `main`: an agent changes the currency
+    // while the person edits one amount, and the other amount, stored by the
+    // agent, is then read in the person's currency; and a discount an agent added
+    // under a currency the person changes. Noticing either needs the dialog to
+    // see that its money changed under it, which is a follow-up.
+    const currencyChanged = changed("currency_code");
+    const shippingGoes = currencyChanged || changed("shipping_cost");
     const adjustmentsGo =
-      MONEY.some(changed) && (changed("adjustments") || values.adjustments.length > 0);
+      changed("adjustments") || (currencyChanged && values.adjustments.length > 0);
+    const currencyGoes = currencyChanged || shippingGoes || adjustmentsGo;
     // A line keeps its id, so it is compared with the stored line it names, not
     // with whichever line stood at its index before one above it was removed.
     const storedLine = new Map(stored.items.map((line) => [line.id, line]));
     const payload: OrderUpdate = {
-      ...send(["retailer_id"], "retailer_id", values.retailer_id),
-      ...send(["order_date"], "order_date", values.order_date),
-      ...send(["order_number"], "order_number", values.order_number || null),
-      ...send(MONEY, "currency_code", values.currency_code),
+      ...send("retailer_id", "retailer_id", values.retailer_id),
+      ...send("order_date", "order_date", values.order_date),
+      ...send("order_number", "order_number", values.order_number || null),
+      ...send("currency_code", "currency_code", values.currency_code, currencyGoes),
       // Only an empty field means "no shipping cost". A typed 0 is free postage,
       // which is a different fact and has to survive the round trip.
       ...send(
-        MONEY,
+        "shipping_cost",
         "shipping_cost_minor",
         values.shipping_cost.trim() === ""
           ? null
           : majorToMinor(values.shipping_cost, values.currency_code),
+        shippingGoes,
       ),
-      ...send(["delivery_service"], "delivery_service", values.delivery_service || null),
-      ...send(["tracking_number"], "tracking_number", values.tracking_number || null),
-      ...send(["tracking_url"], "tracking_url", values.tracking_url || null),
+      ...send("delivery_service", "delivery_service", values.delivery_service || null),
+      ...send("tracking_number", "tracking_number", values.tracking_number || null),
+      ...send("tracking_url", "tracking_url", values.tracking_url || null),
       // Null is a clear, so a note restated from the copy would erase what an
       // agent wrote (#348).
-      ...send(["notes"], "notes", values.notes || null),
+      ...send("notes", "notes", values.notes || null),
       // The lines go out only when a line changed. `items: undefined` means "leave
       // the lines alone" to the API, and sending them anyway is how a tracking
       // number change reached the kits at all (#65) — every save re-ran the whole
       // dispatch diff. A new order always sends its lines (below).
       ...send(
-        ["items"],
+        "items",
         "items",
         values.items.map((line) => {
           // Per line: did this edit change the KIT fields? Quantity and price

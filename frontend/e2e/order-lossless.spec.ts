@@ -533,6 +533,109 @@ test.describe("header fields an agent wrote while the dialog was open (#358)", (
     expect((await read()).notes).toBe("The person's note.");
   });
 
+  // A field changed is one that differs from what is stored, so a control whose
+  // form value differs from what its box hands back on blur would count as a
+  // change nobody made (round 1, finding 1: a quantity is the number 1 in the
+  // form and the string "1" in its box). Every control of an order carrying
+  // every kind of field, focused and left without typing, says nothing.
+  test("focusing and leaving every control without typing sends nothing but the note", async ({ page }) => {
+    const api = await apiContext();
+    const tool = await api.post("/tools", {
+      data: { name: `E2E Header Tool ${suffix}`, category: "cutting", quantity_on_hand: 0 },
+    });
+    expect(tool.status(), await tool.text()).toBe(201);
+    const toolId = ((await tool.json()) as { id: string }).id;
+    const { id, read } = await openOrder(page, {
+      adjustments: [{ label: "Gift card", amount_minor: 100 }],
+      items: [
+        {
+          item_type: "kit",
+          quantity: 2,
+          unit_price_minor: 1000,
+          currency_code: reference,
+          kit: { name: `E2E Header Every Kit ${suffix}`, grade: "HG", scale: "1/144", kit_number: "K-1" },
+        },
+        {
+          item_type: "other",
+          quantity: 1,
+          unit_price_minor: 250,
+          currency_code: reference,
+          description: `E2E Header Magazine ${suffix}`,
+        },
+        { item_type: "tool", quantity: 1, unit_price_minor: 500, currency_code: reference, catalog_ref_id: toolId },
+      ],
+    });
+    try {
+      // Both dates stored, so both date fields are corrections, not transitions.
+      for (const [step, stamp] of [
+        ["ship", new Date(2020, 0, 15)],
+        ["receive", new Date(2020, 1, 1)],
+      ] as const) {
+        const response = await api.post(`/orders/${id}/${step}`, {
+          data: { [step === "ship" ? "shipped_at" : "received_at"]: stamp.toISOString() },
+        });
+        expect(response.status(), await response.text()).toBe(200);
+      }
+      await page.reload();
+      await page.getByRole("button", { name: "Edit" }).first().click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByLabel("Received on")).toHaveValue("2020-02-01");
+
+      const controls = dialog.locator("form").locator("input, select, textarea");
+      let visited = 0;
+      for (const control of await controls.all()) {
+        if (!(await control.isVisible()) || (await control.isDisabled())) continue;
+        await control.focus();
+        await control.blur();
+        visited += 1;
+      }
+      expect(visited).toBeGreaterThan(20); // control: the loop reached the lines and the discount
+
+      const patched = page.waitForRequest(
+        (request) => request.method() === "PATCH" && request.url().endsWith(`/orders/${id}`),
+      );
+      await dialog.getByLabel("Notes").fill("The person's note.");
+      await page.getByRole("button", { name: "Save changes" }).click();
+      await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
+      expect((await patched).postDataJSON()).toEqual({ notes: "The person's note." });
+      expect((await read()).notes).toBe("The person's note.");
+    } finally {
+      await api.delete(`/orders/${id}`); // first: the order's history holds the tool
+      await api.delete(`/tools/${toolId}`);
+      await api.dispose();
+    }
+  });
+
+  // The finding's own case, both ways: a line whose quantity was tabbed through, or
+  // typed and put back, is unchanged, so an agent's price on it stands.
+  for (const how of ["tabbed through", "typed and put back"] as const) {
+    test(`a quantity ${how} leaves the lines alone and an agent's price stands`, async ({ page }) => {
+      const { id, read, write, saveAndClose } = await openOrder(page);
+      const line = (await read()).items[0];
+      await write({
+        items: [{ id: line.id, item_type: "kit", quantity: 1, unit_price_minor: 2500, currency_code: reference }],
+      });
+      expect((await read()).items[0].unit_price_minor).toBe(2500); // control: the agent's write landed
+
+      const quantity = page.locator('input[name="items.0.quantity"]');
+      if (how === "tabbed through") {
+        await quantity.focus();
+        await page.keyboard.press("Tab");
+      } else {
+        await quantity.fill("2");
+        await quantity.fill("1");
+        await quantity.blur();
+      }
+      const patched = page.waitForRequest(
+        (request) => request.method() === "PATCH" && request.url().endsWith(`/orders/${id}`),
+      );
+      await page.getByLabel("Notes").fill("The person's note.");
+      await saveAndClose();
+      expect((await patched).postDataJSON()).toEqual({ notes: "The person's note." });
+      expect((await read()).items[0].unit_price_minor).toBe(2500);
+    });
+  }
+
   test("a field typed and put back before the save is not sent", async ({ page }) => {
     const { read, write, saveAndClose } = await openOrder(page);
     const tracking = page.getByLabel("Tracking number");
@@ -618,11 +721,11 @@ test.describe("header fields an agent wrote while the dialog was open (#358)", (
     ]);
   });
 
-  // The order's money is one unit: its currency, the shipping cost and what came
-  // off, the two amounts stored in minor units of the first (Codex #378, P2). A
-  // save that sends any of the three sends all three, so every amount it stores
-  // is in the currency the person saw, whatever an agent made the order's
-  // currency meanwhile.
+  // Two amounts are stored in minor units of the order's currency, the shipping
+  // cost and what came off. Each travels with the currency (Codex #378, P2: a
+  // discount changed alone was stored as yen), never with the other amount
+  // (round 1, finding 2), so every amount a save stores is in the currency the
+  // person saw, and a save leaves the amount it did not change.
   const cameOffOf = async (read: () => Promise<Header>) =>
     ((await read()) as Header & { adjustments: Adjustment[] }).adjustments.map(
       ({ label, amount_minor }) => ({ label, amount_minor }),
@@ -644,16 +747,53 @@ test.describe("header fields an agent wrote while the dialog was open (#358)", (
     expect(await cameOffOf(read)).toEqual([{ label: "Gift card", amount_minor: 400 }]);
   });
 
-  test("a shipping cost changed alone takes what came off on screen with it", async ({ page }) => {
+  // Round 1, finding 2: each amount travels with the currency, never with the
+  // other amount (owner's decision, 2026-11-19). A shipping-only edit says nothing
+  // about the discounts, so one an agent added meanwhile stands, and what was paid
+  // is the order's lines and shipping less both discounts.
+  test("a shipping cost changed alone leaves a discount an agent added", async ({ page }) => {
     const { read, write, saveAndClose } = await openOrder(page, MONEY_SEED);
-    // Both halves an agent might move: the currency, and a discount written in it.
+    await write({
+      adjustments: [
+        { label: "Gift card", amount_minor: 100 },
+        { label: "Agent's voucher", amount_minor: 200 },
+      ],
+    });
+    await page.getByLabel("Shipping cost").fill("6.00");
+    await saveAndClose();
+    const stored = (await read()) as Header & {
+      totals: { currency_code: string; items_minor: number; shipping_minor: number; adjustments_minor: number; paid_minor: number }[];
+    };
+    expect(stored.shipping_cost_minor).toBe(600);
+    expect(await cameOffOf(read)).toEqual([
+      { label: "Gift card", amount_minor: 100 },
+      { label: "Agent's voucher", amount_minor: 200 },
+    ]);
+    // The order's line is in the instance's currency, which counts towards the
+    // AUD total only when that is AUD.
+    const items = reference === "AUD" ? 1000 : 0;
+    const total = stored.totals.find((entry) => entry.currency_code === "AUD")!;
+    expect(total).toMatchObject({
+      items_minor: items,
+      shipping_minor: 600,
+      adjustments_minor: 300,
+      paid_minor: items + 600 - 300,
+    });
+  });
+
+  // The same rule across currencies, and the known limitation it leaves (as on
+  // `main`): the shipping cost takes the person's currency with it, and the
+  // discounts an agent wrote in yen meanwhile stay, now read in that currency.
+  // Noticing that the money changed under the dialog is a follow-up.
+  test("a shipping cost changed alone leaves the discounts, even ones an agent wrote in another currency", async ({ page }) => {
+    const { read, write, saveAndClose } = await openOrder(page, MONEY_SEED);
     await write({ currency_code: "JPY", adjustments: [{ label: "Agent's yen voucher", amount_minor: 3 }] });
     await page.getByLabel("Shipping cost").fill("6.00");
     await saveAndClose();
     const stored = await read();
     expect(stored.currency_code).toBe("AUD");
     expect(stored.shipping_cost_minor).toBe(600);
-    expect(await cameOffOf(read)).toEqual([{ label: "Gift card", amount_minor: 100 }]);
+    expect(await cameOffOf(read)).toEqual([{ label: "Agent's yen voucher", amount_minor: 3 }]);
   });
 
   // The one part of the unit that stays behind: an empty list the person left
