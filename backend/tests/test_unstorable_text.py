@@ -19,7 +19,6 @@ from fastapi.dependencies.utils import get_dependant
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth.cimd import CIMDFetcher
-from mcp.shared.exceptions import MCPError
 from pydantic import BaseModel
 
 from app.auth.registry import iter_effective_routes
@@ -393,9 +392,10 @@ async def test_a_filter_on_ordinary_text_still_answers(http_client, path, param)
 
 async def _refused(tool: str, arguments: dict) -> str:
     async with Client(mcp) as client:
-        # `MCPError` for a schema built inside the tool, as `create_order` builds its
-        # own: the SDK's invalid-params answer, as for any other value that fails there.
-        with pytest.raises((ToolError, MCPError)) as refused:
+        # A `ToolError` for a schema built inside the tool too, as `create_order` builds
+        # its own: `app.mcp._build` names the argument where the SDK answered
+        # "Invalid request parameters" (#354).
+        with pytest.raises(ToolError) as refused:
             await client.call_tool(tool, arguments)
     text = str(refused.value)
     assert "asyncpg" not in text and "sqlalchemy" not in text, text
