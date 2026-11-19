@@ -174,7 +174,7 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
-## #356 — re-importing your own export no longer rewrites text that ends in a newline (PR #TBD)
+## #356 — re-importing your own export no longer rewrites text that ends in a newline (PR #377)
 - **Release note:** A text value saved with surrounding whitespace (most often a
   trailing newline left in a notes box, through the web app, the REST API or an MCP
   tool) made a merge import of the instance's own export preview that row as an update,
