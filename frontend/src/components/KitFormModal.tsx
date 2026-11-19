@@ -91,7 +91,7 @@ export function KitFormModal({
   });
 
   const onSubmit = handleSubmit(async (values) => {
-    const payload: KitCreate & KitUpdate = {
+    const stated: KitCreate & KitUpdate = {
       name: values.name,
       grade: values.grade,
       scale: values.scale || null,
@@ -101,8 +101,24 @@ export function KitFormModal({
       build_notes: values.build_notes || null,
     };
     if (kit) {
-      payload.rating = values.rating === "" ? null : Number(values.rating);
+      stated.rating = values.rating === "" ? null : Number(values.rating);
     }
+    // An edit sends only what it changed (#358). The dialog holds a copy of the
+    // kit from when it opened (from the page's list, older still), and an agent
+    // may have written the kit since: restating the copy would overwrite what it
+    // wrote, and nothing would tell either writer. A field the person changed
+    // goes out whatever was written meanwhile. One request, so there is no
+    // retry to re-base for: a save that fails stored nothing. A create states
+    // everything.
+    const payload = (
+      kit
+        ? Object.fromEntries(
+            Object.entries(stated).filter(
+              ([key]) => dirtyFields[key as keyof typeof stated & keyof KitFormValues],
+            ),
+          )
+        : stated
+    ) as KitCreate & KitUpdate;
     // Only when touched (see KitFormValues). A typed date goes out as midnight
     // local in the browser's own offset; an emptied field clears the stored one.
     if (dirtyFields.build_started) {
