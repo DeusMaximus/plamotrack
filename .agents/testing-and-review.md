@@ -559,6 +559,11 @@ A file is `{format, version, note, scenarios}`, one file per rule area. A scenar
     For example, every writer derives a kit's `scale` from its grade, so a seeded kit states
     its scale. One that didn't failed the `replace_all` scenario, because the restore derived
     a scale the seed never had.
+  - **Text is stored as written**, surrounding whitespace included (#356). Every other value
+    goes through its column's cell parser, but `parse_text` trims, and a seed that trimmed
+    could not state the row #356 is about: a retailer's notes ending in a newline. The runner
+    checks that the seed holds every value `given` states before the first step, so a lossy
+    seed fails rather than making `"unchanged"` compare a reading with itself.
 - **`steps`** each name an `op` (the vocabulary is the schema's enum, one per service
   function) and its `args`, spelled as the REST request bodies spell them. A step expects
   `"ok"` (the default) or `{"refused": {kind, code, params}}`.

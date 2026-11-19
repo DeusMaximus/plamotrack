@@ -7373,6 +7373,54 @@ CASES += [
     ),
 ]
 
+# The #356 (356-) set: the importer compares a stored text value as `parse_text`
+# reads its cell. The kills live in tests/test_import_text_whitespace.py, bar the
+# scenarios' (scn-20, and 356-5's seed, in test_scenarios.py).
+CASES += [
+    (
+        "356-1. the comparison reads the stored text raw",
+        IMP,
+        "            if render(column.as_read(old_value)) != render(new_value):\n",
+        "            if render(old_value) != render(new_value):\n",
+        "leaves_whitespace_around_stored_text or updates_another_column",
+    ),
+    (
+        "356-2. the reading trims only ASCII spaces and newlines",
+        SPEC_FILE,
+        "            return stripped_or_none(stored)\n",
+        '            return stored.strip(" \\n") or None\n',
+        "ideographic",
+    ),
+    (
+        "356-3. the reading forgives notes columns only",
+        SPEC_FILE,
+        "        if self.parse is parse_text and isinstance(stored, str):\n",
+        '        if self.parse is parse_text and self.name == "notes" and isinstance(stored, str):\n',
+        "leaves_whitespace_around_stored_text",
+    ),
+    (
+        "356-4. a real change shows the stored value trimmed",
+        IMP,
+        "field=column.name, before=render(old_value), after=render(new_value)",
+        "field=column.name, before=render(column.as_read(old_value)), after=render(new_value)",
+        "still_previews_an_update",
+    ),
+    (
+        "356-5. the scenario seed trims what `given` says",
+        ROOT / "tests/test_scenarios.py",
+        "        if column.parse is spec.parse_text and isinstance(value, str):\n",
+        "        if False:\n",
+        "merging-your-own-export-leaves-whitespace-around-stored-text",
+    ),
+    (
+        "scn-20. the importer compares stored text raw",
+        SPEC_FILE,
+        "        if self.parse is parse_text and isinstance(stored, str):\n            return stripped_or_none(stored)\n",
+        "        if False:\n            return stripped_or_none(stored)\n",
+        "only-trims-stored-text or trimmed-text-as-stored",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     # The #349 (349-) set: every 349- kill lives here, bar 349-13's second witness
@@ -7474,6 +7522,8 @@ TEST_FILES = [
     "tests/test_scenarios.py",
     # The #354 set: every 354- kill lives here.
     "tests/test_mcp_schema_errors.py",
+    # The #356 set, bar the two cases whose kills are scenarios run above.
+    "tests/test_import_text_whitespace.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
