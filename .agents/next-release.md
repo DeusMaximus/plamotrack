@@ -128,8 +128,8 @@ Shape:
 ## #346, #352 — a stray NUL or a damaged BZIP2/LZMA archive is refused with a reason (PR #353)
 - **Release note:** A value containing a NUL character, or half of a broken Unicode
   pair, is now refused instead of causing an unexplained server error, from the web
-  app, the REST API, MCP tools and CSV imports. The refusal names the field, except
-  for a few `create_order` arguments over MCP (#354). An import preview no longer
+  app, the REST API, MCP tools and CSV imports. The refusal names the field (on
+  `create_order` over MCP since #354). An import preview no longer
   approves a row that the import then fails on. A damaged archive is now refused the
   same way whichever compression it uses, and a `manifest.json` holding such a value
   is treated as unreadable: a warning, and the rows still import. A provider's sign-in
@@ -150,6 +150,16 @@ Shape:
   app had re-read the instance's details could start on the old currency and keep it,
   and an order saved from it could record its converted price in the old currency. The
   dialog now waits for the new currency, showing Loading for that moment.
+- **README:** nothing.
+- **Docs site:** nothing.
+
+## #354 — an MCP `create_order` refusal names the argument to correct (PR #373)
+- **Release note:** When `create_order` over MCP was given a value its order schema
+  refuses (a currency code that is not three capital letters, an empty `items` list, a
+  NUL in `order_number`, `tracking_url` or another text field), the agent got only
+  "Invalid request parameters" and could not tell which argument to fix. The tool now
+  answers with an error naming the argument and the rule, as REST's 422 names the field,
+  and still stores nothing, including a shop named in the same call.
 - **README:** nothing.
 - **Docs site:** nothing.
 

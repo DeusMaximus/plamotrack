@@ -42,30 +42,30 @@ Template:
 
 ---
 
-## 2026-11-19 — Claude Code (Fable 5.2) — orchestrator: wave 1 MERGED (#367 as `95adab3`, #368 as `b515041`); #369, #370 filed; five mutants survive on `main`; wave 2 not launched
+## 2026-11-19 — Claude Code (Fable 5.2) — orchestrator: wave 1 MERGED (#367 as `95adab3`, #368 as `b515041`); #369, #370, #371 filed; wave 2 (#361, #354) launched, no PR yet
 
 - **Done:**
   - **Wave 1, the loop's first run.** [PR #367](https://github.com/DeusMaximus/plamotrack/pull/367) (#359) merged as **`95adab3`** and [PR #368](https://github.com/DeusMaximus/plamotrack/pull/368) (#366) as **`b515041`**, each at its reviewed head with the owner's sign-off. The two entries below are the workers', with what was re-measured.
   - **Filed, at the owner's word:** [#369](https://github.com/DeusMaximus/plamotrack/issues/369), an order dialog open while the reference currency changes records a new line's snapshot in the old currency (Sol's P3 on #368; `bug`, `briefed-review`). [#370](https://github.com/DeusMaximus/plamotrack/issues/370), the registration guard's JSON check has no test of its own. A [comment on #238](https://github.com/DeusMaximus/plamotrack/issues/238#issuecomment-6992455678) adds a failed `/meta` refetch to its scope.
-  - **Full mutation harness run on `main` at `b515041`:** 813 cases, 808 RED. Four GREEN: `inv-17b`, `inv-20`, `inv-21` (the three whose tests live in `mutation_test.py`) and `moa-61` (`register_client`'s public-client normalisation). One NONE: `scan-20`, whose test #248 removed. `inv-20` was confirmed alone through the unmodified harness. None is diagnosed.
+  - **Full mutation harness run on `main` at `b515041`:** 813 cases, 808 RED. Four GREEN: `inv-17b`, `inv-20`, `inv-21` (the three whose tests live in `mutation_test.py`) and `moa-61` (`register_client`'s public-client normalisation). One NONE: `scan-20`, whose test #248 removed. `inv-20` was confirmed alone through the unmodified harness. None is diagnosed. Filed as [#371](https://github.com/DeusMaximus/plamotrack/issues/371).
   - **Docs, from what the first run got wrong:** `review-brief.md` tells the reviewer to check the PR head out (a delegated worktree is cut from the briefing session's commit). `orchestration.md` → "Briefed rounds" has a step for sending the posted review to the worker's thread. `testing-and-review.md` → "Mutation testing" has the measured timing and a shard wrapper.
-- **Decisions (the owner's, 2026-11-19):** merge both; file #369 and #370; the failed `/meta` refetch is a comment on #238, not an issue; the orchestrator runs the full harness. The compile check of each mutant (#367's third proposal) was not taken up.
+- **Decisions (the owner's, 2026-11-19):** merge both; file #369, #370 and then #371; the failed `/meta` refetch is a comment on #238, not an issue; the orchestrator runs the full harness; start wave 2. The compile check of each mutant (#367's third proposal) was not taken up.
 - **State:**
   - `main` is at `97cf68a` plus this entry. CI passed on `97cf68a`, which holds both merges. On merged `main` the anchor test passes and Alembic has one head, `b7d4f0a3c915`.
-  - No PR of this session is open, no worker or reviewer is running, both lanes are free. Worker worktrees, scratch worktrees and every `plamotrack_test_*` and `plamotrack_e2e_*` database of the session are gone. The local and remote branches `359-mutation-anchors` and `366-stale-meta-order-dialog` remain.
+  - **Wave 2 is in flight, launched from `5ea1431`, with no PR open yet.** Lane 1: #361 on branch `361-line-break-one-line-fields` (`N=361`). Lane 2: #354 on branch `354-mcp-schema-errors` (`N=354`). Both are Opus 5.5 worker threads in T3 Code worktrees, and both owe the automatic reviews only. Either may append to `.agents/next-release.md`, so the PR that merges second takes `main` in. If this session ends first, the next orchestrator picks them up from their PRs and threads, and removes their worktrees and databases after the merges.
+  - Wave 1's worker worktrees, the scratch worktrees and every `plamotrack_test_*` and `plamotrack_e2e_*` database made for wave 1 are gone. The local and remote branches `359-mutation-anchors` and `366-stale-meta-order-dialog` remain.
   - `settings.spec.ts:129` should no longer fail when two lanes run e2e (#366 is fixed). Not re-measured under two lanes.
   - **A serial harness run is now hours:** about 12 s a case over the first eight, so roughly 2.7 hours at 813 cases. Six shards took 28 minutes.
   - **What the loop's first run showed, beyond the doc edits:** a worker hands back before the briefed round posts, and it had stopped watching its PR by then. Greptile's first pass found the one P1 of the wave (#368: a late import wiped an open draft).
   - **Unreleased on `main`:** #333, #341/#343, #346/#352, #348, #349, #350, #366, plus #351's docs drift (`.agents/next-release.md` has #366's entry). #359 changes nothing a user sees.
   - **Carried, unchanged:** the owner's LXC is on v0.6.0-alpha. Owed to plamotrack-ios: #348–#350's fields, codes and scenarios. The dev DB may be three migrations behind (`alembic upgrade head`). PR #184 (Japanese, draft) waits on a native reviewer. Three T3 reviewer worktrees are T3's to remove: two from 2026-11-12 and this session's Sol round (detached at `047328d`).
 - **Waiting on the owner:**
-  - Whether to file the five survivors as one issue. The draft is `.dev/wave-1/issue-harness-survivors.md` in the main checkout (gitignored). `moa-61` and `scan-20` are in `app/auth/mcp_oauth.py`, so keep that issue out of #355's wave.
-  - Readiness comments for #369 and #370: neither is triaged.
+  - Readiness comments for #369, #370 and #371: none is triaged. `moa-61` and `scan-20` (#371) are in `app/auth/mcp_oauth.py`, so keep #371 out of #355's wave.
   - #184 still needs a native Japanese reviewer.
-- **Next:** a new session as orchestrator, from `.agents/orchestration.md`.
-  - **Wave 2:** #354 (`backend/app/mcp.py`) and #361 (the dialogs' one-line inputs). Both have readiness comments. #361 touches `OrderFormModal.tsx`, which #368 changed, so cut it from `main` now.
+- **Next:** the orchestrator, this session or a new one, from `.agents/orchestration.md` step 5.
+  - **Wave 2:** verify #361's and #354's PRs when the workers hand back, then report to the owner. #354's brief asks the worker to say so if the fix needs a shared mechanism, which would owe a briefed round.
   - **Wave 3:** #356 (the importer's comparison) and #358 (the order dialog), both briefed. #354 and #356 may add mutation cases: tell each worker which the other owns, and the anchor test fails a PR that stales one.
-  - **Later:** #369 (briefed; it is `OrderFormModal.tsx` again, so after #358), #370, then #355 (OAuth and token territory: briefed, the likeliest to meet a refusal, no readiness comment yet). The next release: #351, #344. M6.7: #279's edge probes, then #281, #282. M7 waits on #28.
+  - **Later:** #369 (briefed; it is `OrderFormModal.tsx` again, so after #358), #370, #371, then #355 (OAuth and token territory: briefed, the likeliest to meet a refusal, no readiness comment yet). The next release: #351, #344. M6.7: #279's edge probes, then #281, #282. M7 waits on #28.
 
 ## 2026-11-19 — Claude Code (Opus 5.5) — #366: PR #368 at `047328d`, briefed round 1 GO with one P3, answered; ready for the owner
 - **Done:**

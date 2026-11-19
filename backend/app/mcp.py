@@ -7,10 +7,11 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime
+from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
@@ -18,6 +19,7 @@ from app.db import session_scope
 from app.exceptions import DomainError
 from app.models import ItemType
 from app.models.enums import KitStatus
+from app.schemas.base import RequestModel
 from app.schemas.catalog import (
     ConsumableCreate,
     ConsumableRead,
@@ -123,6 +125,33 @@ def _parse_uuid(value: str, what: str) -> uuid.UUID:
         return uuid.UUID(value)
     except ValueError:
         raise ToolError(f"{what} {value!r} is not a valid UUID") from None
+
+
+def _build[M: RequestModel](schema: type[M], argument: str | None, /, **fields: Any) -> M:
+    """A request schema built inside a tool body, refused as the tool's other
+    refusals are: a `ToolError` naming the argument (#354).
+
+    FastMCP validates a tool's own arguments before the body runs and names the
+    field when one fails. A `ValidationError` raised *by the body* it treats as the
+    server's fault, and the SDK answers it as "Invalid request parameters", naming
+    nothing — so an agent could not tell which argument to correct, where REST
+    answers the same value with a 422 naming the field (rule 1). `argument` is the
+    tool argument `fields` came from (`create_kit`'s `kit`), or None where each
+    field is an argument of its own (`create_order`'s flat ones).
+
+    Each finding is the schema's own message, which names the rule and not the
+    value: the `input` a REST 422 echoes is left out, as `_EchoResponse` leaves
+    out one it cannot encode (#353). `tests/test_mcp_schema_errors.py` fails on a
+    request schema called in this module other than through here."""
+    try:
+        return schema(**fields)
+    except ValidationError as exc:
+        findings = []
+        for error in exc.errors(include_url=False):
+            path = ".".join(str(part) for part in (argument, *error["loc"]) if part is not None)
+            message = error["msg"].removeprefix("Value error, ")
+            findings.append(f"invalid {path}: {message}" if path else message)
+        raise ToolError("; ".join(findings)) from None
 
 
 #: What each catalog table's rows read back as — the same per-type schemas the REST
@@ -304,7 +333,9 @@ async def update_kit_status(kit_id: str, status: str) -> dict:
     parsed_id = _parse_uuid(kit_id, "kit_id")
     parsed_status = _parse_status(status)
     async with _tool_session() as session:
-        kit = await kits_service.update_kit(session, parsed_id, KitUpdate(status=parsed_status))
+        kit = await kits_service.update_kit(
+            session, parsed_id, _build(KitUpdate, None, status=parsed_status)
+        )
         return KitRead.model_validate(kit).model_dump(mode="json")
 
 
@@ -327,7 +358,9 @@ async def update_kit(kit_id: str, changes: _KitPatch) -> dict:
     if fields.get("status") is not None:
         fields["status"] = _parse_status(fields["status"])
     async with _tool_session() as session:
-        kit = await kits_service.update_kit(session, parsed_id, KitUpdate(**fields))
+        kit = await kits_service.update_kit(
+            session, parsed_id, _build(KitUpdate, "changes", **fields)
+        )
         return KitRead.model_validate(kit).model_dump(mode="json")
 
 
@@ -348,7 +381,7 @@ async def create_kit(kit: _KitInput) -> dict:
     fields = kit.model_dump()
     fields["status"] = _parse_status(fields["status"])
     async with _tool_session() as session:
-        row = await kits_service.create_kit(session, KitCreate(**fields))
+        row = await kits_service.create_kit(session, _build(KitCreate, "kit", **fields))
         return KitRead.model_validate(row).model_dump(mode="json")
 
 
@@ -580,7 +613,9 @@ async def create_order(
     async with _tool_session() as session:
         if retailer is not None:
             parsed_retailer_id = (await orders_service.get_or_create_retailer(session, retailer)).id
-        data = OrderCreate(
+        data = _build(
+            OrderCreate,
+            None,
             retailer_id=parsed_retailer_id,
             order_date=parsed_date,
             order_number=order_number,

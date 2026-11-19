@@ -7331,6 +7331,48 @@ CASES += [
     ),
 ]
 
+# The #354 (354-) set: a request schema a tool body builds is refused naming the
+# argument. Every 354- kill lives in tests/test_mcp_schema_errors.py. 354-5 is the
+# scan's alone: no kit tool can hand its schema a value that fails, so only the
+# scan sees a kit site built outside `_build`.
+CASES += [
+    (
+        "354-1. a body ValidationError reaches the SDK again",
+        MCP,
+        "    except ValidationError as exc:\n        findings = []\n",
+        "    except TypeError as exc:\n        findings = []\n",
+        "create_order_names_the_argument",
+    ),
+    (
+        "354-2. a field is named without the argument it came from",
+        MCP,
+        '            path = ".".join(str(part) for part in (argument, *error["loc"]) if part is not None)\n',
+        '            path = ".".join(str(part) for part in error["loc"])\n',
+        "helper_names_the_argument_a_field_came_from",
+    ),
+    (
+        "354-3. a model-level finding is named after nothing",
+        MCP,
+        '            findings.append(f"invalid {path}: {message}" if path else message)\n',
+        '            findings.append(f"invalid {path}: {message}")\n',
+        "model_level_finding_is_its_message_alone",
+    ),
+    (
+        "354-4. create_order builds OrderCreate outside _build",
+        MCP,
+        "        data = _build(\n            OrderCreate,\n            None,\n            retailer_id=parsed_retailer_id,\n",
+        "        data = OrderCreate(\n            retailer_id=parsed_retailer_id,\n",
+        "create_order_names_the_argument_over_http",
+    ),
+    (
+        "354-5. create_kit builds KitCreate outside _build",
+        MCP,
+        'kits_service.create_kit(session, _build(KitCreate, "kit", **fields))\n',
+        "kits_service.create_kit(session, KitCreate(**fields))\n",
+        "goes_through_build",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     # The #349 (349-) set: every 349- kill lives here, bar 349-13's second witness
@@ -7430,6 +7472,8 @@ TEST_FILES = [
     "tests/test_import_ranges.py",
     # The #307 scn- set: every scn- kill is a scenario run here.
     "tests/test_scenarios.py",
+    # The #354 set: every 354- kill lives here.
+    "tests/test_mcp_schema_errors.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
