@@ -301,6 +301,83 @@
           "consumables": [{ "id": "@consumables:cement", "quantity_on_hand": 1 }]
         }
       }
+    },
+    {
+      "id": "merging-your-own-export-leaves-whitespace-around-stored-text",
+      "why": "#356: a writer may keep surrounding whitespace (a notes box's trailing newline, a pasted name's indent, a box of spaces) and the export carries it, but an importer reads every free-text cell trimmed, a blank cell as no value. A stored value that differs from its cell only by that trimming is unchanged: nothing is updated and nothing stored moves",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "notes": "Ships on Fridays\n" }],
+        "kits": [
+          { "id": "@kits:zaku", "name": "  Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-20T00:00:00+00:00", "build_notes": "   " }
+        ]
+      },
+      "steps": [
+        { "op": "import_archive", "args": { "mode": "merge", "archive": "export" }, "result": { "created": 0, "updated": 0, "skipped": 0, "kits_spawned": 0 } }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "merging-a-sheet-that-only-trims-stored-text-changes-nothing",
+      "why": "#356: the same rule from a hand-written sheet. The cell says what is stored, less its trailing newline, so the row is unchanged and the newline stays",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "notes": "Ships on Fridays\n" }],
+        "kits": [
+          { "id": "@kits:zaku", "name": "  Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-20T00:00:00+00:00", "build_notes": "   " }
+        ]
+      },
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": {
+            "mode": "merge",
+            "archive": { "tables": { "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "notes": "Ships on Fridays" }] } }
+          },
+          "result": { "created": 0, "updated": 0 }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "merging-a-sheet-that-changes-stored-text-writes-the-cell",
+      "why": "#356: trimming is all that is forgiven. A cell that says something else is an update, and the apply writes the cell as it reads, trimmed",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "notes": "Ships on Fridays\n" }],
+        "kits": [
+          { "id": "@kits:zaku", "name": "  Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-20T00:00:00+00:00", "build_notes": "   " }
+        ]
+      },
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": {
+            "mode": "merge",
+            "archive": { "tables": { "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "notes": "  Ships on Mondays\n" }] } }
+          },
+          "result": { "created": 0, "updated": 1 }
+        }
+      ],
+      "then": { "tables": { "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "notes": "Ships on Mondays" }] } }
+    },
+    {
+      "id": "an-import-that-updates-a-row-leaves-its-trimmed-text-as-stored",
+      "why": "#356: an update writes only the columns that changed. The rating changes; the notes differ only by trimming, so they are no change and keep their newline",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "notes": "Ships on Fridays\n" }],
+        "kits": [
+          { "id": "@kits:zaku", "name": "  Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-20T00:00:00+00:00", "build_notes": "   " }
+        ]
+      },
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": {
+            "mode": "merge",
+            "archive": { "tables": { "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "rating": "4", "notes": "Ships on Fridays" }] } }
+          },
+          "result": { "created": 0, "updated": 1 }
+        }
+      ],
+      "then": { "tables": { "retailers": [{ "id": "@retailers:hlj", "rating": 4, "notes": "Ships on Fridays\n" }] } }
     }
   ]
 }

@@ -173,3 +173,15 @@ Shape:
   changes until it is saved from the editor.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #356 — re-importing your own export no longer rewrites text that ends in a newline (PR #TBD)
+- **Release note:** A text value saved with surrounding whitespace (most often a
+  trailing newline left in a notes box, through the web app, the REST API or an MCP
+  tool) made a merge import of the instance's own export preview that row as an update,
+  and applying it quietly removed the whitespace. Import reads every text cell without
+  its surrounding whitespace, and now compares the stored value the same way, so the
+  row is unchanged and nothing stored moves. A cell that says something different is
+  still an update. A Replace everything import still recreates every row from its
+  cells, so there the text comes back without the whitespace, as before.
+- **README:** nothing.
+- **Docs site:** nothing.
