@@ -198,10 +198,15 @@ Shape:
   On an order, the shipping cost and the discounts are amounts in the order's
   currency, so each one you change is saved together with the currency you saw, and a
   currency you change is saved with the shipping cost and any discounts on screen. A
-  change to one of the two amounts leaves the other as stored. One case is not yet
-  handled: if something changes the order's currency while the dialog is open and you
-  then change only one amount, the other amount, as that change stored it, is read in
-  your currency.
+  change to one of the two amounts leaves the other as stored. Two cases are not yet
+  handled, and both behave as they did before (#382). If something changes the
+  order's currency while the dialog is open and you then change only one amount, the
+  other amount, as that change stored it, is read in your currency. And if something
+  adds a discount while the dialog is open with none on screen, and you then change
+  the currency, that discount keeps its figure in your new currency (A$2.00 becomes
+  ¥200); after a save whose ship or receive failed, the retry can instead be refused
+  because that discount now comes to more than the order. In both cases, check the
+  order's discounts after saving.
   An order save that stored its changes but then failed to mark the order shipped or
   received can be corrected and saved again: a field you put back to how it opened is
   now stored that way, a ship date changed after the ship went through is saved as a
