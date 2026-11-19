@@ -180,8 +180,9 @@ Shape:
   dialog was open (a tracking number added to an order, say) was silently replaced with
   what the dialog had shown when it opened. A save now sends only the fields you
   changed, and leaves the rest as they are stored. Where you and an agent changed the
-  same field, your save wins. On an order, the currency and the shipping cost travel
-  together, so a changed currency stores the shipping cost on screen in that currency.
+  same field, your save wins. On an order, the currency, the shipping cost and the
+  discounts travel together, so every amount a save stores is in the currency you saw,
+  even if something changed the order's currency while the dialog was open.
   An order save that stored its changes but then failed to mark the order shipped or
   received can be corrected and saved again: a field you put back to how it opened is
   now stored that way, and a ship date changed after the ship went through is saved as

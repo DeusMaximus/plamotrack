@@ -618,6 +618,79 @@ test.describe("header fields an agent wrote while the dialog was open (#358)", (
     ]);
   });
 
+  // The order's money is one unit: its currency, the shipping cost and what came
+  // off, the two amounts stored in minor units of the first (Codex #378, P2). A
+  // save that sends any of the three sends all three, so every amount it stores
+  // is in the currency the person saw, whatever an agent made the order's
+  // currency meanwhile.
+  const cameOffOf = async (read: () => Promise<Header>) =>
+    ((await read()) as Header & { adjustments: Adjustment[] }).adjustments.map(
+      ({ label, amount_minor }) => ({ label, amount_minor }),
+    );
+  const MONEY_SEED = {
+    currency_code: "AUD",
+    shipping_cost_minor: 500,
+    adjustments: [{ label: "Gift card", amount_minor: 100 }],
+  };
+
+  test("what came off, changed alone, is stored in the currency on screen", async ({ page }) => {
+    const { read, write, saveAndClose } = await openOrder(page, MONEY_SEED);
+    await write({ currency_code: "JPY" });
+    await page.getByLabel("Amount off").fill("4.00");
+    await saveAndClose();
+    const stored = await read();
+    expect(stored.currency_code).toBe("AUD");
+    expect(stored.shipping_cost_minor).toBe(500);
+    expect(await cameOffOf(read)).toEqual([{ label: "Gift card", amount_minor: 400 }]);
+  });
+
+  test("a shipping cost changed alone takes what came off on screen with it", async ({ page }) => {
+    const { read, write, saveAndClose } = await openOrder(page, MONEY_SEED);
+    // Both halves an agent might move: the currency, and a discount written in it.
+    await write({ currency_code: "JPY", adjustments: [{ label: "Agent's yen voucher", amount_minor: 3 }] });
+    await page.getByLabel("Shipping cost").fill("6.00");
+    await saveAndClose();
+    const stored = await read();
+    expect(stored.currency_code).toBe("AUD");
+    expect(stored.shipping_cost_minor).toBe(600);
+    expect(await cameOffOf(read)).toEqual([{ label: "Gift card", amount_minor: 100 }]);
+  });
+
+  // The one part of the unit that stays behind: an empty list the person left
+  // empty says nothing, so a discount an agent added meanwhile is not deleted.
+  // Its amount is then read in the person's currency — wrong, but still there
+  // to correct, where sending the empty list would remove it without a trace.
+  test("a currency changed with nothing off on screen leaves a discount an agent added", async ({ page }) => {
+    // A$500.00 of shipping becomes ¥500 on the switch, enough to stay above the
+    // voucher: the server refuses adjustments larger than the order's total.
+    const { read, write, saveAndClose } = await openOrder(page, {
+      currency_code: "AUD",
+      shipping_cost_minor: 50000,
+    });
+    await write({ adjustments: [{ label: "Agent's voucher", amount_minor: 200 }] });
+    await page.getByLabel("Currency").fill("JPY");
+    await saveAndClose();
+    expect((await read()).currency_code).toBe("JPY");
+    expect(await cameOffOf(read)).toEqual([{ label: "Agent's voucher", amount_minor: 200 }]);
+  });
+
+  for (const transition of ["ship", "receive"] as const) {
+    test(`${transition}: what came off, changed on the retry, is stored in the currency on screen`, async ({ page }) => {
+      const { id, read, write, saveAndClose } = await openOrder(page, MONEY_SEED);
+      await failOnce(page, id, transition);
+      await page.getByLabel({ ship: "Shipped on", receive: "Received on" }[transition]).fill("2020-02-01");
+      await page.getByLabel("Notes").fill("The person's note.");
+      await saveAndFail(page, id, transition);
+      await write({ currency_code: "JPY" });
+      await page.getByLabel("Amount off").fill("4.00");
+      await saveAndClose();
+      const stored = await read();
+      expect(stored.currency_code).toBe("AUD");
+      expect(await cameOffOf(read)).toEqual([{ label: "Gift card", amount_minor: 400 }]);
+      expect(stored[transition === "ship" ? "shipped_at" : "received_at"]).not.toBeNull();
+    });
+  }
+
   test("a kit detail changed on its line reaches the kit", async ({ page }) => {
     const { read, saveAndClose } = await openOrder(page);
     await page.getByPlaceholder("Kit #").fill("CHANGED-ON-THE-LINE");

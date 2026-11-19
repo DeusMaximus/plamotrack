@@ -881,16 +881,19 @@ function OrderForm({
       fields.forEach((field) => sent.add(field));
       return { [key]: value } as Pick<OrderUpdate, K>;
     };
-    // Shipping cost is stored in minor units of the order's currency, so the two
-    // travel as a pair: a currency changed alone stores the amount on screen in
-    // the currency on screen, and a cost changed alone is read in the currency
-    // the person is looking at — never in one an agent chose meanwhile.
-    const MONEY: (keyof OrderFormValues)[] = ["currency_code", "shipping_cost"];
-    // What came off (#350) is in the order's currency as well: a changed currency
-    // restates the amounts on screen, since a yen figure left standing as cents
-    // would be a hundredth of what the form shows.
-    const adjustmentsChanged =
-      changed("adjustments") || (changed("currency_code") && values.adjustments.length > 0);
+    // The order's money is one unit: its currency, and the two amounts stored in
+    // minor units of it, the shipping cost and what came off (#350). A save that
+    // sends any of the three sends all three, so every amount it stores is read in
+    // the currency the person was looking at, never in one an agent chose
+    // meanwhile (Codex #378, P2): a currency changed alone stores the amounts on
+    // screen in it, and an amount changed alone takes the currency with it — and
+    // the other amount, which the currency it goes with would otherwise
+    // reinterpret (a yen figure read as cents is a hundredth of itself).
+    const MONEY: (keyof OrderFormValues)[] = ["currency_code", "shipping_cost", "adjustments"];
+    // An empty list that this edit left empty says nothing in any currency, so it
+    // stays out: sending it would delete a discount an agent added meanwhile.
+    const adjustmentsGo =
+      MONEY.some(changed) && (changed("adjustments") || values.adjustments.length > 0);
     // A line keeps its id, so it is compared with the stored line it names, not
     // with whichever line stood at its index before one above it was removed.
     const storedLine = new Map(stored.items.map((line) => [line.id, line]));
@@ -932,7 +935,7 @@ function OrderForm({
         }),
       ),
     };
-    if (adjustmentsChanged) {
+    if (adjustmentsGo) {
       sent.add("adjustments");
       payload.adjustments = values.adjustments.map((adjustment) => ({
         label: adjustment.label.trim(),
