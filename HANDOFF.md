@@ -42,14 +42,14 @@ Template:
 
 ---
 
-## 2026-11-19 — Claude Code (Opus 5.5) — orchestrator: wave 3 MERGED (#377 as `a7d005a`, #378 as `0daf5e5`); #379–#384 filed; nothing in flight
+## 2026-11-19 — Claude Code (Opus 5.5) — orchestrator: wave 3 MERGED (#377 as `a7d005a`, #378 as `0daf5e5`); #379–#385 filed; nothing in flight
 
 - **Done:**
   - **Wave 3.** [PR #377](https://github.com/DeusMaximus/plamotrack/pull/377) (#356, lane 2) merged as **`a7d005a`** and [PR #378](https://github.com/DeusMaximus/plamotrack/pull/378) (#358, lane 1) as **`0daf5e5`**, each at its reviewed head with the owner's sign-off. The two entries below are the workers', with what was re-measured.
   - **#378 took three briefed rounds' worth of review:** the connector's P2 at `e1a45fb`, Sol's round 1 NO-GO at `b90cdf2` (two P2s), round 2 GO at `397a295`. Round 1's second P2 landed in the money rule the previous fix had made, so it went to the owner (orchestration.md → "Briefed rounds" step 6): the owner chose to ship as scoped with the rule narrowed so nothing regresses against `main`, and file the structural fix (#382).
   - **On `main` after the merges:** `.agents/next-release.md`'s `#356` entry says a blank cell keeps whitespace-only text (#377 round 1), and its `#358` entry names both money limitations and #382 (#378 round 2's P3).
-  - **Filed, at the owner's word:** [#379](https://github.com/DeusMaximus/plamotrack/issues/379) (the scenario harness: a settings seed fails the new seed check; the Python/Swift trim difference is untested), [#380](https://github.com/DeusMaximus/plamotrack/issues/380) (a whitespace-only kit name or grade makes its own export unimportable), [#381](https://github.com/DeusMaximus/plamotrack/issues/381) (Replace everything brings stored text back trimmed), [#382](https://github.com/DeusMaximus/plamotrack/issues/382) (the order dialog doesn't notice its money changed under it), [#383](https://github.com/DeusMaximus/plamotrack/issues/383) (a save stored but answered with an error; [comment](https://github.com/DeusMaximus/plamotrack/issues/383#issuecomment-7004082497) adds the kit and retailer dialogs' source comments), [#384](https://github.com/DeusMaximus/plamotrack/issues/384) (a retry re-adds a line the first try created). All `bug`, none triaged.
-- **Decisions (the owner's, 2026-11-19):** #378's call 1 accepted (a retry does not re-send what the first try stored over an agent's later write); #378's money rule is "each amount travels with the order's currency, never with the other amount", two cases left as on `main` (#382); merge both PRs; file #379–#384 and make (c) on `main`.
+  - **Filed, at the owner's word:** [#379](https://github.com/DeusMaximus/plamotrack/issues/379) (the scenario harness: a settings seed fails the new seed check; the Python/Swift trim difference is untested), [#380](https://github.com/DeusMaximus/plamotrack/issues/380) (a whitespace-only kit name or grade makes its own export unimportable), [#381](https://github.com/DeusMaximus/plamotrack/issues/381) (Replace everything brings stored text back trimmed), [#382](https://github.com/DeusMaximus/plamotrack/issues/382) (the order dialog doesn't notice its money changed under it), [#383](https://github.com/DeusMaximus/plamotrack/issues/383) (a save stored but answered with an error; [comment](https://github.com/DeusMaximus/plamotrack/issues/383#issuecomment-7004082497) adds the kit and retailer dialogs' source comments), [#384](https://github.com/DeusMaximus/plamotrack/issues/384) (a retry re-adds a line the first try created), [#385](https://github.com/DeusMaximus/plamotrack/issues/385) (Settings → Language and region sends all five settings on every save). All `bug`, none triaged.
+- **Decisions (the owner's, 2026-11-19):** #378's call 1 accepted (a retry does not re-send what the first try stored over an agent's later write); #378's money rule is "each amount travels with the order's currency, never with the other amount", two cases left as on `main` (#382); merge both PRs; file #379–#385 and make (c) on `main`; triage in a new session.
 - **State:**
   - `main` is at `0daf5e5` plus this entry. CI on `0daf5e5` was running when this was written: read `gh run list --branch main` before starting a wave. Neither PR added a migration.
   - **No PR open, no worker or reviewer running, both lanes free.** Worker worktrees, scratch worktrees and every database made this wave are gone. Branches `356-import-text-whitespace` and `358-order-dialog-header-fields` remain, locally and on the remote. Six T3 reviewer worktrees (detached or `t3/…`) are T3's to remove, three of them this wave's Sol rounds at `876a1f4`, `b90cdf2` and `397a295`.
@@ -58,8 +58,7 @@ Template:
   - **Unreleased on `main`:** #333, #341/#343, #346/#352, #348, #349, #350, #366, #354, #361, #356, #358, plus #351's docs drift.
   - **Carried:** the owner's LXC is on v0.6.0-alpha. Owed to plamotrack-ios: #348–#350's fields, codes and scenarios, and #356's comparison rule (Python's `str.strip` set) and a scenario runner that seeds `given` text as written. The dev DB may be behind (`alembic upgrade head`). PR #184 (Japanese, draft) waits on a native reviewer.
 - **Waiting on the owner:**
-  - Readiness comments for #369–#371, #374–#376 and #379–#384; none is triaged. #376 needs a decision first (notes or one-line boxes). #382 needs one too: what the dialog says and does when its money changed under it.
-  - Whether to file #378's other proposal: Settings → Language and region sends all five settings on every save.
+  - Readiness comments for #369–#371, #374–#376 and #379–#385; none is triaged. #376 needs a decision first (notes or one-line boxes). #382 needs one too: what the dialog says and does when its money changed under it.
   - #184 still needs a native Japanese reviewer.
 - **Next:** a new session as orchestrator, from `.agents/orchestration.md` step 1; triage comes first.
   - **`OrderFormModal.tsx` queue, one at a time:** #369 (briefed), #382, #383, #384. Pair each with a backend issue: #374 (`backend/app/mcp.py`), #370, #371, #379, #380, #381 (#381 needs normalising on write and a migration: briefed). Keep #371 out of #355's wave (`app/auth/mcp_oauth.py`).
@@ -74,7 +73,7 @@ Template:
 - **Decisions:** call 1 (a retry does not re-send what the first try stored) accepted by the owner (2026-11-19). The money rule narrowed by the owner, keeping two limitations as on `main` (#382). Finding 4 and the kit/retailer source-comment qualification are handled after the merge: the release note corrected on `main`, the comments on #383. No push after round 2.
 - **State:** CI green on `397a295` (Backend, Frontend, Integration). No migration, no backend change. Databases dropped; worktree removed by the orchestrator; branch left.
 - **Waiting on the owner:** nothing for this PR.
-- **Next:** proposed, not filed: Settings → Language and region sends all five settings on every save. #369 (`OrderFormModal.tsx`) can follow.
+- **Next:** the proposed Settings → Language and region follow-up is filed as #385. #369 (`OrderFormModal.tsx`) can follow.
 
 ## 2026-11-19 — Claude Code (Opus 5.5) — #356: the importer compares stored text as parse_text reads the cell (PR #377)
 
