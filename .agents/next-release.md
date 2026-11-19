@@ -162,3 +162,14 @@ Shape:
   and still stores nothing, including a shop named in the same call.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #361 — a line break in a name shows as a space in the editor, and an edit keeps the two words apart (PR #372)
+- **Release note:** A name, number or other one-line field that was given a line break
+  through the REST API, an MCP tool or a CSV import showed in the web app's editor with
+  the two lines run together, and saving after typing in that field stored them joined.
+  The editor now shows the break as a space, and saving stores what was on screen. A
+  field you never click or tab into keeps its line break. One you click or tab into
+  can be saved with the space, even if you typed nothing. Nothing already stored
+  changes until it is saved from the editor.
+- **README:** nothing.
+- **Docs site:** nothing.
