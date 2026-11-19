@@ -174,7 +174,7 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
-## #358 — saving an order, kit or shop no longer overwrites what an agent wrote while the dialog was open (PR #NNN)
+## #358 — saving an order, kit or shop no longer overwrites what an agent wrote while the dialog was open (PR #378)
 - **Release note:** The order, kit and shop dialogs sent every field back on each save,
   so anything an assistant, a script or another tab wrote to the same record while the
   dialog was open (a tracking number added to an order, say) was silently replaced with
