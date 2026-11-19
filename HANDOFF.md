@@ -42,6 +42,21 @@ Template:
 
 ---
 
+## 2026-11-19 — Claude Code (Opus 5.5) — #356: the importer compares stored text as parse_text reads the cell (PR #377)
+
+- **Done:**
+  - [PR #377](https://github.com/DeusMaximus/plamotrack/pull/377) on branch `356-import-text-whitespace`, head `876a1f4`, against `main` at `30b5865`. Closes #356.
+  - `ColumnSpec.as_read` (`spec.py`): for a `parse_text` column, the stored value through `stripped_or_none`; otherwise the value itself. `_classify` (`importing.py`) compares through it; `FieldChange.before` stays the raw stored value. No write path or stored value changes.
+  - `tests/test_import_text_whitespace.py`, 9 tests: all 30 stored `parse_text` columns × 4 wrapped values; an update of another column leaves trimmed text as stored; genuine edits in merge (`update`) and replace_all (`create`); the export carries the whitespace.
+  - Four scenarios in `imports.json`. `test_scenarios.py` seeds `given` text as written and checks every `given` value was stored before step 1. `testing-and-review.md` → "Behaviour scenarios" says so.
+  - Mutation cases `356-1`…`356-5` and `scn-20` (818 → 824), all killed. `tests/test_import_text_whitespace.py` added to `TEST_FILES`. The anchor test passes.
+  - `.agents/next-release.md` entry, as its own section at the end.
+  - **Merged:** squash-merged as **`a7d005a`** at the reviewed head `876a1f4`; #356 is closed. Reviews: the Codex connector covered `7d000fd` with no findings (`876a1f4` changes one line of `.agents/next-release.md`); briefed round 1 (Codex GPT-6.1 Sol, at `876a1f4`) **GO** with two P3s, both reproduced and answered on the PR, the coverage record brought up to the round; Greptile did not run (credits). Re-run by the orchestrator at `876a1f4` in a scratch worktree: mutants `356-1` and `356-3` RED under the harness; the new file, `test_scenarios.py` and the anchor test 70 passed. Follow-ups proposed, none filed yet: (a) the scenario seed check keys an id-less row as `"singleton"` where `state()` uses `"1"`, so an `instance_settings` seed fails (P3 1); (b) the shared scenarios don't exercise U+001C–U+001F, the Python/Swift trim difference (P3 2); (c) the release note should say a blank cell now leaves a whitespace-only stored value in place; (d) `POST /kits` accepts a whitespace-only `name`/`grade`, whose export is then refused on re-import; (e) replace_all restores free text trimmed.
+- **Decisions:** the issue's first option (compare, don't normalise). replace_all pinned, not changed. The blank-reading case skips the 13 required columns and the `other` line's description.
+- **State:** CI green at `876a1f4`. Local suite at `7d000fd`: 4072 passed, 1 xfailed. No migration. Databases dropped; the worker's worktree removed; branch `356-import-text-whitespace` left locally and on the remote. Sol's T3 worktree (detached at `876a1f4`) is T3's to remove.
+- **Waiting on the owner:** filing follow-ups (a)–(e).
+- **Next:** owed to plamotrack-ios: the comparison rule (Python's `str.strip` set), and a scenario runner that seeds `given` text as written.
+
 ## 2026-11-19 — Claude Code (Fable 5.2) — orchestrator: wave 1 MERGED (#367 as `95adab3`, #368 as `b515041`); wave 2 MERGED (#373 as `de7fa0d`, #372 as `95a3906`); #369–#371 and #374–#376 filed; nothing in flight
 
 - **Done:**
@@ -103,11 +118,3 @@ Template:
 - **State:** CI green on `047328d` (Backend, Frontend, Integration). Codex connector: no findings on `fc8b985` or `047328d`. Greptile: one P1 on `fc8b985`, fixed and answered at `047328d`, not re-reviewed. Full from-empty e2e ran at `fc8b985` (303 passed, 99 skipped); at `047328d` only `settings.spec.ts` (18 passed, by the author and by the reviewer). Untested after round 1: WebKit, phone and tablet replays, the packaged stack, a real second-tab writer, late Add-only and Replace-everything imports.
 - **Waiting on the owner:** the merge of #368; whether to file the two follow-ups below.
 - **Next:** proposed issues, not filed: (1) a snapshot the browser derives against a reference that moved under an open dialog (a late import, another tab, a REST script): check at save, never relabel, keep explicit and stored pairs; (2) a failed `/meta` refetch leaves the dialogs on Loading with no error or retry. #358 and #361 touch `OrderFormModal.tsx` after this one; `settings.spec.ts:129` should no longer flake when two lanes run.
-
-## 2026-11-19 — Claude Code (Opus 5.5) — #359: twelve stale mutation anchors repaired, CI anchor check; PR #367 open
-- **Done:** [PR #367](https://github.com/DeusMaximus/plamotrack/pull/367), branch `359-mutation-anchors`, head `d668eea`, against `main` at `4fab42c`, closes #359. The twelve stale cases in `backend/mutation_test.py` (auth-22, m63-10, oidc-20, oidc-35, moa-22, moa-25, moa-45, moa-76, aud-6, 341-1, 341-4, 346-6) are re-anchored on where their code moved; none retired. moa-22 now targets `app/auth/mcp_oauth_state.py`. New `backend/tests/test_mutation_anchors.py` requires each anchor in `CASES` to match its file exactly once, so the Backend check fails the PR that moves an anchored line. `.agents/testing-and-review.md` → "Mutation testing" gained one paragraph on it.
-  - **Merged:** squash-merged as **`95adab3`** at the reviewed head `d668eea`; #359 is closed. Reviews: the Codex connector and Greptile both covered `d668eea` with no findings, and no briefed round was owed. Run again by the orchestrator: the anchor test red on `4fab42c` (naming the twelve) and green on the branch; `moa-45.` and `341-1.` RED under the harness; the f4 test passing with the guard not installed. Follow-ups: [#370](https://github.com/DeusMaximus/plamotrack/issues/370) filed (the guard's JSON check); the full harness run on `main` is the orchestrator's, in the entry above; the compile check of each mutant was not taken up.
-- **Decisions:** a unit test, not a `--check-anchors` flag (both were allowed). moa-45's `-k` re-pointed at the registration quota and cap tests: its f4 test stays green with the guard removed, because the SDK under FastMCP 4 returns the same 400.
-- **State:** CI is green on `d668eea`. The Codex connector and Greptile both reviewed `d668eea` with no findings. All twelve re-anchored cases go RED under the harness. Stale count 12 → 0 (813 cases). Nothing under `backend/app/`. The harness ran correctly with a non-default `TEST_DATABASE_URL` (`plamotrack_test_359`, now dropped).
-- **Waiting on the owner:** merge of #367. Whether to file: `ClientMetadataBody`'s JSON check may be redundant with the SDK's; a compile check of each mutant in the anchor test; a full harness run on `main`.
-- **Next:** wave 2 (#354, #361). #354 and #356 may add mutation cases, and the anchor test now fails their PRs if any anchor goes stale.
