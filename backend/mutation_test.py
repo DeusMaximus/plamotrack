@@ -7509,7 +7509,7 @@ CASES += [
         "380-12. an order edit's restatement skips the refusal",
         ORD,
         "            refuse_blank_kit_text(details.name, details.grade)\n",
-        "",
+        "            pass\n",
         "update_order_refuses_a_blank_kit_line and restated",
     ),
 ]
