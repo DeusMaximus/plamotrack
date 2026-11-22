@@ -797,6 +797,18 @@
     "onHand_other": "{{countDisplay}} on hand",
     "createNew": "Create new {{type}} “{{query}}”"
   },
+  "dialogLoad": {
+    "failed": {
+      "meta": "Couldn't load the reference currency: {{message}}",
+      "tools": "Couldn't load the tools: {{message}}",
+      "consumables": "Couldn't load the consumables: {{message}}",
+      "upgrades": "Couldn't load the upgrades: {{message}}",
+      "displayItems": "Couldn't load the display items: {{message}}"
+    },
+    "note": "The form opens once everything it needs has loaded.",
+    "retry": "Retry",
+    "retrying": "Retrying…"
+  },
   "orders": {
     "title": "Orders",
     "newOrder": "New order",

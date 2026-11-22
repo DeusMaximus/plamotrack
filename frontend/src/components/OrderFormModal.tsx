@@ -25,12 +25,15 @@ import {
   stepFor,
   todayISO,
 } from "../lib/format";
+import type { DialogInput } from "../lib/dialogLoadFailure";
+import { useDialogLoadFailure } from "../lib/dialogLoadFailure";
 import { useFormMeta } from "../lib/formMeta";
 import { invalidateOrderViews } from "../lib/invalidate";
 import { sameValue } from "../lib/sameValue";
 import { itemTypeTitle } from "../lib/labels";
 import type { CatalogSelection } from "./CatalogItemPicker";
 import { CatalogItemPicker } from "./CatalogItemPicker";
+import { DialogLoadFailure } from "./DialogLoadFailure";
 import { Modal } from "./Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "./ui";
 
@@ -644,7 +647,12 @@ function AdjustmentEditor({
  * stripped kit_number and scale. A new order needs none of them, hence the `!order`.
  *
  * In practice OrdersPage warms all five, so the loading state is rarely seen —
- * "rarely" being exactly why the bug would have survived. */
+ * "rarely" being exactly why the bug would have survived.
+ *
+ * An input that *failed* is not one still on its way (#238): the dialog says
+ * which, with Retry for those alone, and the form still does not mount without
+ * it — a missing list is what #65 mounted on, a stale `/meta` what #366 did. The
+ * order's own read keeps its error below, which has no Retry. */
 export function OrderFormModal({
   order,
   onClose,
@@ -656,7 +664,8 @@ export function OrderFormModal({
 }) {
   const { t } = useTranslation();
   // Not merely present: a copy an invalidation has overtaken is not one (#366).
-  const meta = useFormMeta();
+  const formMeta = useFormMeta();
+  const meta = formMeta.meta;
   // The order the caller has is the list's cached copy, stale for as long as
   // the page has been open (#67). Refetch it on every open and hydrate from
   // the answer — this shrinks the stale window from "page age" to "during this
@@ -686,16 +695,61 @@ export function OrderFormModal({
     // refresh it so the stale row goes the same way the order did.
     if (orderGone) queryClient.invalidateQueries({ queryKey: ["orders"] });
   }, [orderGone, queryClient]);
-  const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
-  const { data: consumables } = useQuery({
+  const toolsQuery = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
+  const consumablesQuery = useQuery({
     queryKey: ["consumables"],
     queryFn: api.listConsumables,
   });
-  const { data: upgrades } = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
-  const { data: displayItems } = useQuery({
+  const upgradesQuery = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
+  const displayItemsQuery = useQuery({
     queryKey: ["display-items"],
     queryFn: api.listDisplayItems,
   });
+  const tools = toolsQuery.data;
+  const consumables = consumablesQuery.data;
+  const upgrades = upgradesQuery.data;
+  const displayItems = displayItemsQuery.data;
+
+  // What the form waits on and has failed (#238). The lists only for an edit:
+  // a new order names no catalog row it did not just pick. A list with a cached
+  // copy is present, as the gate below reads it, whatever its refetch did.
+  const failureText = (error: unknown) =>
+    error instanceof Error ? error.message : t("orders.requestFailedFallback");
+  const listFailure = (query: { data: unknown; error: Error | null; isFetching: boolean }) =>
+    order !== undefined && query.data === undefined && query.error && !query.isFetching
+      ? query.error
+      : null;
+  const toolsFailed = listFailure(toolsQuery);
+  const consumablesFailed = listFailure(consumablesQuery);
+  const upgradesFailed = listFailure(upgradesQuery);
+  const displayItemsFailed = listFailure(displayItemsQuery);
+  const inputs: DialogInput[] = [
+    {
+      failure: formMeta.error && t("dialogLoad.failed.meta", { message: failureText(formMeta.error) }),
+      retry: formMeta.retry,
+    },
+    {
+      failure: toolsFailed && t("dialogLoad.failed.tools", { message: failureText(toolsFailed) }),
+      retry: toolsQuery.refetch,
+    },
+    {
+      failure:
+        consumablesFailed &&
+        t("dialogLoad.failed.consumables", { message: failureText(consumablesFailed) }),
+      retry: consumablesQuery.refetch,
+    },
+    {
+      failure: upgradesFailed && t("dialogLoad.failed.upgrades", { message: failureText(upgradesFailed) }),
+      retry: upgradesQuery.refetch,
+    },
+    {
+      failure:
+        displayItemsFailed &&
+        t("dialogLoad.failed.displayItems", { message: failureText(displayItemsFailed) }),
+      retry: displayItemsQuery.refetch,
+    },
+  ];
+  const loadFailure = useDialogLoadFailure(inputs);
 
   // Kit details are no longer in this list: they arrive on the order itself, so
   // there is no second cache to be stale. What's left is only the catalog naming
@@ -730,6 +784,18 @@ export function OrderFormModal({
   }
   const hydrated =
     !order || (freshOrder && isFetchedAfterMount && tools && consumables && upgrades && displayItems);
+  // Ready wins over a failure the dialog is still holding through a Retry that
+  // has just answered: the form mounts on the answer.
+  if ((!meta || !hydrated) && loadFailure) {
+    return (
+      <DialogLoadFailure
+        title={order ? t("orders.editTitle") : t("orders.newTitle")}
+        onClose={onClose}
+        wide
+        failure={loadFailure}
+      />
+    );
+  }
   if (!meta || !hydrated) {
     return (
       <Modal title={order ? t("orders.editTitle") : t("orders.newTitle")} onClose={onClose} wide>
