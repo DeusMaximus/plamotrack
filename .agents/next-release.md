@@ -215,7 +215,7 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
-## #380 — a kit's name or grade can no longer be only spaces (PR pending)
+## #380 — a kit's name or grade can no longer be only spaces (PR #386)
 - **Release note:** A kit could be saved with a name or grade of nothing but spaces
   (or tabs, or a line break), through the kit dialog, the REST API, an MCP tool, or an
   order's kit line. Import reads a cell like that as empty, and both are required, so
