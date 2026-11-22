@@ -215,7 +215,7 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
-## #238 — an order or inventory dialog says what failed to load, with Retry, instead of Loading… forever (PR #TBD)
+## #238 — an order or inventory dialog says what failed to load, with Retry, instead of Loading… forever (PR #387)
 - **Release note:** When something the order dialog needs could not be loaded (the
   list of tools, consumables, upgrades or display items it names an order's lines
   from, or the instance's reference currency), the dialog stayed on Loading… with no
