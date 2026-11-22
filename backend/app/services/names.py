@@ -99,14 +99,28 @@ def clean_required_text(value: str, field: str) -> str:
     blank cell, so this brings the live writers into line with it rather than
     inventing a fourth opinion.
     """
-    cleaned = value.strip()
-    if not cleaned:
+    refuse_blank_text(value, field)
+    return value.strip()
+
+
+def refuse_blank_text(value: str, field: str) -> None:
+    """`clean_required_text`'s refusal without its trim: `field.blank` when `value`
+    is empty or only whitespace, nothing otherwise.
+
+    For a NOT NULL text column whose writers store the value as sent — a kit's
+    `name` and `grade` (#380). A value of nothing but whitespace is one the
+    importer's `parse_text` reads as no value, and the column is required, so the
+    row's own export would not import (rule 10). Surrounding whitespace on a real
+    value is not refused and not trimmed here: the merge import already compares
+    it as `parse_text` reads the cell (#356), and whether those writers normalise
+    on write is #381's question.
+    """
+    if not value.strip():
         raise InvalidInputError(
             f"{field} cannot be blank",
             code=error_codes.FIELD_BLANK,
             params={"field": field},
         )
-    return cleaned
 
 
 def clean_optional_text(value: str | None) -> str | None:

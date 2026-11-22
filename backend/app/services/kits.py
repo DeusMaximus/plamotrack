@@ -10,7 +10,7 @@ from app import error_codes
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
 from app.schemas.kits import KitCreate, KitUpdate
-from app.services.names import WHITESPACE
+from app.services.names import WHITESPACE, refuse_blank_text
 from app.services.text import refuse_unstorable_text
 from app.services.write_gate import acquire_write_gate
 
@@ -82,8 +82,27 @@ def _normalize_series(value: str | None) -> str | None:
     return value.strip() or None
 
 
+def refuse_blank_kit_text(name: str | None, grade: str | None) -> None:
+    """`field.blank` for a kit `name` or `grade` that is only whitespace (#380).
+
+    Both columns are NOT NULL and required in `kits.csv`, and the importer's
+    `parse_text` reads a cell of nothing but whitespace as no value at all — so a kit
+    stored with one made every later import of the instance's own export stop at
+    `import.cell_required` (rule 10). `min_length=1` on the request schemas is
+    satisfied by a space, so the refusal is here, where every writer of the two
+    columns passes: `create_kit` and `update_kit` (REST and MCP), and an order's kit
+    line through `spawn_kits` and `_update_line`'s restatement (rule 1). None is a
+    field the caller did not send. The value is stored as sent otherwise — see
+    `names.refuse_blank_text`.
+    """
+    for field, value in (("name", name), ("grade", grade)):
+        if value is not None:
+            refuse_blank_text(value, field)
+
+
 async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
     await acquire_write_gate(session)
+    refuse_blank_kit_text(data.name, data.grade)
     fields = data.model_dump()
     fields["series"] = _normalize_series(fields["series"])
     kit = Kit(**fields)
@@ -214,6 +233,7 @@ async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) 
                 code=error_codes.FIELD_NOT_NULLABLE,
                 params={"field": non_nullable},
             )
+    refuse_blank_kit_text(fields.get("name"), fields.get("grade"))
     if "series" in fields:
         fields["series"] = _normalize_series(fields["series"])
     entered: KitStatus | None = None

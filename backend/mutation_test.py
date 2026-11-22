@@ -7419,6 +7419,99 @@ CASES += [
         "        if False:\n            return stripped_or_none(stored)\n",
         "only-trims-stored-text or trimmed-text-as-stored",
     ),
+    # --- #380: a kit's name or grade that is only whitespace is refused ----------
+    # The refusal sits in one predicate (`names.refuse_blank_text`, which
+    # `clean_required_text` now calls) and is reached from four places: create_kit,
+    # update_kit, spawn_kits and _update_line's restatement. Each place is broken on
+    # its own, and the -k names the edit state that only that place answers for: a
+    # restated line never reaches spawn_kits, and a grown one is refused at the
+    # restatement before it spawns, so 380-11 is killed by entry and an added line.
+    (
+        "380-1. refuse_blank_text refuses nothing",
+        NAMES,
+        "    if not value.strip():\n",
+        "    if False:\n",
+        "rest_create_kit_refuses_a_blank or a_required_text_column_refuses_whitespace "
+        "or reimports_as_a_no_op",
+    ),
+    (
+        "380-2. refuse_blank_text sees ASCII spaces only",
+        NAMES,
+        "    if not value.strip():\n",
+        '    if not value.strip(" "):\n',
+        "rest_create_kit_refuses_a_blank and (tab or nbsp or newline or ideographic)",
+    ),
+    (
+        "380-3. the refusal is name.blank, not field.blank",
+        NAMES,
+        "            code=error_codes.FIELD_BLANK,\n",
+        "            code=error_codes.NAME_BLANK,\n",
+        "rest_create_kit_refuses_a_blank or predicate_names_the_field",
+    ),
+    (
+        "380-4. the refusal names the wrong field",
+        NAMES,
+        '            params={"field": field},\n',
+        '            params={"field": "name"},\n',
+        "rest_create_kit_refuses_a_blank and grade",
+    ),
+    (
+        "380-5. clean_required_text stops trimming",
+        NAMES,
+        "    refuse_blank_text(value, field)\n    return value.strip()\n",
+        "    refuse_blank_text(value, field)\n    return value\n",
+        "a_required_text_column_is_stored_trimmed",
+    ),
+    (
+        "380-6. refuse_blank_kit_text skips grade",
+        KITS,
+        '    for field, value in (("name", name), ("grade", grade)):\n',
+        '    for field, value in (("name", name),):\n',
+        "rest_create_kit_refuses_a_blank and grade",
+    ),
+    (
+        "380-7. refuse_blank_kit_text skips name",
+        KITS,
+        '    for field, value in (("name", name), ("grade", grade)):\n',
+        '    for field, value in (("grade", grade),):\n',
+        "rest_create_kit_refuses_a_blank and name",
+    ),
+    (
+        "380-8. refuse_blank_kit_text judges a field the caller did not send",
+        KITS,
+        "        if value is not None:\n            refuse_blank_text(value, field)\n",
+        "        refuse_blank_text(value, field)\n",
+        "passes_a_field_not_sent or mcp_kit_tools_take_a_real_value",
+    ),
+    (
+        "380-9. create_kit skips the refusal",
+        KITS,
+        "    await acquire_write_gate(session)\n    refuse_blank_kit_text(data.name, data.grade)\n",
+        "    await acquire_write_gate(session)\n",
+        "create_kit_refuses_a_blank or reimports_as_a_no_op",
+    ),
+    (
+        "380-10. update_kit skips the refusal",
+        KITS,
+        '    refuse_blank_kit_text(fields.get("name"), fields.get("grade"))\n',
+        "",
+        "update_kit_refuses_a_blank or reimports_as_a_no_op",
+    ),
+    (
+        "380-11. spawn_kits skips the refusal",
+        ORD,
+        "    refuse_blank_kit_text(name, grade)\n",
+        "",
+        "create_order_refuses_a_blank_kit_line or rolls_back_the_good_line_beside_it "
+        "or (update_order_refuses_a_blank_kit_line and added)",
+    ),
+    (
+        "380-12. an order edit's restatement skips the refusal",
+        ORD,
+        "            refuse_blank_kit_text(details.name, details.grade)\n",
+        "",
+        "update_order_refuses_a_blank_kit_line and restated",
+    ),
 ]
 
 TEST_FILES = [
@@ -7524,6 +7617,9 @@ TEST_FILES = [
     "tests/test_mcp_schema_errors.py",
     # The #356 set, bar the two cases whose kills are scenarios run above.
     "tests/test_import_text_whitespace.py",
+    # The #380 set: every 380- kill lives here, bar 380-1's and 380-5's catalog
+    # witnesses in test_inventory.py (listed above).
+    "tests/test_kit_blank_text.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
