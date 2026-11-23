@@ -42,6 +42,25 @@ Template:
 
 ---
 
+## 2026-11-23 — Claude Code (Opus 5.5) — v0.7.0-alpha RELEASED (tag `v0.7.0-alpha` at `9189910`, prerelease)
+
+- **Done (each outward step on the owner's approval):**
+  - **Update from v0.6.0-alpha's files → the candidate:** green, 20/20, on testhost (rebuilt by the owner today, Debian 13), in **OIDC mode** behind the reference Caddy: session, PAT, data, applied stock, the same volume; an MCP OAuth grant linked on 0.6.0 refreshed on 0.7.0; a 0.6.0 order took notes, an adjustment and an Other line with no stock or kit movement. Script `.dev/release-0.7.0/update_test.py` (gitignored; reuses the gate driver), procedure in `.agents/releases.md` step 5.
+  - **Deployment gate on the release files:** every phase green — local 179, OIDC 183, tunnel 87 rows, 0 failing; T13 link and three restores. The tunnel phase failed once in the full run (the workstation's temporary IPv6 rotated mid-run) and passed re-run alone; noted in the gate README.
+  - **Tag** `v0.7.0-alpha` (annotated, "what an order cost, and what you paid") → **Promote** [run 45140152736](https://github.com/DeusMaximus/plamotrack/actions/runs/45140152736) → draft checked by hand (files byte-identical to the gated bundle; both version tags resolve anonymously to the gated digests) → notes → **published 2026-11-23 09:01 UTC**. PostgreSQL 16.15 → 16.16 (`3950ad7c…`).
+  - **Network addresses are placeholders in release notes** (owner's rule, now in `.agents/releases.md` step 7). v0.6.0-alpha's published notes were amended the same way, with an amendment line at the top.
+  - **Docs site:** [plamotrack-docs#10](https://github.com/DeusMaximus/plamotrack-docs/pull/10) merged (opened by a session in the plamotrack-docs T3 project): changelog, install version, orders/import/tokens pages, MCP tool reference, retaken `tokens`, `order-form`, `order-edit` screenshots.
+  - **README:** [PR #404](https://github.com/DeusMaximus/plamotrack/pull/404) (install version, the orders paragraph, the typeahead claim fixed after Greptile's P2), auto-merge on green at `80d1fad`.
+  - **`docs/import-export.md`:** [PR #405](https://github.com/DeusMaximus/plamotrack/pull/405) — what #349/#350 owed it (export_version 2, Other lines, `order_adjustments.csv`, the limit), never done in those PRs.
+  - **This commit:** `.agents/next-release.md` emptied (every entry shipped in the tag; nothing user-visible merged after it).
+- **Decisions (owner, 2026-11-23):** OIDC mode for the update's MCP leg; no real-client check this release; placeholders for addresses, including in v0.6.0's notes; PRs open → publish → merge.
+- **State:**
+  - testhost is in the gate's end state (OIDC, mode R, Keycloak up); `/etc/caddy/cloudflare.env` is the owner's file. The gate's secrets are in its state directory under `~/.plamotrack-gate/` on the primary Mac; 0.6.0's run was moved aside with a `.release-0.6.0-end` suffix.
+  - `.dev/release-0.7.0/` holds the bundle checks, gate logs, the release body and v0.6.0's original notes (0600); `.dev/release-bundle` and `.dev/gate-stage` can go.
+  - The owner's LXC is on v0.6.0-alpha; updating it is theirs (back up dump + `.env` first). The release's `plamotrack-gunpla.zip` is current; the personal Gunpla skill refresh is the owner's.
+- **Waiting on the owner:** #405's merge; one manual dispatch of **Base image pins**; #395 (About text); triage of #369–#371, #374, #375, #379, #381–#385, #388–#392, #396, #399, #400, #402.
+- **Next:** per-kit and per-order record pages, designed in Claude Code desktop; then the order-dialog cluster (#369, #382–#385, #392, #400). Owed to plamotrack-ios: #348–#350's fields and scenarios, #356's comparison rule, #380's `field.blank`.
+
 ## 2026-11-23 — Claude Code (Opus 5.5) — orchestrator: the pre-release hardening wave MERGED (#380, #238, #351, #376, #394, #344); version bump PR #403 open; v0.7.0-alpha next
 
 - **Done:**
@@ -96,11 +115,3 @@ Template:
   - No backend change, no migration. Lane 2's Postgres container and volume and the worker's worktree removed by the orchestrator; branch left. Untested: `lists.settings.spec.ts` under WebKit, the iOS Simulator.
 - **Waiting on the owner:** nothing for this PR.
 - **Next:** #394 in lane 2.
-
-## 2026-11-23 — Claude Code (Opus 5.5) — #351 docs drift: PR #393 open (lane 1)
-- **Done:** [PR #393](https://github.com/DeusMaximus/plamotrack/pull/393) (branch `351-docs-drift`, head `06dfd78`) closes #351. All ten audit findings re-checked at `706234c` (README user-facing ones also at `v0.6.0-alpha`) and corrected: README token reach / MCP's two credentials / phone Data management / dev `.env` step / Node 20.19+, 22.12+ or 24+; `docs/import-export.md` export_version vs schema_version; design §2 (no dnd-kit), §4 (auth routes Built), §8, §11/§11.1 (M6 ✅, M6.7 in progress, release files shipped since v0.5.2); `AGENTS.md` release status, dev `.env` step, roadmap 4 and 6.7; `frontend/README.md` replaced; `.env.example` comment names the bundle's `env.example`. The `#351` entry in `.agents/next-release.md` now holds only the docs-site lines.
-  - **Merged:** squash-merged as **`e92b1e2`** at the reviewed head `06dfd78`, with the owner's sign-off; #351 is closed. Reviews: Codex connector at `06dfd78`, no major issues; Greptile 4/5 at `6b9867b`, one P2 (the `PR #PRNUM` placeholder, already fixed at `06dfd78`), answered and resolved. No briefed round (docs only). Checked by the orchestrator by reading: the README's user-facing changes are true of v0.6.0-alpha (phone import shipped with #304 before the tag), no personal detail in the diff. Follow-ups filed: #394 (Settings → Access tokens says neither level can import or export; in this release), #395 (GitHub About text says Kanban; `owner`), #396 (README says `npm install`, not `npm ci`).
-- **Decisions:** README fixes land on `main` now (each true of v0.6.0-alpha). #278 described as shipped, not closed (still open; #285).
-- **State:** docs only, no migration. Clean-clone setup check done on a throwaway container, since removed. Worktree removed by the orchestrator; branch left. **Event subscriptions are off for this GitHub account** (`gh event listen` answers 403), so a delegated worker cannot wait on its PR: it hands back at PR open, and the orchestrator (watching the PR through T3 Code) sends it the reviews.
-- **Waiting on the owner:** #395 (the About text).
-- **Next:** at release, apply the `#351` docs-site lines (`authentication/overview.mdx`, `authentication/access-tokens.mdx`, and the `using/import-export.mdx` wording with #349). #344 rewords the same `AGENTS.md`/design §8 paragraphs.

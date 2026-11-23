@@ -63,7 +63,11 @@ publication and native CI cannot be certified by a local build.
    (2026-10-07). The driver has no phase for it: it was scripted by hand against
    the real API — state built on the old release (a claimed owner, records, a
    token, and a row the new migration changes), then checked after the swap —
-   and its observations are in v0.6.0-alpha's release notes. The
+   and its observations are in v0.6.0-alpha's release notes. The second, v0.6.0 → v0.7.0
+   (2026-11-23), ran in OIDC mode behind the reference Caddy, reusing the driver's
+   `oidc_login`, `mcp_link` and `mcp_verify`, so a real OAuth grant linked on the old
+   release was refreshed on the new one; then it wrote the new release's fields onto an
+   order the old one stored. The
    move from a source checkout was rehearsed for v0.4.1 → v0.5.2 (two variants:
    a new folder with `COMPOSE_PROJECT_NAME`, and the checkout renamed aside with
    a fresh folder of the old name); re-run it when a release adds a migration or
@@ -93,6 +97,10 @@ publication and native CI cannot be certified by a local build.
    the release: an entry's "README: nothing" is a guess made when the change merged,
    and v0.6.0-alpha's said so for the phone import while the feature table still
    called a phone export-only (Codex, PR #339).
+   The gate's results go into the notes as the driver printed them, except network
+   addresses: the workstation, the tunnel connector and the visitor's public address
+   become placeholders (`<workstation>`, `<connector>`, `<visitor IPv6>`; owner,
+   2026-11-23).
    Once the release is published, a docs commit on `main` removes the entries it
    shipped (changes in the tagged commit) and keeps any merged after the tag. Publishing the draft is a separate owner-approved
    action. Alpha releases retain the prerelease flag.

@@ -64,7 +64,10 @@ VISITOR=$(curl -s https://cloudflare.com/cdn-cgi/trace | sed -n 's/^ip=//p')
 … --phase tunnel --tunnel-base https://TUNNEL-NAME --tunnel-proxy <connector IP> \
   --host-ip <host LAN IP> --tunnel-visitor "$VISITOR"
 ```
-(or add those four to `--phase all`).
+(or add those four to `--phase all`). A workstation's temporary IPv6 address can rotate during a
+full run (it did on 2026-11-23, about 40 minutes in): the tunnel phase then fails its
+attribution check against an address nginx no longer sees. Re-run `--phase tunnel` alone
+with the address read fresh; the phase sets everything it needs.
 
 ### Against a release's files
 
