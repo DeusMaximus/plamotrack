@@ -248,7 +248,7 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
-## #376 — a tool's condition notes and a display item's notes keep their lines (PR #TBD)
+## #376 — a tool's condition notes and a display item's notes keep their lines (PR #397)
 - **Release note:** A tool's condition notes and a display item's notes are now edited
   in a box of several lines, as a kit's build notes and an order's notes are. Before,
   they were one-line boxes: a note written with line breaks (through the REST API, an
