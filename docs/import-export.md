@@ -21,10 +21,10 @@ The archive holds one CSV per table plus a `manifest.json`:
 ```json
 {
   "format": "plamotrack-archive",
-  "export_version": 1,
-  "schema_version": "f9979ec7b9cb",
-  "app_version": "0.2.9",
-  "exported_at": "2026-08-29T04:09:31+00:00",
+  "export_version": 2,
+  "schema_version": "b7d4f0a3c915",
+  "app_version": "0.7.0",
+  "exported_at": "2026-11-23T04:09:31+00:00",
   "tables": { "kits": { "file": "kits.csv", "rows": 8 } }
 }
 ```
@@ -43,6 +43,10 @@ each on its own:
 `app_version` and `exported_at` say where the archive came from; neither is checked,
 so an archive from a newer release imports as long as its format is one this instance
 reads. A `format` other than `plamotrack-archive` is a warning too.
+
+Version 2 is the format from 0.7.0 on: it can hold *Other* order lines and the new
+`order_adjustments.csv`. This release imports archives in either format; 0.6.0 and
+earlier refuse a version-2 archive and say to update first.
 
 ---
 
@@ -134,7 +138,8 @@ exactly, so all the internal links survive untouched.
 | Retailers | Name, case-insensitive |
 | Tools / consumables / upgrades / display items | Name, case-insensitive, within that table |
 | Orders | Retailer + order number. No order number? Retailer + date + the set of lines |
-| Order lines | Item, quantity, unit price **and currency**, within their order |
+| Order lines | Item, quantity, unit price **and currency**, within their order. An *Other* line's item is its `description` |
+| Order adjustments | Order + label, case-insensitive. The amount is not part of it, so a corrected amount updates the stored row; two adjustments under one label on one order need ids |
 | Upgrade applications | Upgrade + kit + date applied |
 | **Kits** | **Never matched automatically** — see below |
 
@@ -240,6 +245,27 @@ display lines all need either `catalog_ref_id`, or a name in `catalog_name` — 
 creates the item for you at 0 on hand, with a placeholder in any column it can't
 know (category, manufacturer). A line pointing at nothing can never move stock in either direction, so
 it's refused rather than stored.
+
+**An *Other* line is its description.** An `other` line is something on the order
+the collection doesn't track — a magazine in a mixed basket — so its `description`
+is required, and is all that says what it bought. A line of any other type can't
+carry one. It spawns no kits and moves no stock, so the receipt rules below don't
+apply to it: like a kit line, it can join an order that's already received. A
+`catalog_ref_id` or `catalog_name` written on one is dropped, and the preview says
+so. Its type can't change later, so to start tracking something, remove the line
+and add a kit or catalog line.
+
+**An order's adjustments can't come to more than the order.** The rows of
+`order_adjustments.csv` — discounts, vouchers, gift cards, each a label and a
+positive `amount_minor` in the order's own currency, with `order_id` required —
+may not together exceed the order's lines in that currency plus its shipping.
+That's judged on the order *as it lands*, whichever sheet changed it: a larger
+adjustment, a cheaper or re-priced line in `order_items.csv`, a dropped shipping
+cost or a changed currency in `orders.csv` all reach the same state. The preview
+refuses the adjustment rows the upload writes onto that order, or, when it writes
+none, the order or line rows whose change brought the total under the adjustments
+already stored. A re-imported archive restates what is stored, so it is never asked. Line prices stay what the shop charged;
+what was paid is worked out from the three sheets, never stored.
 
 **A received order with a catalog line can't become pending, and a pending order
 with a catalog line can't be marked received.** This is the one that surprises
