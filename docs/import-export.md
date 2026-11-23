@@ -30,9 +30,19 @@ The archive holds one CSV per table plus a `manifest.json`:
 ```
 
 These values are illustrative; every export writes its live app version, database
-migration revision, timestamp, tables, and row counts. Importing an archive written
-by a **newer** version of plamotrack is refused outright rather than silently
-mangled; a mismatch in the other direction is just a warning.
+migration revision, timestamp, tables, and row counts. An import checks two of them,
+each on its own:
+
+- **`export_version`** is the archive's format. An archive in a **newer** format than
+  this instance reads is refused outright, with a message to update plamotrack first,
+  rather than silently mangled. Archives in this format or an older one import.
+- **`schema_version`** is the database migration the archive was exported from. One
+  that differs from this instance's, in either direction, is a warning in the preview,
+  and the import goes ahead.
+
+`app_version` and `exported_at` say where the archive came from; neither is checked,
+so an archive from a newer release imports as long as its format is one this instance
+reads. A `format` other than `plamotrack-archive` is a warning too.
 
 ---
 
