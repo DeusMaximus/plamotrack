@@ -15,6 +15,7 @@ import type {
   Upgrade,
   UpgradeUpdate,
 } from "../api/types";
+import { DialogLoadFailure } from "../components/DialogLoadFailure";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { FoldToFit } from "../components/FoldToFit";
 import { Measured, TableRuler } from "../components/Measured";
@@ -36,6 +37,7 @@ import {
   Select,
   TABLE_HEAD_ROW_CLASS,
 } from "../components/ui";
+import { useDialogLoadFailure } from "../lib/dialogLoadFailure";
 import { useFormMeta } from "../lib/formMeta";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
@@ -137,7 +139,8 @@ function editedOnly<T extends object>(
  * documents. InventoryPage warms the query, so this loading state is rarely seen —
  * "rarely" being exactly why the bug would survive. And "in flight" includes the
  * refetch after a currency save, which serves the old copy meanwhile: hence
- * `useFormMeta`, not `useQuery(metaQuery)` (#366). */
+ * `useFormMeta`, not `useQuery(metaQuery)` (#366). A `/meta` that failed is said,
+ * with Retry, and the form still waits for it (#238). */
 function ItemFormModal({
   tab,
   item,
@@ -151,18 +154,23 @@ function ItemFormModal({
 }) {
   const { t } = useTranslation();
   // A copy from before a currency save is not one to default from (#366).
-  const meta = useFormMeta();
+  const { meta, error, retry } = useFormMeta();
+  const loadFailure = useDialogLoadFailure([
+    {
+      failure: error && t("dialogLoad.failed.meta", { message: error.message }),
+      retry,
+    },
+  ]);
+  const title = item
+    ? t("inventory.editTitle", { name: item.name })
+    : t("inventory.addTitle", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) });
 
+  if (!meta && loadFailure) {
+    return <DialogLoadFailure title={title} onClose={onClose} failure={loadFailure} />;
+  }
   if (!meta) {
     return (
-      <Modal
-        title={
-          item
-            ? t("inventory.editTitle", { name: item.name })
-            : t("inventory.addTitle", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })
-        }
-        onClose={onClose}
-      >
+      <Modal title={title} onClose={onClose}>
         <EmptyState>{t("common.loading")}</EmptyState>
       </Modal>
     );

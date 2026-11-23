@@ -25,20 +25,39 @@
  *  measurement above. A currency an import changes while a dialog is open is
  *  that dialog's to miss, as a change from any other writer is.
  *
- *  A refetch that fails leaves the form on its loading state, as a first fetch
- *  that fails always has; closing the dialog and opening it again asks again. */
+ *  A fetch that fails, a first one or the refetch after an invalidation, is
+ *  `error` (#238): the caller says so and offers `retry`, and still never mounts
+ *  its form on the copy the invalidation overtook. Only once every attempt has
+ *  failed — while a retry is in flight `error` is null, and the copy still not
+ *  current. */
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { metaQuery } from "../api/client";
 import type { Meta } from "../api/types";
 
-export function useFormMeta(): Meta | undefined {
-  const { data, isStale } = useQuery(metaQuery);
+export interface FormMeta {
+  /** The copy the form may default from, or undefined while there is none. */
+  meta: Meta | undefined;
+  /** Why there is none, once the last fetch has failed; null otherwise. */
+  error: Error | null;
+  /** Ask `/meta` again, under the query's own retry policy. */
+  retry: () => Promise<unknown>;
+}
+
+export function useFormMeta(): FormMeta {
+  const { data, isStale, error, isFetching, refetch } = useQuery(metaQuery);
   const current = isStale ? undefined : data;
   const [kept, keep] = useState<Meta | undefined>(undefined);
   // Set while rendering, which React allows for a component's own state: the
   // latch closes in the same pass that first finds a current copy.
   if (kept === undefined && current !== undefined) keep(current);
-  return kept ?? current;
+  const meta = kept ?? current;
+  return {
+    meta,
+    // A failed refetch keeps the overtaken copy in `data` and the error beside
+    // it; neither makes the copy current.
+    error: meta === undefined && !isFetching ? error : null,
+    retry: refetch,
+  };
 }

@@ -235,3 +235,15 @@ Shape:
   before.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #238 — an order or inventory dialog says what failed to load, with Retry, instead of Loading… forever (PR #387)
+- **Release note:** When something the order dialog needs could not be loaded (the
+  list of tools, consumables, upgrades or display items it names an order's lines
+  from, or the instance's reference currency), the dialog stayed on Loading… with no
+  way forward but Cancel. It now says what could not be loaded, with Retry, which
+  asks again for just that; the form opens once everything it needs is in. The tool,
+  consumable, upgrade and display item dialogs on the Inventory page do the same
+  when the reference currency fails to load. The form never opens without it, so
+  nothing is saved from blanks or an out-of-date currency.
+- **README:** nothing.
+- **Docs site:** nothing.

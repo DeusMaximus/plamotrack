@@ -136,6 +136,9 @@ export interface DialogAction {
   label: string;
   onClick?: () => void | Promise<void>;
   disabled?: boolean;
+  /** Waiting on its own request: `Button`'s `pending`, which keeps the keyboard
+   *  where `disabled` would drop it (#268). */
+  pending?: boolean;
   form?: string;
 }
 
@@ -179,6 +182,7 @@ function ActionButton({
       form={action.form}
       variant={variant}
       disabled={action.disabled}
+      pending={action.pending}
       onClick={action.onClick}
       data-focus-key={focusKey}
       className={className}
