@@ -25,7 +25,8 @@ VERSION = (
 IMAGES = {
     "api": release.IMAGE_PREFIX + "api@sha256:" + "1" * 64,
     "web": release.IMAGE_PREFIX + "web@sha256:" + "2" * 64,
-    "db": "postgres@sha256:" + "3" * 64,
+    # Not a value of the test's own: the bundle ships the repository's pin (#344).
+    "db": release.db_pin()[1],
 }
 
 

@@ -9,7 +9,17 @@ publication and native CI cannot be certified by a local build.
 
 ## Candidate, then promotion
 
-1. Complete the version bump and ordinary PR review. The application, pyproject
+1. **Bring the base-image pins current first** (#344): from the repository root,
+   `python3 backend/base_image_pins.py`. It asks each registry which index every
+   pinned tag names now and exits 1 if any pin is behind. If one is, run it again
+   with `--update` on a branch and land the diff as an ordinary reviewed PR before
+   the release commit: that PR's CI builds both images and runs every suite on the
+   new bases, which is the evidence the bump needs. The candidate builds from the
+   pins as committed, and its bundle ships the PostgreSQL pin exactly as
+   `docker-compose.yml` writes it, so nothing resolves a tag on release day. The
+   check cannot see a tag that has stopped moving (an upstream line that reached its
+   end): moving to a new tag is a change of its own, reviewed like any other.
+   Then complete the version bump and ordinary PR review. The application, pyproject
    and lockfile versions must agree; `vX.Y.Z-alpha[.N]` is the release spelling.
 2. With the owner's explicit permission for registry publication, dispatch
    **Release candidate** on the exact release commit, giving that version. It
@@ -26,7 +36,8 @@ publication and native CI cannot be certified by a local build.
    Compose bundle and the recorded digests with `--no-build`, run migrations from
    an empty volume, check running image identities and run the existing
    authenticated ingress/MCP/log checks. PostgreSQL is pinned to one multi-platform
-   digest, too. A successful pull alone never passes the gate.
+   digest, too: the repository's own pin, the one source CI has been running. A
+   successful pull alone never passes the gate.
    **Two runner behaviours, observed on the first candidate (run 35789572692):**
    the absolute bundle `COMPOSE_FILE` written to `GITHUB_ENV` did override the
    job-level source-build value — the pull/start step's environment shows the

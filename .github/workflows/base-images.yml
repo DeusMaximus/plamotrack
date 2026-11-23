@@ -1,0 +1,31 @@
+name: Base image pins
+
+# Every base image a source build or CI pulls is pinned by digest (#344), so it
+# gets no upstream fix until its pin moves. This run is the alert: it asks each
+# registry which index the pinned tag names now and fails when any pin is behind.
+# A red run is answered by `python3 backend/base_image_pins.py --update` on a
+# branch and an ordinary reviewed PR, whose CI builds from the new pins. It never
+# writes to the repository itself, and it is not a required check: an upstream
+# release must not turn an unrelated pull request red.
+on:
+  schedule:
+    - cron: "23 4 * * 1" # Mondays, 04:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Base image pins
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Standard library only: the runner's Python is enough.
+      - name: Compare every pin with its tag
+        run: python3 backend/base_image_pins.py

@@ -54,11 +54,13 @@ jobs:
         run: |
           API=$(jq -r '."containerimage.digest"' .dev/image-metadata/api.json)
           WEB=$(jq -r '."containerimage.digest"' .dev/image-metadata/web.json)
-          DB=$(docker buildx imagetools inspect postgres:16 --format '{{json .Manifest.Digest}}' | jq -r .)
+          # PostgreSQL is the repository's pin, read from docker-compose.yml by the
+          # bundle step — the digest CI tested this commit with, never the tag's
+          # digest on release day (#344).
           python3 backend/release_artifacts.py bundle --out .dev/release-bundle \
             --version "$VERSION" --revision "$GITHUB_SHA" \
             --api "ghcr.io/deusmaximus/plamotrack-api@$API" \
-            --web "ghcr.io/deusmaximus/plamotrack-web@$WEB" --db "postgres@$DB"
+            --web "ghcr.io/deusmaximus/plamotrack-web@$WEB"
           python3 backend/release_artifacts.py verify .dev/release-bundle
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

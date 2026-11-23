@@ -2380,7 +2380,7 @@ services:
   web:      # nginx: static Vite build; /api and /mcp proxied to api
   api:      # FastAPI + FastMCP, one process, one port (REST at /, MCP at /mcp)
   migrate:  # alembic upgrade head, then exits — a gate, not a service
-  db:       # postgres:16
+  db:       # postgres:16, pinned by digest
   # photo storage: local named volume by default;
   # optional S3-compatible (MinIO or external) via env var, not required for v1
 ```
@@ -2393,7 +2393,7 @@ release-bundle empty-instance path, and it exits non-zero if anything fails to c
 **Release packaging (#278)** separates the build from promotion. The candidate
 workflow builds API and web once for linux/amd64 and linux/arm64, records their
 multi-platform digests and the source commit, and generates a pull-only Compose
-bundle with the PostgreSQL digest pinned too. Native runners exercise those same
+bundle with PostgreSQL at the repository's own digest pin, the one source CI runs. Native runners exercise those same
 artifacts through CI, including fresh migrations and the packaged ingress/MCP
 matrix, with no registry credentials. Promotion copies the tested manifests to
 explicit version tags and attaches the unchanged bundle and skill ZIP to a draft
@@ -2414,6 +2414,19 @@ them is the supported path. A source checkout still needs the build override and
 `--build`; the repository's `.env.example` selects the override through `COMPOSE_FILE`.
 Published images avoid the historical LXC build path; its failure's cause remains
 unestablished. The release runbook is `.agents/releases.md`.
+
+**Base images are pinned by digest (#344).** A tag that moves upstream changes what
+the same source builds without any commit here, so every base image a source build or
+CI pulls is named `tag@sha256:<index digest>`, and the same commit always builds from
+the same bases. The cost is that a pinned base takes no upstream fix until its pin
+moves, so a weekly check (`backend/base_image_pins.py`, the **Base image pins**
+workflow) compares each pin with its tag and fails when one is behind, and the bump
+is an ordinary reviewed PR. A pin-check script rather than Dependabot was the owner's
+choice (2026-11-23): Dependabot's `docker` ecosystem reads `FROM` lines, but nothing
+confirmed it would read `COPY --from=`, an image inside `${PLAMOTRACK_DB_IMAGE:-…}`
+or a workflow's service image, and one script that knows every place is simpler to
+trust. Releases were already digest-pinned; this makes a source build reproducible
+too, for CI and for contributors.
 
 **Migrations are their own container**, gating the API through
 `service_completed_successfully`. Running them from the API's entrypoint would turn a
