@@ -8,3 +8,13 @@ const LINE_BREAK = /\r\n|[\r\n]/g;
 export function oneLine(value: string): string {
   return value.replace(LINE_BREAK, " ");
 }
+
+/** `value` as a `<textarea>` holds it (#376): each line break `\n`. A textarea's
+ *  value normalises CRLF and a lone CR to LF, so a stored `\r\n` loaded into a
+ *  form as it is would differ from its own box, and a box that was only
+ *  clicked into would read to react-hook-form as an edit. A form's opening
+ *  value for a textarea goes through this, and an untouched note is left as
+ *  it is stored. */
+export function asTextareaValue(value: string): string {
+  return value.replace(LINE_BREAK, "\n");
+}

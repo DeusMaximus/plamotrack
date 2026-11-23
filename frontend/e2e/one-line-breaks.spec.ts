@@ -14,7 +14,8 @@
  *  Each break is driven as `\n` and as `\r\n`, one dialog of each kind: the
  *  order dialog (a kit line's name, an Other line's description, the order
  *  number), the kit dialog (name, series), the retailer dialog (name) and the
- *  catalog dialog (a tool's name and condition notes). The rows are seeded
+ *  catalog dialog (a tool's name; its condition notes are notes, a textarea
+ *  that shows the break since #376, `multiline-notes.spec.ts`). The rows are seeded
  *  through REST — the browser cannot write a break — and removed after.
  *
  *  Each display check is soft, so a run against the unfixed dialogs still
@@ -226,7 +227,7 @@ for (const { label, br } of BREAKS) {
         .click();
       const dialog = page.getByRole("dialog");
       await expect.soft(dialog.getByLabel("Name")).toHaveValue(`E2E Break Nippers ${tag} single blade`);
-      await expect.soft(dialog.getByLabel("Condition notes")).toHaveValue("Blade chipped still cuts");
+      await expect.soft(dialog.getByLabel("Condition notes")).toHaveValue("Blade chipped\nstill cuts");
       await typeAtEnd(page, dialog.getByLabel("Name"), "!");
       await dialog.getByRole("button", { name: "Save", exact: true }).click();
       await expect(dialog).toBeHidden();
