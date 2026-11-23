@@ -940,7 +940,7 @@
       "scopeLabel": "Access",
       "scopeRead": "Read-only — list and look up, nothing changes",
       "scopeWrite": "Read and write — add kits, record orders, adjust stock",
-      "scopeNote": "Neither level can change settings, import, export or manage tokens — those stay with the owner login.",
+      "scopeNote": "Over the REST API a read-only token can download every export, and a read-and-write token can also import in Merge or Add only mode. Changing settings, managing tokens, Replace everything, and any import that would change a setting stay with the owner login.",
       "expiryLabel": "Expires",
       "expiryNever": "Never",
       "expiryDays_one": "In {{countDisplay}} day",
