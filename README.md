@@ -130,9 +130,9 @@ Each carries a category and an optional scale, so "1/144 bases" is a question wi
 answer. It's also the least Gunpla-specific thing here: a model-railway or 1/35 armour
 collection fills that table with exactly the same shape of thing.
 
-Adding a kit or a catalog item to an order uses a search-and-pick typeahead, never a
-free text box (only an *Other* line takes a description, because nothing is counted
-against it). This is deliberate: give a naming-things-at-11pm hobbyist a text field and within a month
+Adding a tool, consumable, upgrade or display item to an order uses a search-and-pick
+typeahead, never a free text box. (A kit line takes the kit's own details, and an *Other*
+line a description, since nothing is counted against it.) This is deliberate: give a naming-things-at-11pm hobbyist a text field and within a month
 you'll own "GM02 Gundam Marker", "Gundam Marker GM02", and three units of stock split
 between them.
 
