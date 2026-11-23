@@ -103,6 +103,12 @@ Both dates backdate — you log the box when you find the time, not when it land
 and completed builds carry start/finish dates, a rating, and a series you name
 yourself, so "everything Iron-Blooded Orphans" is a filter, not an archaeology dig.
 
+And they know what you actually paid. A discount code, a voucher or a gift card goes in
+as an adjustment, so each line stays at what the shop charged and the order's total is
+what left your account. The magazine that rode along in the same box is an *Other* line:
+it counts toward the total and stays out of your collection. Anything else the order
+should remember — a substitution, a partial refund — goes in its notes.
+
 ![Orders, with one expanded to show its lines](docs/screenshots/orders.png)
 
 If you look closely at the inventory below, Mr. Color Thinner sits at **0 on hand** —
@@ -124,8 +130,9 @@ Each carries a category and an optional scale, so "1/144 bases" is a question wi
 answer. It's also the least Gunpla-specific thing here: a model-railway or 1/35 armour
 collection fills that table with exactly the same shape of thing.
 
-Adding items to an order uses a search-and-pick typeahead, never a free text box. This
-is deliberate: give a naming-things-at-11pm hobbyist a text field and within a month
+Adding a kit or a catalog item to an order uses a search-and-pick typeahead, never a
+free text box (only an *Other* line takes a description, because nothing is counted
+against it). This is deliberate: give a naming-things-at-11pm hobbyist a text field and within a month
 you'll own "GM02 Gundam Marker", "Gundam Marker GM02", and three units of stock split
 between them.
 
@@ -212,14 +219,14 @@ it, with the tested images pinned by digest for both `linux/amd64` and `linux/ar
 
 ```bash
 mkdir plamotrack && cd plamotrack
-for f in docker-compose.yml env.example plamotrack-gunpla.zip release.json SHA256SUMS; do curl -fsSLO "https://github.com/DeusMaximus/plamotrack/releases/download/v0.6.0-alpha/$f"; done
+for f in docker-compose.yml env.example plamotrack-gunpla.zip release.json SHA256SUMS; do curl -fsSLO "https://github.com/DeusMaximus/plamotrack/releases/download/v0.7.0-alpha/$f"; done
 sha256sum -c SHA256SUMS          # on macOS: shasum -a 256 -c SHA256SUMS
 cp env.example .env
 # open .env, replace change-me with a real password
 docker compose up -d --no-build --wait
 ```
 
-That's v0.6.0-alpha, the newest release when this was written; the
+That's v0.7.0-alpha, the newest release when this was written; the
 [releases page](https://github.com/DeusMaximus/plamotrack/releases) has anything newer.
 There is no `latest` tag: updating means choosing the next version on purpose, in the
 same folder ([Updating](https://docs.gunp.la/configuration/upgrading)). Keep the folder
