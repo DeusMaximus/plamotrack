@@ -275,7 +275,12 @@ deliberately not a required check — and as the release runbook's first step.
 PostgreSQL is **one pin**: `ci.yml` repeats the Compose default
 (`tests/test_base_image_pins.py` holds the two equal), and `release_artifacts.py
 bundle` reads it for the release instead of resolving `postgres:16` on release day.
-A new image reference without a digest fails the same test.
+The same test fails on a new image reference without a digest, in the forms the
+script reads: a Dockerfile's single-line `# syntax=`, `FROM` and `COPY --from=`, the
+base Compose file's `image:` lines, and a workflow's single-line `image:`. It does not
+yet refuse a form it doesn't read — a continued Dockerfile line, the Compose overlays,
+a scalar workflow `container:`, a `${{ … }}` expression — so check those by hand until
+#402 lands.
 
 **User-facing docs describe the published release, never `main`** (owner's rule,
 2026-09-25). The docs site (`DeusMaximus/plamotrack-docs` → https://docs.gunp.la) and
