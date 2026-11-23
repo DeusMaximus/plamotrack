@@ -53,6 +53,24 @@ def image_ref(component: str, value: str) -> str:
     return value
 
 
+# The repository's one PostgreSQL pin (#344): the Compose default, which CI's service
+# image repeats (tests/test_base_image_pins.py) and base_image_pins.py bumps. A release
+# ships exactly that digest, so the bundle never resolves a tag of its own on release day.
+DB_DEFAULT = re.compile(r"\$\{PLAMOTRACK_DB_IMAGE:-(postgres:[^@}\s]+@(sha256:[0-9a-f]{64}))\}")
+
+
+def db_pin(root: Path = ROOT) -> tuple[str, str]:
+    """The Compose default as written, and the release's spelling of it (no tag)."""
+    found = DB_DEFAULT.findall((root / "docker-compose.yml").read_text())
+    if len(found) != 1:
+        raise ValueError(
+            "docker-compose.yml must pin PostgreSQL once, as "
+            "${PLAMOTRACK_DB_IMAGE:-postgres:<tag>@sha256:<digest>}"
+        )
+    written, digest = found[0]
+    return written, "postgres@" + digest
+
+
 def checksum(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -61,7 +79,10 @@ def bundle(
     out: Path, version: str, revision: str, images: dict[str, str], root: Path = ROOT
 ) -> dict:
     validate_version(version, revision, root)
-    images = {key: image_ref(key, images[key]) for key in ("api", "web", "db")}
+    pinned, db = db_pin(root)
+    if images.get("db", db) != db:
+        raise ValueError(f"db must be the repository's PostgreSQL pin, {db}")
+    images = {**{key: image_ref(key, images[key]) for key in ("api", "web")}, "db": db}
     # Refuse to mix files from two candidates on a rerun.
     out.mkdir(parents=True, exist_ok=True)
     if any(out.iterdir()):
@@ -70,7 +91,7 @@ def bundle(
     for key, fallback in (
         ("api", IMAGE_PREFIX + "api:unreleased"),
         ("web", IMAGE_PREFIX + "web:unreleased"),
-        ("db", "postgres:16"),
+        ("db", pinned),
     ):
         marker = "${PLAMOTRACK_" + key.upper() + "_IMAGE:-" + fallback + "}"
         if compose.count(marker) != (2 if key == "api" else 1):
@@ -202,7 +223,8 @@ def main() -> None:
     build.add_argument("--out", type=Path, required=True)
     build.add_argument("--version", required=True)
     build.add_argument("--revision", required=True)
-    for component in ("api", "web", "db"):
+    # No --db: the bundle's PostgreSQL is the repository's pin (db_pin).
+    for component in ("api", "web"):
         build.add_argument("--" + component, required=True)
     check = sub.add_parser("verify")
     check.add_argument("directory", type=Path)
@@ -218,7 +240,7 @@ def main() -> None:
             args.out,
             args.version,
             args.revision,
-            {key: getattr(args, key) for key in ("api", "web", "db")},
+            {key: getattr(args, key) for key in ("api", "web")},
         )
     elif args.command == "verify":
         verify(args.directory)

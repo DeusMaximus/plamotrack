@@ -264,6 +264,19 @@ override below: `.env.example` selects it through `COMPOSE_FILE`, and an `.env` 
 v0.5.0-alpha or earlier needs those two lines added before its next `up`, or Compose
 pulls the never-published `:unreleased` image and stops with `denied`.
 
+**Base images are pinned by digest (#344)** — every image a source build or CI pulls
+by name is written `name:tag@sha256:<index digest>`: the Dockerfiles' `# syntax=`,
+`FROM` and `COPY --from=` lines, the Compose default for PostgreSQL, and `ci.yml`'s
+service image. The digest decides what is pulled; the tag is the line a bump follows.
+`backend/base_image_pins.py` lists every pin, reports the ones behind their tag, and
+rewrites them with `--update`; a bump is an ordinary reviewed PR, whose CI is the
+evidence. It runs weekly as the **Base image pins** workflow — a red run is the alert,
+deliberately not a required check — and as the release runbook's first step.
+PostgreSQL is **one pin**: `ci.yml` repeats the Compose default
+(`tests/test_base_image_pins.py` holds the two equal), and `release_artifacts.py
+bundle` reads it for the release instead of resolving `postgres:16` on release day.
+A new image reference without a digest fails the same test.
+
 **User-facing docs describe the published release, never `main`** (owner's rule,
 2026-09-25). The docs site (`DeusMaximus/plamotrack-docs` → https://docs.gunp.la) and
 the README's user-facing parts — what plamotrack is and does, installing, the MCP tool
