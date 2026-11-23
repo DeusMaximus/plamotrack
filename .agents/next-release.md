@@ -89,7 +89,7 @@ Shape:
   "What an import can't do to an order", the limit: judged on the order as it lands,
   whichever of the three sheets changed it.
 
-## #351 — documentation drift reconciled in this repository (PR #PRNUM)
+## #351 — documentation drift reconciled in this repository (PR #393)
 - **Release note:** none. The corrections are documentation only, and the README's
   user-facing ones (access-token reach, the MCP endpoint's two credentials, the phone's
   Data management) are already true of v0.6.0-alpha, so they landed on `main` with the PR.
