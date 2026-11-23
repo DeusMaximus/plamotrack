@@ -264,7 +264,7 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
-## #394 — Settings → Access tokens says what each token level can import and export (PR #PRNUM)
+## #394 — Settings → Access tokens says what each token level can import and export (PR #401)
 - **Release note:** The note under the Access picker in Settings → Access tokens said
   that neither token level could import or export. Over the REST API a read-only token
   can download every export, and a read-and-write token can also import in *Merge* or
