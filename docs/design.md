@@ -122,9 +122,12 @@ else's UI. This is the same app, owned outright.
   `busy_timeout` tuning — a well-trodden source of pain. plamotrack has three concurrent
   writer types by design (web UI, REST clients, MCP agents), so Postgres is the boring
   correct answer. It costs one more container in the compose file; worth it.
-- ✅ **Frontend: React + Vite**, to be served as a static build behind a lightweight
-  nginx container (M5). Kanban via `dnd-kit` — maintained, accessible, no jQuery-era
-  baggage.
+- ✅ **Frontend: React + Vite**, served as a static build by the `web` nginx container
+  (M5, §8). Home shows the pipeline (§13.2); in the interface a status changes through
+  the kit and order dialogs, and there is no drag-and-drop.
+  *(Revised 10/09/2026, #233: the original sketch had a Kanban board on `dnd-kit`, built
+  in M4. Home replaced it, `/board` redirects to `/`, and `dnd-kit` is no longer a
+  dependency.)*
 
 ---
 
@@ -725,18 +728,21 @@ Standard CRUD plus a few purpose-built endpoints.
   updates only the supplied fields, refuses nulls (nothing is nullable), and
   serializes on the write gate
 - `GET /meta` — app version, reference currency, and the interface languages this
-  build supports; shared with the MCP `get_meta` tool
+  build supports; shared with the MCP `get_meta` tool. Behind `collection:read` since
+  M6, as are `/openapi.json` and the docs pages (§5.5 families 4 and 11)
+- `GET /auth/session`, `POST /auth/setup` and `POST /auth/login` (local mode),
+  `POST /auth/oidc/start` and `GET /auth/oidc/callback` (OIDC mode), `POST /auth/logout`
+  — the owner's browser session, §5.5 families 2–3 (M6, #188, #191)
+- `GET/POST /auth/tokens`, `DELETE /auth/tokens/{id}` — personal access tokens, the
+  owner's session only, so a token cannot mint a token (§5.5 family 6, #189)
 - `GET /healthz` — process liveness; `GET /readyz` — readiness including a database
-  query (the Compose healthcheck)
+  query (the Compose healthcheck), answered only to a loopback peer inside the API's own
+  network namespace; `/api/readyz` is a 404 at the ingress (§5.5 family 10)
 
 **Planned 🔨**
 - `GET /kits/{id}/photos`, `POST /kits/{id}/photos` (multipart upload) — **M7**, blocked
   on the §9.2 storage decision. Not implemented; the `kit_photos` table exists but
   nothing writes to it
-- `GET /auth/session`, `POST /auth/setup`, `POST /auth/login`, `POST /auth/logout`,
-  `/auth/oidc/*`, `/auth/tokens*` — **M6**, the route families in §5.5. The same
-  milestone moves `GET /meta`, `/openapi.json` and the docs pages behind
-  `collection:read` and hides `/readyz` from the ingress. Not implemented
 - `GET /public/kits`, `GET /public/kits/{id}` — **M8**, read-only, no auth, powers the
   showcase page (§5). Not implemented; there is currently no `/public/*` namespace at all
 
@@ -2399,10 +2405,13 @@ channel ships, and supported installation guidance selects an explicit version.
 
 Source development/review uses `docker-compose.build.yml`: local image names and
 `pull_policy: build` cannot silently substitute a registry release. Source-mode
-CI and the deployment harness opt in explicitly. The repository's pull-only base
-has an unpublished placeholder until given image references; the downloadable
-Compose file contains literal digests. Until the first packaged release is
-published, source installation requires the build override and `--build`.
+CI and the deployment harness opt in explicitly. The repository's `docker-compose.yml`
+is the pull-only base, with an unpublished `:unreleased` placeholder where the
+application images go; each release's downloadable Compose file has the tested
+digests written in, PostgreSQL's included. Every release since v0.5.2-alpha
+(23/09/2026), the first published with these files, carries them, and installing from
+them is the supported path. A source checkout still needs the build override and
+`--build`; the repository's `.env.example` selects the override through `COMPOSE_FILE`.
 Published images avoid the historical LXC build path; its failure's cause remains
 unestablished. The release runbook is `.agents/releases.md`.
 
@@ -2551,7 +2560,7 @@ Unchanged from the original plan:
 2. ✅ MCP tools wired to the same service layer
 3. ✅ Frontend: table views + basic forms *(grew into the full order lifecycle and CRUD
    along the way — §3.9)*
-4. ✅ Kanban board (drag-and-drop)
+4. ✅ Kanban board (drag-and-drop) — replaced by Home in M6.5 (§13.2)
 5. ✅ **4.5** Import/export — CSV archive + manifest, preview, templates (§12), inserted
    ahead of the rest to make a public alpha honest (§10)
 6. → **Public alpha here.** Everything below happens in the open.
@@ -2566,11 +2575,11 @@ Unchanged from the original plan:
    instance-wide preferences, `en-AU` source catalogue and fallback, reviewed language
    contributions, locale-aware presentation, a Settings page that absorbs Data, and
    structured REST/import diagnostics. No non-English translation is required
-9. 🔨 **M6 — Secure remote access:** single-owner browser authentication, scoped
+9. ✅ **M6 — Secure remote access:** single-owner browser authentication, scoped
    REST/MCP bearer tokens, OAuth-compatible MCP access, and a tested TLS/VPS deployment
    path. This is the gate for deliberately exposing an instance. The threat model and
    route authorization matrix are in §5 (02/09/2026, #29); the implementation split
-   is §5.9
+   is §5.9 (v0.3.0-alpha, 08/09/2026)
 10. ✅ **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
     generation and `2026-07-28`, with conformance and real-client coverage (§7.1;
     `m6.1-fastmcp4` = #241–#244, v0.4.1-alpha, 15/09/2026)
@@ -2590,8 +2599,9 @@ Unchanged from the original plan:
     sheet and the table folds; dialogs as sheets; Home, Settings and the sign-in
     screens, and the phone shell under a large browser font — built 17–20/09/2026,
     v0.5.0-alpha
-13. **M6.7 — Easy hosted deployment and public sandbox (planned, 20/09/2026):**
-    public versioned images and release assets, one recommended platform template,
+13. **M6.7 — Easy hosted deployment and public sandbox (planned 20/09/2026, in
+    progress):** public versioned images and release assets (shipped since
+    v0.5.2-alpha, 23/09/2026), one recommended platform template,
     one portable VPS path, a Pocket ID compatibility investigation, guided first
     run and assistant connection, and tested updates/backups/recovery. A separate
     public sandbox allows real collection editing against invented data reset
@@ -2619,10 +2629,11 @@ backdatable receipt and ship dates, build dates and series, retailer matching, t
 corruption path nor coupled to the workflow work. **No v0.2.6 tag exists and none
 will:** most of the 0.2.7 work merged first, so a separate v0.2.6 release would have
 been fiction, and the two milestones shipped together as the single **v0.2.7-alpha**
-(owner's call, 21/08/2026). M5.1 followed them and is itself complete; the open work
-now starts at M6. This paragraph is history — the live issue list is on GitHub.
+(owner's call, 21/08/2026). M5.1 followed them and is itself complete, as are M6 to
+M6.6; the open work is M6.7 onwards. This paragraph is history — the live issue list is
+on GitHub.
 
-### 11.1 M6.7 — Easy hosted deployment and public sandbox (planned, 20/09/2026)
+### 11.1 M6.7 — Easy hosted deployment and public sandbox (planned 20/09/2026, in progress)
 
 The intended owner is a Gunpla builder who wants an instance reachable from the
 internet and can pay a hosting provider for it. They should be able to follow a
@@ -2635,7 +2646,7 @@ The [milestone](https://github.com/DeusMaximus/plamotrack/milestone/18) has ten 
 
 | Issue | Deliverable | Sequencing |
 |---|---|---|
-| [#278](https://github.com/DeusMaximus/plamotrack/issues/278) | Versioned public images, release files and skill ZIP | Start first; gate the distributed artifacts |
+| [#278](https://github.com/DeusMaximus/plamotrack/issues/278) | Versioned public images, release files and skill ZIP | Shipped: every release since v0.5.2-alpha (23/09/2026) carries them; the existing-install transition is exercised with #285 |
 | [#279](https://github.com/DeusMaximus/plamotrack/issues/279) | Select one supported quick-deploy platform through a working deployment | Investigate alongside packaging |
 | [#280](https://github.com/DeusMaximus/plamotrack/issues/280) | Verify Pocket ID for browser login, assistant OAuth and recovery | Decided 25/09/2026: an optional supported provider |
 | [#281](https://github.com/DeusMaximus/plamotrack/issues/281) | Recommended platform template | Uses #278 and the #279/#280 decisions |

@@ -89,21 +89,25 @@ Shape:
   "What an import can't do to an order", the limit: judged on the order as it lands,
   whichever of the three sheets changed it.
 
-## #351 — reconcile documentation drift (pending next-release task)
-- [ ] Complete [#351](https://github.com/DeusMaximus/plamotrack/issues/351) during
-  the next release cycle, including the smaller Kanban and frontend README items.
-  The issue records ten findings, source links pinned to `9908d5f`, verification,
-  and completion criteria. This is pending work, not a shipped correction.
-- **Release note:** none required for this documentation-only task.
-- **README:** correct token permissions and MCP OAuth wording, phone import and
-  starter-sheet support, source-development `.env` setup, and the Node version floor.
-- **Docs site:** check the corresponding token, phone-import, archive-compatibility
-  and release-installation claims; correct confirmed duplicates. The audit covered
-  this repository, not a full audit of the separate docs site.
-- **Other docs:** correct the archive-version explanation in `docs/import-export.md`,
-  implemented-authentication and Kanban claims in `docs/design.md`, release-status
-  and source-build wording in `AGENTS.md` and `docs/design.md`, and replace the
-  generic `frontend/README.md` with a short project-specific orientation.
+## #351 — documentation drift reconciled in this repository (PR #PRNUM)
+- **Release note:** none. The corrections are documentation only, and the README's
+  user-facing ones (access-token reach, the MCP endpoint's two credentials, the phone's
+  Data management) are already true of v0.6.0-alpha, so they landed on `main` with the PR.
+- **README:** nothing left.
+- **Docs site:** checked at `plamotrack-docs` `11561d3` against v0.6.0-alpha for the
+  token, phone-import, archive-compatibility and release-installation claims. The
+  pages not named here are right; the PR body has the page-by-page list.
+  - `authentication/overview.mdx`: the opening paragraph says AI assistants (Claude,
+    ChatGPT) use personal access tokens. In OIDC mode the web assistants sign in through
+    OAuth instead, as the page's own table and `mcp/overview.mdx` say. One sentence.
+  - `authentication/access-tokens.mdx`, "What a token can't do": beside *Run a
+    replace-all import*, say that an import in any mode that would change an instance
+    setting needs the owner login too. *Change instance settings* covers it only by
+    implication.
+  - `using/import-export.mdx`: nothing for v0.6.0-alpha, which states no compatibility
+    rule. When #349's entry adds the archive's version there, word it as
+    `docs/import-export.md` now does: a newer `export_version` is refused, a different
+    `schema_version` is a warning, and `app_version` is not checked.
 
 ## #333 — a sign-out that fails says so, and the page keeps working (PR #340)
 - **Release note:** If signing out fails (the server errors or the connection

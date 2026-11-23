@@ -257,12 +257,12 @@ Registry writes, tags and release publication still require the owner's explicit
 instruction. Release asset names must survive GitHub's upload, which renames a
 leading or trailing period — the template ships as `env.example` for that reason.
 v0.5.1-alpha was tagged and promoted but never published (its `.env.example` reached
-the draft as `default.env.example`); v0.5.2-alpha is the first release meant to
-carry these assets, and until it is published none does. A source checkout always
-uses the build override below: `.env.example` selects it through `COMPOSE_FILE`, and
-an `.env` from v0.5.0-alpha or earlier needs those two lines added before its next
-`up`, or Compose pulls the never-published `:unreleased` image and stops with
-`denied`.
+the draft as `default.env.example`). v0.5.2-alpha (2026-09-23) was the first published
+release to carry these assets, and every release since carries them: a release
+install runs the digests its bundle names. A source checkout always uses the build
+override below: `.env.example` selects it through `COMPOSE_FILE`, and an `.env` from
+v0.5.0-alpha or earlier needs those two lines added before its next `up`, or Compose
+pulls the never-published `:unreleased` image and stops with `denied`.
 
 **User-facing docs describe the published release, never `main`** (owner's rule,
 2026-09-25). The docs site (`DeusMaximus/plamotrack-docs` → https://docs.gunp.la) and
@@ -285,6 +285,7 @@ development, run **only** the db service and the app from source — the contain
 stack has no hot reload, and both want port 5432:
 
 ```bash
+cp .env.example .env   # a fresh clone only: then set POSTGRES_PASSWORD in it
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
 ```
 
@@ -886,7 +887,8 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
 1. ~~Schema + migrations + REST CRUD~~ ✅
 2. ~~MCP tools on the shared service layer~~ ✅
 3. ~~Frontend: table views + basic forms~~ ✅
-4. ~~Kanban board (drag-and-drop, dnd-kit)~~ ✅
+4. ~~Kanban board (drag-and-drop, dnd-kit)~~ ✅ — replaced by Home in M6.5 (§13.2);
+   `dnd-kit` is gone
 4.5. ~~Import/export: CSV archive + manifest, preview, templates~~ ✅ (§12)
 → **Public alpha ships here.** Everything below is built in the open.
 5. ~~Installability: full local Docker Compose stack, safe loopback defaults,
@@ -913,17 +915,18 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      install, #258 list pages and table folds, #259 sheet dialogs, #260 Home,
      Settings, sign-in, the full phone e2e, the phone screenshots and the release~~ ✅
      (v0.5.0-alpha)
-6.7. Easy hosted deployment and public sandbox — **planned**, issues #278–#287
+6.7. Easy hosted deployment and public sandbox — **in progress**, issues #278–#287
      ([milestone](https://github.com/DeusMaximus/plamotrack/milestone/18), design
-     §11.1): public versioned images and release assets; one recommended platform
-     template and one portable VPS path; Pocket ID compatibility investigation;
-     guided claiming, assistant connection, updates, backups and recovery. A
-     separate editable public sandbox uses invented data and resets daily, with
-     no MCP, credentials or administrative mutations. Start with #278–#280;
-     the hosting platform remains a decision to verify. Pocket ID is decided
-     (#280, 2026-09-25): an optional supported provider, documented from the
-     release that ships #294; whether a template bundles it is #281's call. Pulls
-     release packaging and the supported deployment guides forward from M9.
+     §11.1). **Shipped:** public versioned images and release assets (#278, every
+     release since v0.5.2-alpha; its existing-install leg is #285's), and Pocket ID
+     as an optional supported provider (#280, decided 2026-09-25; documented from
+     v0.6.0-alpha, which ships #294). **Planned:** one recommended platform
+     template and one portable VPS path; guided claiming, assistant connection,
+     updates, backups and recovery. A separate editable public sandbox uses
+     invented data and resets daily, with no MCP, credentials or administrative
+     mutations. The hosting platform (#279) remains a decision to verify; whether a
+     template bundles Pocket ID is #281's call. Pulls release packaging and the
+     supported deployment guides forward from M9.
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
 9. Open-source operations: contribution guide and the broader compatibility/support

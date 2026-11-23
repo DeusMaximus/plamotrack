@@ -80,10 +80,11 @@ desktop it always was.
 Add it to your home screen — Safari's share menu, or *Install* in Chrome's menu on
 Android — and it opens in its own window with its own icon, still signed in. It is
 still a web page talking to your server: there is no offline mode, and your collection
-is never stored on the phone — only your sign-in and your choice of theme are. What a
-phone deliberately leaves out is importing and the blank templates: Data management
-offers the exports there and says where the rest lives, because *Replace everything*
-does not belong a thumb's width from a mis-tap.
+is never stored on the phone — only your sign-in and your choice of theme are. Data
+management on a phone exports, imports with *Merge* or *Add only*, and has the starter
+sheet. What it deliberately leaves out is *Replace everything*, which does not belong a
+thumb's width from a mis-tap, and the full template pack, which is for working at a
+desk: both need a screen at least 768 px wide.
 
 ### Orders that know what they turned into
 
@@ -308,14 +309,22 @@ answers `421 Misdirected Request`
 
 ### First, mint a token
 
-The MCP endpoint takes a **personal access token** and nothing else — your browser
-session never authenticates it, so a page in your browser can't drive an agent's tools.
-In the app, open **Settings → Access tokens** and create one. *Read-only* is enough for
-an agent that looks things up; *read and write* lets it record orders, move kits along
-the pipeline and adjust stock. Neither level can change settings, import or export, or
-manage tokens — those stay with the owner login. The token is shown **once**; copy it
-into the client configuration below, and revoke it from the same page if it ever leaks.
-The list shows when each token was last used.
+The MCP endpoint takes a **personal access token**, or, in OIDC mode, a token the client
+got by signing in as the owner (*Signing in instead of pasting a token*, below). Your
+browser session never authenticates it, so a page in your browser can't drive an
+agent's tools. In the app, open **Settings → Access tokens** and create one.
+*Read-only* is enough for an agent that looks things up; *read and write* lets it record
+orders, move kits along the pipeline and adjust stock. Neither level can change settings
+or manage tokens — those stay with the owner login.
+
+Import and export have no MCP tools at all (see below), but a token can reach them over
+the REST API: a read-only token can download every export, and a read-and-write token
+can also preview and apply an import in *Merge* or *Add only* mode. *Replace
+everything*, and any import that would change the instance settings, can only be
+applied from the owner login.
+
+The token is shown **once**; copy it into the client configuration below, and revoke it
+from the same page if it ever leaks. The list shows when each token was last used.
 
 Every client sends it the same way: an `Authorization: Bearer <token>` header, on the
 REST API and on `/mcp/` alike. Never put one in a URL — it is ignored as a credential,
@@ -448,9 +457,14 @@ Running the containers is the install path; for development you want hot reload,
 run the database in Docker and the app from source.
 
 **You'll need:** Docker · [uv](https://docs.astral.sh/uv/getting-started/installation/) ·
-Node 20.19+ (or 22+).
+Node 20.19+, 22.12+ or 24+ (the ranges the locked Vite and Vitest accept).
+
+From the root of a clone:
 
 ```bash
+cp .env.example .env
+# open .env, replace change-me with a real password
+
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
 # just Postgres, on fixed loopback and POSTGRES_PORT (5432 by default)
 
@@ -459,6 +473,11 @@ uv run uvicorn app.main:app --no-proxy-headers       # REST on :8000, MCP at :80
 
 cd ../frontend && npm install && npm run dev         # Vite on :5173, proxies /api to :8000
 ```
+
+The clone's `.env.example` is the source checkout's template, not the release's
+`env.example`: it also selects `docker-compose.build.yml`, so a plain `docker compose`
+command in the clone builds the images from your source instead of pulling a release.
+Compose and the source-run API both read the one `.env`.
 
 Open **http://localhost:5173**. The API serves at the root here rather than under
 `/api` — the Vite dev proxy strips the prefix exactly as nginx does in the container,
