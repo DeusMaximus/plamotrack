@@ -267,7 +267,10 @@ test.beforeAll(async () => {
     quantity_on_hand: 12, // two digits: the count a phone's stepper is asked to hold under a large font
     unit_cost_reference_minor: 4500,
     unit_cost_reference_currency: "AUD",
-    condition_notes: "Blade slightly worn at the tip",
+    // A note of two lines, as the dialog now keeps one (#376), and every fit
+    // question here is asked with it. A lone CR, the spelling WebKit would draw
+    // as nothing, joining the words, if the row left it to the browser.
+    condition_notes: "Blade slightly worn\rat the tip",
   });
   const consumable = await post(api, "/consumables", {
     name: NAMES.consumable,
@@ -282,7 +285,7 @@ test.beforeAll(async () => {
     scale: "1/144",
     manufacturer: "Bandai",
     quantity_on_hand: 3,
-    notes: "Clear, with the long arm",
+    notes: "Clear, with\r\nthe long arm", // two lines, a CRLF between (#376)
   });
 
   const kitLine = (name: string, grade: string, price: number) => ({
@@ -730,6 +733,10 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
       .soft(shown(typeof target === "string" || target instanceof RegExp ? scope.getByText(target) : target), label)
       .toHaveCount(1);
   const header = (name: string) => shown(main(page).getByRole("columnheader", { name, exact: true }));
+  /** A note as the row draws it: `innerText` applies the drawn text's own
+   *  white-space rules, so a break a row draws as a space reads as one. */
+  const noteDrawn = (scope: Locator, start: string) =>
+    shown(scope.getByText(start)).first().innerText();
   /** The stage the table is drawn at — the first that fits, which the fit
    *  tests hold it to — and whether stage `n` leaves a column a column. */
   const stageDrawn = async (stages: number) => (await foldState(page, stages))?.drawn ?? -1;
@@ -819,6 +826,8 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
     stage = await stageDrawn(STAGES.tools);
     await expect.soft(header("Condition"), `Tools "Condition" column ${at} (stage ${stage})`).toHaveCount(unfolded(stage, 1) ? 1 : 0);
     await once(rowOf(page, NAMES.tool), "Blade slightly worn at the tip", `Tools ${at}: the condition`);
+    // A note's break is drawn as a space, folded or not (#376): one run of words.
+    expect.soft(await noteDrawn(rowOf(page, NAMES.tool), "Blade slightly worn"), `Tools ${at}: the condition's break`).toBe("Blade slightly worn at the tip");
     await openList(page, "/inventory?tab=display-items", NAMES.display);
     stage = await stageDrawn(STAGES.display);
     for (const name of ["Manufacturer", "Notes"]) {
@@ -826,6 +835,7 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
     }
     await once(rowOf(page, NAMES.display), /Bandai/, `Display ${at}: the manufacturer`);
     await once(rowOf(page, NAMES.display), /Clear, with the long arm/, `Display ${at}: the notes`);
+    expect.soft(await noteDrawn(rowOf(page, NAMES.display), "Clear, with"), `Display ${at}: the notes' break`).toMatch(/(^|· )Clear, with the long arm$/);
   }
 });
 

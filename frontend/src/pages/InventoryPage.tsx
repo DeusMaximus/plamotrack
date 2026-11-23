@@ -36,12 +36,14 @@ import {
   Pager,
   Select,
   TABLE_HEAD_ROW_CLASS,
+  Textarea,
 } from "../components/ui";
 import { useDialogLoadFailure } from "../lib/dialogLoadFailure";
 import { useFormMeta } from "../lib/formMeta";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
 import { useEnumParam, usePaging, useTextParam, useWriteParams } from "../lib/listState";
+import { asTextareaValue, oneLine } from "../lib/oneLine";
 import { usePresentationVersion } from "../lib/presentation";
 import { useShell } from "../lib/shell";
 
@@ -231,7 +233,7 @@ function ItemForm({
       category: item && "category" in item ? item.category : "",
       manufacturer: item && "manufacturer" in item ? (item.manufacturer ?? "") : "",
       scale: item && "scale" in item ? (item.scale ?? "") : "",
-      notes: item && "notes" in item ? (item.notes ?? "") : "",
+      notes: item && "notes" in item ? asTextareaValue(item.notes ?? "") : "",
       quantity_on_hand: item?.quantity_on_hand ?? 1,
       low_stock_threshold:
         item && "low_stock_threshold" in item ? (item.low_stock_threshold?.toString() ?? "") : "",
@@ -240,7 +242,10 @@ function ItemForm({
           ? ""
           : minorToMajor(storedMinor, storedCurrency),
       unit_cost_reference_currency: storedCurrency ?? referenceCurrency,
-      condition_notes: item && "condition_notes" in item ? (item.condition_notes ?? "") : "",
+      // The two notes as their boxes hold them (#376), so a box that was only
+      // clicked into is not a change from what was loaded and is not sent.
+      condition_notes:
+        item && "condition_notes" in item ? asTextareaValue(item.condition_notes ?? "") : "",
     },
   });
 
@@ -415,14 +420,17 @@ function ItemForm({
             </>
           )}
         </div>
+        {/* Notes, so more than one line, as a kit's build notes and an order's
+            notes are (#376): a one-line box shows a stored break as a space and
+            saves what it showed (#361). */}
         {tab === "tools" && (
           <Field label={t("inventory.conditionNotes")}>
-            <Input {...register("condition_notes")} />
+            <Textarea {...register("condition_notes")} />
           </Field>
         )}
         {tab === "display-items" && (
           <Field label={t("inventory.notes")}>
-            <Input {...register("notes")} placeholder={t("inventory.notesPlaceholder")} />
+            <Textarea {...register("notes")} placeholder={t("inventory.notesPlaceholder")} />
           </Field>
         )}
       </form>
@@ -798,7 +806,14 @@ function StockCard({
 /** A card's facts, the dot between them; absent ones drop out. They wrap, and a
  *  word no line holds breaks (`main` is `break-words`): a card is the only place
  *  a phone says them (§13.7). An ellipsis cut a real category, "Workstation
- *  (Portable)", at a 40 px font on a 320 px phone (#323). */
+ *  (Portable)", at a 40 px font on a 320 px phone (#323).
+ *
+ *  A note is given here, and to the tables' cells, folded or not, as `oneLine`
+ *  has it (#376): each line break a space, so a row draws a note of two lines
+ *  as one run of words that wraps, and `Measured` measures what is drawn. Left
+ *  to the browser, a CRLF does draw as a space, but WebKit draws a lone CR as
+ *  nothing and joins the two words. The dialog's box is where a note has its
+ *  lines. */
 function Facts({ values }: { values: (string | null | undefined)[] }) {
   const { t } = useTranslation();
   const present = values.filter((value): value is string => Boolean(value));
@@ -1000,7 +1015,7 @@ export function InventoryPage() {
               >
                 {tool.condition_notes && (
                   <CardMeta>
-                    <Facts values={[tool.condition_notes]} />
+                    <Facts values={[oneLine(tool.condition_notes)]} />
                   </CardMeta>
                 )}
               </StockCard>
@@ -1031,7 +1046,7 @@ export function InventoryPage() {
                       <Measured text={tool.name} kind="name" />
                       {tool.condition_notes && (
                         <div className="hidden text-xs font-normal text-muted group-data-fold-1/fold:block">
-                          <Measured text={tool.condition_notes} kind="text" />
+                          <Measured text={oneLine(tool.condition_notes)} kind="text" />
                         </div>
                       )}
                     </td>
@@ -1056,7 +1071,7 @@ export function InventoryPage() {
                           )}
                     </td>
                     <td className="px-3 py-2 text-muted group-data-fold-1/fold:hidden">
-                      {tool.condition_notes ? <Measured text={tool.condition_notes} kind="text" /> : "—"}
+                      {tool.condition_notes ? <Measured text={oneLine(tool.condition_notes)} kind="text" /> : "—"}
                     </td>
                     <td className="px-3 py-2 text-end">
                       <div className="flex items-center justify-end gap-1">
@@ -1314,7 +1329,7 @@ export function InventoryPage() {
               >
                 {(row.manufacturer || row.notes) && (
                   <CardMeta>
-                    <Facts values={[row.manufacturer, row.notes]} />
+                    <Facts values={[row.manufacturer, row.notes && oneLine(row.notes)]} />
                   </CardMeta>
                 )}
               </StockCard>
@@ -1348,7 +1363,9 @@ export function InventoryPage() {
                       {(row.manufacturer || row.notes) && (
                         <div className="hidden text-xs font-normal text-muted group-data-fold-1/fold:block">
                           <Measured
-                            text={[row.manufacturer, row.notes].filter(Boolean).join(t("common.dotSeparator"))}
+                            text={[row.manufacturer, row.notes && oneLine(row.notes)]
+                              .filter(Boolean)
+                              .join(t("common.dotSeparator"))}
                             kind="text"
                           />
                         </div>
@@ -1372,7 +1389,7 @@ export function InventoryPage() {
                       </StockCell>
                     </td>
                     <td className="px-3 py-2 text-muted group-data-fold-1/fold:hidden">
-                      {row.notes ? <Measured text={row.notes} kind="text" /> : "—"}
+                      {row.notes ? <Measured text={oneLine(row.notes)} kind="text" /> : "—"}
                     </td>
                     <td className="px-3 py-2 text-end">
                       <div className="flex items-center justify-end gap-1">
