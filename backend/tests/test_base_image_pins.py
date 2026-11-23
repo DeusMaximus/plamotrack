@@ -140,6 +140,69 @@ def test_a_reference_without_a_digest_or_tag_is_refused(tree, path, line, named)
     assert len(problems) == 1 and named in problems[0], problems
 
 
+PINNED = "@sha256:" + "a" * 64
+PROBE = "jobs:\n  probe:\n    runs-on: ubuntu-latest\n"
+
+
+# Every way a workflow can name an image: each is inventoried (and then judged by the
+# rules) or refused outright — never skipped, which is an unpinned pull no one sees
+# (Greptile on PR #398: `image: ${{ matrix.image }}` passed the check silently).
+@pytest.mark.parametrize(
+    ("text", "outcome"),
+    [
+        ("        image: redis:7\n", "redis:7 has no digest"),
+        ('        image: "redis:7"\n', "redis:7 has no digest"),
+        ("        image: 'redis:7'\n", "redis:7 has no digest"),
+        ("        image: redis:7  # a cache\n", "redis:7 has no digest"),
+        ('        image: "redis:7' + PINNED + '"\n', "inventoried"),
+        ("    container: redis:7\n", "redis:7 has no digest"),
+        ("    container:\n      image: redis:7\n", "redis:7 has no digest"),
+        ("    services:\n      cache:\n        image: redis:7\n", "redis:7 has no digest"),
+        ("    steps:\n      - uses: docker://alpine:3.20\n", "alpine:3.20 has no digest"),
+        ("        image: ${{ matrix.image }}\n", "workflow expression"),
+        ("    container: ${{ matrix.image }}\n", "workflow expression"),
+        ("        image: ${{matrix.image}}\n", "interpolated"),
+        ("      cache: { image: redis:7 }\n", "cannot read"),
+        ("        image:\n          redis:7\n", "cannot read"),
+    ],
+)
+def test_every_workflow_image_spelling_is_inventoried_or_refused(tree, text, outcome):
+    (tree / pins.WORKFLOW_DIR / "probe.yml").write_text(PROBE + text)
+    if outcome in {"workflow expression", "interpolated", "cannot read"}:
+        with pytest.raises(pins.PinError, match=outcome):
+            pins.inventory(tree)
+        return
+    probe = [pin for pin in pins.inventory(tree) if pin.path.endswith("probe.yml")]
+    assert len(probe) == 1, probe
+    problems = pins.rules(pins.inventory(tree))
+    if outcome == "inventoried":
+        assert probe[0].image == "redis:7" and problems == []
+    else:
+        assert len(problems) == 1 and outcome in problems[0], problems
+
+
+def test_a_commented_out_workflow_image_is_not_a_pull(tree):
+    (tree / pins.WORKFLOW_DIR / "probe.yml").write_text(PROBE + "    # image: redis:7\n")
+    assert pins.rules(pins.inventory(tree)) == []
+
+
+def test_a_run_mount_from_an_image_is_a_pull_and_from_a_stage_is_not(tree):
+    with (tree / "backend/Dockerfile").open("a") as file:
+        file.write("RUN --mount=type=bind,from=build,target=/b true\n")
+    assert pins.rules(pins.inventory(tree)) == []  # `build` is a stage of this file
+    with (tree / "backend/Dockerfile").open("a") as file:
+        file.write("RUN --mount=type=bind,from=alpine:3.20,target=/x true\n")
+    [problem] = pins.rules(pins.inventory(tree))
+    assert "alpine:3.20 has no digest" in problem
+
+
+def test_a_flow_style_compose_image_is_refused(tree):
+    compose = tree / "docker-compose.yml"
+    compose.write_text(compose.read_text() + "  cache: { image: redis:7 }\n")
+    with pytest.raises(pins.PinError, match="does not know how to pin"):
+        pins.inventory(tree)
+
+
 def test_a_stage_name_is_not_an_image(tree):
     # backend/Dockerfile copies the venv --from=build; that is a stage, not a pull.
     assert "COPY --from=build " in (tree / "backend/Dockerfile").read_text()

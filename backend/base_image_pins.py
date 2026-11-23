@@ -21,6 +21,13 @@ reference in the pinned files carries a digest, and one tag carries one digest e
 it appears (PostgreSQL's Compose default and CI's service image are the same pin, as are
 the backend's two stages). ``release_artifacts.py`` reads the PostgreSQL pin from the
 Compose file for the release bundle, so it has no third spelling.
+
+The inventory fails closed. A Dockerfile pulls through ``# syntax=``, ``FROM``, ``COPY
+--from=`` and ``RUN --mount=…,from=``; a workflow through ``image:``, a scalar
+``container:`` and ``uses: docker://``, quoted or not. A line that looks as if it names an
+image in any other way (a ``${{ … }}`` expression, a flow mapping, a value on the next
+line) is refused, never skipped. What no line check can see is a pull inside a shell
+command (``run: docker pull …``): keep those out of the pinned files, or pin them by hand.
 """
 
 import argparse
@@ -56,10 +63,30 @@ DOCKERFILE_LINES = (
     re.compile(r"^FROM\s+(?:--platform=\S+\s+)?(?P<ref>\S+)(?:\s+AS\s+(?P<stage>\S+))?\s*$", re.I),
     re.compile(r"^COPY\s+(?:--\S+\s+)*?--from=(?P<ref>\S+)\s", re.IGNORECASE),
 )
+# RUN --mount=type=bind,from=<image>,… pulls an image too (or names a stage).
+DOCKERFILE_MOUNT = re.compile(r"--mount=(?P<options>\S+)", re.IGNORECASE)
+MOUNT_FROM = re.compile(r"(?:^|,)from=(?P<ref>[^,]+)", re.IGNORECASE)
 COMPOSE_LINE = re.compile(r"^\s*image:\s*\$\{PLAMOTRACK_DB_IMAGE:-(?P<ref>[^}]+)\}\s*$")
 # The application images are the release's own, written in by release_artifacts.py.
 COMPOSE_OWN = re.compile(r"^\s*image:\s*\$\{PLAMOTRACK_(?:API|WEB)_IMAGE:-[^}]+\}\s*$")
-WORKFLOW_LINE = re.compile(r"^\s*image:\s*(?P<ref>[^\s#]+)\s*(?:#.*)?$")
+# A workflow names an image as a job's or a service's `image:`, a job's scalar
+# `container:`, or a step's `uses: docker://…`, one per line, quoted or not.
+WORKFLOW_LINES = (
+    re.compile(
+        r"""^\s*(?:-\s+)?(?:image|container):\s*(?P<q>["']?)(?P<ref>[^\s"'#]+)(?P=q)\s*(?:#.*)?$"""
+    ),
+    re.compile(
+        r"""^\s*(?:-\s+)?uses:\s*(?P<q>["']?)docker://(?P<ref>[^\s"'#]+)(?P=q)\s*(?:#.*)?$"""
+    ),
+)
+# `container:` opening a mapping names no image itself; its `image:` line does.
+WORKFLOW_OPENER = re.compile(r"^\s*(?:-\s+)?container:\s*(?:#.*)?$")
+# Fail closed (#344, Greptile on PR #398): a line that looks as if it names an image
+# but is in none of the forms above — an expression, a flow mapping, a value on the
+# next line — is refused, never skipped, since a skip is an unpinned pull no one sees.
+IMAGE_KEY = re.compile(r"""(?:^|[\s{,"'])(?:image|container)["']?\s*:|docker://""")
+COMPOSE_IMAGE_KEY = re.compile(r"""(?:^|[\s{,"'])image["']?\s*:""")
+COMMENT = re.compile(r"^\s*#")
 
 INDEX_TYPES = (
     "application/vnd.oci.image.index.v1+json",
@@ -118,27 +145,43 @@ def inventory(root: Path = ROOT) -> list[Pin]:
             where = f"{relative}:{number}"
             refs: list[str] = []
             if relative in DOCKERFILES:
+                found: list[str] = []
                 for pattern in DOCKERFILE_LINES:
                     match = pattern.match(line.strip())
                     if not match:
                         continue
-                    ref = match["ref"]
                     if "stage" in pattern.groupindex and match["stage"]:
                         stages.add(match["stage"].lower())
-                    # A stage name or a stage index is not an image.
-                    if ref.lower() in stages or ref.isdigit():
-                        continue
-                    refs.append(ref)
+                    found.append(match["ref"])
+                if re.match(r"^\s*RUN\s", line, re.IGNORECASE):
+                    for mount in DOCKERFILE_MOUNT.finditer(line):
+                        found += [m["ref"] for m in MOUNT_FROM.finditer(mount["options"])]
+                # A stage name or a stage index is not an image.
+                refs += [ref for ref in found if ref.lower() not in stages and not ref.isdigit()]
             elif relative in COMPOSE_FILES:
                 match = COMPOSE_LINE.match(line)
                 if match:
                     refs.append(match["ref"])
-                elif re.match(r"^\s*image:", line) and not COMPOSE_OWN.match(line):
+                elif (
+                    COMPOSE_IMAGE_KEY.search(line)
+                    and not COMMENT.match(line)
+                    and not COMPOSE_OWN.match(line)
+                ):
                     raise PinError(f"{where}: an image this script does not know how to pin")
-            else:
-                match = WORKFLOW_LINE.match(line)
+            elif not COMMENT.match(line):
+                match = next((m for p in WORKFLOW_LINES if (m := p.match(line))), None)
                 if match:
                     refs.append(match["ref"])
+                elif "${{" in line and IMAGE_KEY.search(line):
+                    raise PinError(
+                        f"{where}: an image named by a workflow expression cannot be checked; "
+                        "write it literally as name:tag@sha256:…"
+                    )
+                elif IMAGE_KEY.search(line) and not WORKFLOW_OPENER.match(line):
+                    raise PinError(
+                        f"{where}: an image reference this script cannot read; write it on "
+                        "one line as `image: name:tag@sha256:…`"
+                    )
             for ref in refs:
                 if "$" in ref:
                     raise PinError(f"{where}: {ref!r} is interpolated; a pin must be literal")

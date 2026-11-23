@@ -275,7 +275,10 @@ deliberately not a required check — and as the release runbook's first step.
 PostgreSQL is **one pin**: `ci.yml` repeats the Compose default
 (`tests/test_base_image_pins.py` holds the two equal), and `release_artifacts.py
 bundle` reads it for the release instead of resolving `postgres:16` on release day.
-A new image reference without a digest fails the same test.
+A new image reference without a digest fails the same test, and a line that looks
+like an image the script cannot read (a `${{ … }}` expression, a flow mapping) is
+refused, never skipped; a `docker pull` inside a shell command is the one pull it
+cannot see.
 
 **User-facing docs describe the published release, never `main`** (owner's rule,
 2026-09-25). The docs site (`DeusMaximus/plamotrack-docs` → https://docs.gunp.la) and
