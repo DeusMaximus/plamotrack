@@ -43,7 +43,12 @@ from app.services.catalog import (
     guard_stock_ceiling,
     lock_catalog_row,
 )
-from app.services.kits import default_scale_for_grade, has_applied_upgrades, stamp_build_date
+from app.services.kits import (
+    default_scale_for_grade,
+    has_applied_upgrades,
+    refuse_blank_kit_text,
+    stamp_build_date,
+)
 from app.services.names import (
     clean_name,
     clean_optional_text,
@@ -620,6 +625,10 @@ async def spawn_kits(
     with a message naming the column; this is the backstop for the loop itself.
     """
     require_line_quantity(count, label="the number of kits on this line")
+    # Every kit a line spawns — at entry, on an edit that grows the line, and the
+    # importer's fan-out (whose `parse_text` already refused a blank cell) — so no
+    # path can insert a kit its own export cannot carry (#380).
+    refuse_blank_kit_text(name, grade)
     requested = KitStatus(status) if status else KitStatus.ORDERED
     final_status = initial_kit_status(requested, received, shipped)
     resolved_scale = scale if scale is not None else default_scale_for_grade(grade)
@@ -852,6 +861,10 @@ async def _update_line(
 
     if item.item_type is ItemType.KIT:
         details = line.kit
+        if details is not None:
+            # Before the restatement below, which writes `name` and `grade` onto the
+            # line's kits without passing `spawn_kits` (#380).
+            refuse_blank_kit_text(details.name, details.grade)
         line_kits = await _line_kits(session, item.id)
         # Kit details propagate to every kit this line spawned — but only the fields
         # this edit actually restated (#65).

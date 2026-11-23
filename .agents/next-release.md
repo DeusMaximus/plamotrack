@@ -215,6 +215,24 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
+## #380 — a kit's name or grade can no longer be only spaces (PR #386)
+- **Release note:** A kit could be saved with a name or grade of nothing but spaces
+  (or tabs, or a line break), through the kit dialog, the REST API, an MCP tool, or an
+  order's kit line. Import reads a cell like that as empty, and both are required, so
+  the instance's own export would no longer import: the preview stopped with "Name is
+  required." on that kit and nothing in the archive could be applied. Every way of
+  saving a kit now refuses a name or grade that is only whitespace, saying which one
+  is blank, and saves nothing. A name with spaces around real text is saved as typed,
+  as before.
+  A kit already stored with a blank name or grade is not changed by this release, and
+  its export still stops at the preview as above. To fix it, open the kit, give it a
+  name or grade, save, and export again (or put the name in the `kits.csv` cell before
+  importing). Until then, adding kits to the order line that bought it, or changing
+  that line's kit details, asks for the name or grade too; any other change to the
+  order saves as before.
+- **README:** nothing.
+- **Docs site:** nothing.
+
 ## #238 — an order or inventory dialog says what failed to load, with Retry, instead of Loading… forever (PR #387)
 - **Release note:** When something the order dialog needs could not be loaded (the
   list of tools, consumables, upgrades or display items it names an order's lines
