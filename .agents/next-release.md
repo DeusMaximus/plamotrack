@@ -227,8 +227,11 @@ Shape:
   A kit already stored with a blank name or grade is not changed by this release, and
   its export still stops at the preview as above. To fix it, open the kit, give it a
   name or grade, save, and export again (or put the name in the `kits.csv` cell before
-  importing). Until then, adding kits to the order line that bought it, or changing
-  that line's kit details, asks for the name or grade too; any other change to the
-  order saves as before.
+  importing). Until then, adding kits to the order line that bought it asks for the
+  name or grade too, and so does any save that sends that line's kit details back,
+  even unchanged. The web app sends them only when you change them, but a script or
+  an assistant may send them with any edit to the line: leave the kit details out of
+  such an edit, or fix the kit first (#388). Any other change to the order saves as
+  before.
 - **README:** nothing.
 - **Docs site:** nothing.
